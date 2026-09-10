@@ -16,6 +16,13 @@ import { describe, expect, it } from 'vitest';
  */
 
 const PAGES_DIR = join(__dirname, '..', '..', 'pages');
+const WIZARD_DIR = join(__dirname, '..', '..', 'wizard');
+
+// S4-tail: the wizard module wasn't scanned by this guard at all, which was
+// its own kind of excusal-by-omission -- WizardStepFields.tsx and
+// WizardRunnerPage.tsx each hand-rolled the input literal under a different
+// name (`inputClasses`, inline) and neither S4 nor S9 caught it.
+const WIZARD_INPUT_FILES = ['WizardStepFields.tsx', 'WizardRunnerPage.tsx'];
 
 // The nine small table pages S3 migrates onto DataTable, plus GitPage and
 // AdminUsersPage (S9a/S9b) once their tables move onto DataTable too.
@@ -46,6 +53,10 @@ function readPage(name: string): string {
   return readFileSync(join(PAGES_DIR, name), 'utf8');
 }
 
+function readWizardFile(name: string): string {
+  return readFileSync(join(WIZARD_DIR, name), 'utf8');
+}
+
 describe('DataTable migration (S3)', () => {
   it.each(S3_TABLE_PAGES)('%s does not hand-roll a table thead', (name) => {
     expect(readPage(name)).not.toContain(THEAD_LITERAL);
@@ -55,6 +66,12 @@ describe('DataTable migration (S3)', () => {
 describe('Field/Input/Select migration (S4)', () => {
   it.each(S4_INPUT_PAGES)('%s does not hand-roll the input border/padding literal', (name) => {
     expect(readPage(name)).not.toContain(INPUT_LITERAL);
+  });
+});
+
+describe('Wizard input migration (S4-tail)', () => {
+  it.each(WIZARD_INPUT_FILES)('%s does not hand-roll the input border/padding literal', (name) => {
+    expect(readWizardFile(name)).not.toContain(INPUT_LITERAL);
   });
 });
 

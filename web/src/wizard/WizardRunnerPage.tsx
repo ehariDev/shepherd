@@ -5,6 +5,7 @@ import { CheckCircle2, XCircle } from 'lucide-react';
 import { useEffect, useState } from 'react';
 import { toast } from 'sonner';
 import { clients, toApiError } from '@/api/transport';
+import { Input } from '@/components/ui/Field';
 import { AlloyEditor } from '@/editor/AlloyEditor';
 import type { MatchedCollector } from '@/gen/shepherd/mgmt/v1/pipeline_pb';
 import { useOrgId } from '@/hooks/useOrg';
@@ -168,13 +169,14 @@ export function WizardRunnerPage() {
                 <h2 className='text-sm font-semibold text-zinc-100'>Review</h2>
                 <label className='block text-xs font-medium text-muted'>
                   Pipeline name
-                  <input
+                  <Input
+                    mono
                     value={name}
                     onChange={(e) => {
                       setName(e.target.value);
                       setNameTouched(true);
                     }}
-                    className='mt-1 w-full rounded-md border border-border-strong bg-card px-3 py-1.5 text-sm font-mono focus:outline-none focus:ring-1 focus:ring-indigo-500'
+                    className='mt-1 focus:outline-none focus:ring-1 focus:ring-indigo-500'
                     placeholder={`${KIND}-my-app`}
                   />
                 </label>

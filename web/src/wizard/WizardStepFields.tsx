@@ -1,3 +1,4 @@
+import { Input, Select } from '@/components/ui/Field';
 import type { StepField } from '@/gen/shepherd/mgmt/v1/wizard_pb';
 
 export type WizardFieldValue = string | number | boolean;
@@ -26,8 +27,10 @@ export function isStepValid(fields: StepField[], state: WizardFormState): boolea
   return fields.every((f) => !f.required || hasValue(state[f.name]));
 }
 
-const inputClasses =
-  'mt-1 w-full rounded-md border border-border-strong bg-card px-3 py-1.5 text-sm focus:outline-none focus:ring-1 focus:ring-indigo-500';
+// Used standalone (not inside ui/Field), so the mt-1 gap Field normally
+// supplies is added here explicitly -- see Field.tsx's note on why
+// Input/Select/Textarea leave it out by default.
+const inputClassName = 'mt-1 focus:outline-none focus:ring-1 focus:ring-indigo-500';
 
 interface WizardStepFieldsProps {
   fields: StepField[];
@@ -65,10 +68,10 @@ export function WizardStepFields({ fields, state, onChange }: WizardStepFieldsPr
             {field.label}
             {field.required && <span className='ml-0.5 text-red-400'>*</span>}
             {field.type === 'select' ? (
-              <select
+              <Select
                 value={(value as string) ?? ''}
                 onChange={(e) => onChange(field.name, e.target.value)}
-                className={inputClasses}
+                className={inputClassName}
               >
                 <option value='' disabled>
                   Select…
@@ -78,22 +81,23 @@ export function WizardStepFields({ fields, state, onChange }: WizardStepFieldsPr
                     {o}
                   </option>
                 ))}
-              </select>
+              </Select>
             ) : field.type === 'number' ? (
-              <input
+              <Input
                 type='number'
+                mono
                 value={value === undefined ? '' : (value as number)}
                 onChange={(e) => onChange(field.name, e.target.valueAsNumber)}
                 placeholder={field.placeholder}
-                className={inputClasses + ' font-mono'}
+                className={inputClassName}
               />
             ) : (
-              <input
+              <Input
                 type='text'
                 value={(value as string) ?? ''}
                 onChange={(e) => onChange(field.name, e.target.value)}
                 placeholder={field.placeholder}
-                className={inputClasses}
+                className={inputClassName}
               />
             )}
             {field.description && (
