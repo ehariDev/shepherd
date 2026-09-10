@@ -86,14 +86,14 @@ var _ = Describe("shepherd.mgmt.v1.WizardService", Label("integration"), func() 
 		Expect(pipeline["contents"]).To(ContainSubstring("prometheus.scrape"))
 	})
 
-	It("denies CommitWizard for a session without org-admin access", func() {
+	It("denies CommitWizard for a session without org-editor access", func() {
 		body := map[string]any{
 			"org_id": orgID,
 			"kind":   "app-observability",
 			"name":   "should-not-be-created",
 			"state":  map[string]any{"scrape_url": "http://myapp:9090/metrics", "metrics_dest_name": "mimir"},
 		}
-		// A reader-group session has org-reader, not org-admin — CommitWizard requires org-admin.
+		// A reader-group session has org-reader, not org-editor — CommitWizard requires org-editor.
 		resp := postConnectJSON(server, "/shepherd.mgmt.v1.WizardService/CommitWizard", readerCookie, body)
 		defer resp.Body.Close() //nolint:errcheck // test cleanup
 		Expect(resp.StatusCode).To(Equal(http.StatusForbidden))
