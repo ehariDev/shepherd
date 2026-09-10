@@ -365,10 +365,14 @@ hook copy so the two cannot disagree about the database or the simulator.
 With the simulator enabled and no operator-supplied config.simulator block, wire
 shepherd to this chart's own simulator Service. The viper defaults happen to
 match only when the release is literally named "shepherd"; templating the
-Service DNS makes any release name work. An explicit .Values.config.simulator
-always wins verbatim, and -- once this chart started enforcing a token -- must
-supply its own `token` or the render refuses to ship an unauthenticated
-control API silently.
+Service DNS makes any release name work. control_url keeps the Service name
+(dialled from Shepherd's own Pod, a different network namespace); the other
+four fields are 127.0.0.1 (D10 -- they are dialled by the sandboxed Alloy
+CHILD PROCESS sharing the simulator Pod's own netns, which has no cluster DNS
+egress to resolve a Service name with any more). An explicit
+.Values.config.simulator always wins verbatim, and -- once this chart started
+enforcing a token -- must supply its own `token` or the render refuses to ship
+an unauthenticated control API silently.
 */}}
 {{- define "shepherd.configYaml" -}}
 {{- $cfg := deepCopy .Values.config }}
@@ -391,10 +395,10 @@ control API silently.
 {{- $_ := set $cfg "simulator" (dict
       "enabled" true
       "control_url" (printf "http://%s:8099" $sim)
-      "capture_base_url" (printf "http://%s:9110" $sim)
-      "otlp_grpc_address" (printf "%s:4317" $sim)
-      "syslog_host" $sim
-      "target_address" (printf "%s:9111" $sim)) }}
+      "capture_base_url" "http://127.0.0.1:9110"
+      "otlp_grpc_address" "127.0.0.1:4317"
+      "syslog_host" "127.0.0.1"
+      "target_address" "127.0.0.1:9111") }}
 {{- end }}
 {{- toYaml $cfg }}
 {{- end }}

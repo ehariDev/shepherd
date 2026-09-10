@@ -54,12 +54,18 @@ import (
 //	                               literal, mirroring e2e/sandbox_egress_test.go's
 //	                               P-deny-ip, so DNS-openness cannot confuse the
 //	                               result.
-//	P-dns-only   resolves, denied DNS is open by design (the harness ports
-//	                               above are ultimately still reached via the
-//	                               Pod's own IP, but discovery.relabel-style
-//	                               user config could still ask to resolve
-//	                               anything); resolving a name must not imply
-//	                               reaching what it resolves to.
+//	P-dns-only   denied           D10: cluster DNS egress was DROPPED, not
+//	                               merely narrowed. The harness ports above
+//	                               are all on this same Pod's own loopback
+//	                               address (shepherd.configYaml wires the
+//	                               sandbox at 127.0.0.1, not the Service's
+//	                               DNS name), so there is no longer a
+//	                               legitimate reason for the sandbox to
+//	                               resolve anything at all — a
+//	                               discovery.relabel-style user config gets
+//	                               nothing back for a name it asks about,
+//	                               not merely denied a connection to what
+//	                               the name resolves to.
 //	P-apiserver  denied           the sandbox cannot reach the API server
 //	                               either, and has no ServiceAccount token
 //	                               mounted to use if it somehow could.
@@ -161,27 +167,29 @@ func TestSimulatorContainmentProbes(t *testing.T) {
 					externalProbeIP, externalProbePort, out))
 				return ctx
 			}).
-		Assess("P-dns-only: DNS resolves, but connecting to what it resolves is still denied",
+		Assess("P-dns-only: DNS resolution itself is denied (D10)",
 			func(ctx context.Context, t *testing.T, cfg *envconf.Config) context.Context {
-				// DNS is open by design (egress to kube-system:53) so a
-				// pipeline can still name a host; that must never be read as
-				// "and therefore it can reach it". Resolve a real external
-				// name, then dial the address it resolved to — not a stand-in
-				// literal — so this fails if resolution ever stops being open
-				// as loudly as it fails if the connect denial ever breaks.
-				ip, resolveOut := resolveFromPod(cfg, f.ns, pod, externalProbeName)
-				if ip == "" {
-					t.Fatalf("DNS resolution of %s from inside the sandbox failed or produced no parseable "+
-						"address — either DNS is unexpectedly closed (a regression the opposite direction "+
-						"from what this probe exists to catch) or this environment has no working upstream "+
-						"DNS, which would make this probe meaningless here.\nnslookup output:\n%s",
-						externalProbeName, resolveOut)
+				// D10 dropped the sandbox's cluster-DNS egress entirely — it
+				// used to be open (egress to kube-system:53) so a pipeline
+				// could still name a host, even though connecting to what it
+				// resolved was already denied below. Every harness endpoint
+				// the sandbox legitimately needs is now reached by loopback
+				// IP (shepherd.configYaml, D10), so there is no remaining
+				// reason for it to resolve anything at all: a name lookup
+				// must fail exactly like every other egress attempt.
+				denied, resolved, out := resolveFromPodUntil(cfg, f.ns, pod, "dns-resolve", externalProbeName, probeMustDenyDeadline)
+				if !denied {
+					if resolved {
+						t.Fatalf("D10 IS NOT HOLDING ON THIS CLUSTER: the sandbox resolved %s from inside "+
+							"its own Pod — cluster DNS egress was supposed to be dropped entirely, not "+
+							"merely left open for names that go nowhere. nslookup output:\n%s",
+							externalProbeName, out)
+					}
+					t.Fatalf("DNS denial could not be CONFIRMED within %s: no attempt returned a parseable "+
+						"nslookup answer OR a clean failure (kubectl debug attach flake?). Failing loud, but "+
+						"this is NOT evidence the policy is wrong — fix the probe path and re-run.\n"+
+						"last output:\n%s", probeMustDenyDeadline, out)
 				}
-				denied, connected, dialOut := probeFromPodUntil(cfg, f.ns, pod, "dns-connect", ip, externalProbePort, false, probeMustDenyDeadline)
-				requireDenied(t, denied, connected, dialOut, fmt.Sprintf(
-					"DNS resolved %s to %s, and the sandbox then REACHED it — DNS being open was "+
-						"supposed to be harmless because the network still denies the connect. It did not "+
-						"here. probe output:\n%s", externalProbeName, ip, dialOut))
 				return ctx
 			}).
 		Assess("P-apiserver: the sandbox canNOT reach the API server, and has no token to present if it could",
@@ -455,24 +463,57 @@ func requireDenied(t *testing.T, denied, connected bool, out, breachMsg string) 
 // has a ":53" suffix and IPv6 answers contain colons, so neither matches.
 var resolvedAddressRE = regexp.MustCompile(`(?m)^Address:\s+(\d+\.\d+\.\d+\.\d+)\s*$`)
 
-// resolveFromPod runs nslookup for name from inside podName and returns the
-// first resolved IPv4 address, or "" if none was found (including on any
-// command error — a failed lookup and a lookup with unparseable output both
-// mean "resolution did not demonstrably work", which is the only thing the
-// caller needs to know).
-func resolveFromPod(cfg *envconf.Config, ns, podName, name string) (string, string) {
+// resolveFromPod runs nslookup for name from inside podName via a uniquely
+// named ephemeral debug container (containerSuffix — see probeFromPod's own
+// comment for why it must be unique per call within one Pod) and reports the
+// resolved IPv4 address, if any, alongside a completion sentinel.
+//
+// done distinguishes a genuinely completed attempt (nslookup ran to
+// completion, whether or not it resolved anything) from an attach flake
+// (kubectl debug never produced output at all) — the same reason
+// probeFromPod uses OUTPUT SENTINELS rather than judging by exit code:
+// `kubectl debug --attach` does not reliably propagate the debug container's
+// exit status. Without the sentinel, a flake and a genuine "no answer" are
+// indistinguishable, and resolveFromPodUntil below needs to tell them apart
+// to retry the former without ever retrying past the latter.
+func resolveFromPod(cfg *envconf.Config, ns, podName, containerSuffix, name string) (ip string, done bool, raw string) {
 	cmd := fmt.Sprintf(
-		"kubectl --kubeconfig %s -n %s debug pod/%s --image=busybox:1.36 -c probe-dns-resolve --attach --quiet -- "+
-			"timeout 8 nslookup %s",
-		cfg.KubeconfigFile(), ns, podName, name,
+		"kubectl --kubeconfig %s -n %s debug pod/%s --image=busybox:1.36 -c probe-%s --attach --quiet -- "+
+			"sh -c 'timeout 8 nslookup %s; echo RESOLVE-SENTINEL-DONE'",
+		cfg.KubeconfigFile(), ns, podName, containerSuffix, name,
 	)
 	p := utils.RunCommand(cmd)
 	out := strings.TrimSpace(p.Result())
-	m := resolvedAddressRE.FindStringSubmatch(out)
-	if len(m) < 2 {
-		return "", out
+	done = strings.Contains(out, "RESOLVE-SENTINEL-DONE")
+	if m := resolvedAddressRE.FindStringSubmatch(out); len(m) >= 2 {
+		ip = m[1]
 	}
-	return m[1], out
+	return ip, done, out
+}
+
+// resolveFromPodUntil retries resolveFromPod until an attempt COMPLETES
+// (done) with no resolved address — DNS denial, confirmed — or the deadline
+// expires. Mirrors probeFromPodUntil's convergence-race reasoning: a freshly
+// installed NetworkPolicy can take some seconds to finish programming, so a
+// single early nslookup succeeding is not distinguishable from a real
+// DNS-egress hole without retrying: this loop keeps sentinel-confirmed
+// attempts as either "resolved" (a candidate breach — observedResolved) or
+// "denied" (the outcome this probe wants), and never counts a flaked
+// (sentinel-less) attempt as either.
+func resolveFromPodUntil(cfg *envconf.Config, ns, podName, base, name string, deadline time.Duration) (denied, observedResolved bool, last string) {
+	end := time.Now().Add(deadline)
+	for i := 0; time.Now().Before(end); i++ {
+		ip, done, out := resolveFromPod(cfg, ns, podName, fmt.Sprintf("%s-%d", base, i), name)
+		last = out
+		if done {
+			if ip == "" {
+				return true, observedResolved, last
+			}
+			observedResolved = true
+		}
+		time.Sleep(3 * time.Second)
+	}
+	return false, observedResolved, last
 }
 
 // simulatorPodNameAndIP finds the (single-replica) simulator Pod for release

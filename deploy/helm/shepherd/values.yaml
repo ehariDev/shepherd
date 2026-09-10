@@ -487,8 +487,10 @@ networkPolicy:
 #     PROCESS of shepherd-simulator (internal/simsvc/runner.go), not a sibling
 #     container, so this Pod's own network boundary IS the sandbox's boundary.
 #     Egress is allowed only to this Pod's own harness ports (the capture
-#     receivers shepherd-simulator itself serves) and to cluster DNS; nothing
-#     else, including the rest of the cluster and the internet.
+#     receivers shepherd-simulator itself serves) — nothing else, including
+#     cluster DNS (D10: every harness endpoint the sandbox needs is dialled by
+#     loopback IP, so it has no legitimate reason to resolve a name at all),
+#     the rest of the cluster, or the internet.
 #   - non-root securityContext, every capability dropped, no privilege
 #     escalation, a read-only root filesystem (the run scratch directory is an
 #     emptyDir mounted over /tmp).

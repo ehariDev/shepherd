@@ -132,7 +132,7 @@ var _ = Describe("Helm chart: S3 sandbox simulator containment (finding H5)", fu
 			Expect(requests).To(HaveKey("memory"))
 		})
 
-		It("default-denies egress except to its own harness ports and cluster DNS", func() {
+		It("default-denies egress except to its own harness ports — no DNS (D10)", func() {
 			np, ok := objects["NetworkPolicy/shepherd-simulator"]
 			Expect(ok).To(BeTrue(), "no NetworkPolicy rendered")
 
@@ -158,6 +158,53 @@ var _ = Describe("Helm chart: S3 sandbox simulator containment (finding H5)", fu
 				to, ok := rule["to"].([]any)
 				Expect(ok).To(BeTrue())
 				Expect(to).NotTo(BeEmpty())
+
+				for _, peerRaw := range to {
+					peer, ok := peerRaw.(map[string]any)
+					Expect(ok).To(BeTrue())
+					// D10: every harness endpoint the sandboxed Alloy child
+					// process needs is on THIS SAME POD (127.0.0.1) — nothing
+					// it talks to lives in another namespace, so a
+					// namespaceSelector peer here can only be the old
+					// kube-system:53 DNS hole this decision removed.
+					Expect(peer).NotTo(HaveKey("namespaceSelector"),
+						"a namespaceSelector peer reaches outside this Pod's own namespace — D10 dropped "+
+							"cluster DNS egress entirely, so no egress rule should still need one")
+				}
+
+				if ports, hasPorts := rule["ports"].([]any); hasPorts {
+					for _, portRaw := range ports {
+						port, ok := portRaw.(map[string]any)
+						Expect(ok).To(BeTrue())
+						Expect(port["port"]).NotTo(BeEquivalentTo(53),
+							"port 53 (DNS) is still open — D10 dropped the sandbox's DNS egress entirely")
+					}
+				}
+			}
+		})
+
+		It("points the sandboxed Alloy's harness endpoints at loopback, not the simulator Service's DNS name (D10)", func() {
+			cfg := shepherdConfig(objects)
+			sim, ok := cfg["simulator"].(map[string]any)
+			Expect(ok).To(BeTrue(), "shepherd.yaml has no auto-wired simulator block")
+
+			// control_url is dialled by SHEPHERD'S OWN Pod (a different
+			// network namespace), which still needs the Service's DNS name —
+			// only the sandboxed Alloy child process, which shares the
+			// simulator Pod's own netns, can use loopback.
+			Expect(sim["control_url"]).To(ContainSubstring("shepherd-simulator"),
+				"control_url is dialled by Shepherd's own Pod and still needs the simulator Service's name")
+
+			for key, want := range map[string]string{
+				"capture_base_url":  "http://127.0.0.1:9110",
+				"otlp_grpc_address": "127.0.0.1:4317",
+				"syslog_host":       "127.0.0.1",
+				"target_address":    "127.0.0.1:9111",
+			} {
+				Expect(sim[key]).To(Equal(want),
+					"%s is read by the sandboxed Alloy child process INSIDE the simulator Pod's own "+
+						"network namespace — it never needs to resolve the Service's DNS name, and D10 "+
+						"removed the NetworkPolicy's only reason to keep cluster DNS open", key)
 			}
 		})
 
