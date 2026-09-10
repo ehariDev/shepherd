@@ -247,18 +247,6 @@ func gitOpsScenario5() {
 	} {
 		It(fmt.Sprintf("%s: seeding a valid file makes a source=git pipeline appear", tc.kind), func() {
 			ctx := context.Background()
-			if tc.kind == "ssh" {
-				// KNOWN GAP (ledger F9-a): the ssh auth kind syncs correctly in
-				// internal/gitrepo's own suite, which performs REAL ssh handshakes against
-				// a Gitea container and covers the positive case plus wrong-host-key and
-				// wrong-passphrase negatives. In the compose stack it fails with go-git's
-				// "unable to find any valid known_hosts file", i.e. the per-credential
-				// HostKeyCallback is not reaching the transport on this path even though
-				// git_credentials.ssh_known_hosts is populated. Pending until diagnosed —
-				// do NOT delete this case, and do not relax host-key verification to make
-				// it pass.
-				Skip("ssh auth kind: known_hosts callback not applied in the compose stack (ledger F9-a)")
-			}
 
 			_, internalURL := mustPrepareRepoWithFixture(ctx, tc.repoName, tc.fileName)
 			credBody, repoURL := tc.setup(ctx, tc.repoName)
