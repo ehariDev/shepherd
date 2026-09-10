@@ -11,6 +11,8 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { createSandboxRun, getSandboxRun, type SimulateRunResult } from '../../api/client';
 import { toApiError } from '../../api/transport';
+import { DataTable } from '../../components/ui/DataTable';
+import { Modal } from '../../components/ui/Modal';
 import { useVisualStore } from '../store';
 
 // The design doc's own label ("Sandbox run (30s)…") names the requested
@@ -145,27 +147,35 @@ function ResultsView({
               No series captured.
             </p>
           ) : (
-            <table className='w-full text-left' data-testid='sim-series-table'>
-              <thead className='text-muted-2'>
-                <tr>
-                  <th className='font-normal'>Name</th>
-                  <th className='font-normal'>Labels</th>
-                  <th className='font-normal'>Samples</th>
-                </tr>
-              </thead>
-              <tbody>
-                {filteredSeries.map((series) => (
-                  <tr
-                    key={`${series.name}-${JSON.stringify(series.labels)}`}
-                    data-testid='sim-series-row'
-                  >
-                    <td className='font-mono'>{series.name}</td>
-                    <td className='font-mono text-muted'>{JSON.stringify(series.labels)}</td>
-                    <td>{series.sample_count}</td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
+            <DataTable
+              testId='sim-series-table'
+              columns={[
+                {
+                  key: 'name',
+                  header: 'Name',
+                  headerClassName: 'font-normal',
+                  cellClassName: 'font-mono',
+                  render: (s) => s.name,
+                },
+                {
+                  key: 'labels',
+                  header: 'Labels',
+                  headerClassName: 'font-normal',
+                  cellClassName: 'font-mono text-muted',
+                  render: (s) => JSON.stringify(s.labels),
+                },
+                {
+                  key: 'samples',
+                  header: 'Samples',
+                  headerClassName: 'font-normal',
+                  render: (s) => s.sample_count,
+                },
+              ]}
+              rows={filteredSeries}
+              rowKey={(s) => `${s.name}-${JSON.stringify(s.labels)}`}
+              rowClassName=''
+              rowProps={() => ({ 'data-testid': 'sim-series-row' })}
+            />
           )}
         </div>
       )}
@@ -198,30 +208,43 @@ function ResultsView({
               No component health reported.
             </p>
           ) : (
-            <table className='w-full text-left' data-testid='sim-health-table'>
-              <thead className='text-muted-2'>
-                <tr>
-                  <th className='font-normal'>Node</th>
-                  <th className='font-normal'>Component</th>
-                  <th className='font-normal'>State</th>
-                  <th className='font-normal'>Message</th>
-                </tr>
-              </thead>
-              <tbody>
-                {run.component_health.map((h) => (
-                  <tr
-                    key={h.node_id}
-                    data-testid='sim-health-row'
-                    data-health-state={h.health_state}
-                  >
-                    <td>{h.node_label}</td>
-                    <td className='font-mono'>{h.component}</td>
-                    <td>{h.health_state}</td>
-                    <td>{h.message}</td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
+            <DataTable
+              testId='sim-health-table'
+              columns={[
+                {
+                  key: 'node',
+                  header: 'Node',
+                  headerClassName: 'font-normal',
+                  render: (h) => h.node_label,
+                },
+                {
+                  key: 'component',
+                  header: 'Component',
+                  headerClassName: 'font-normal',
+                  cellClassName: 'font-mono',
+                  render: (h) => h.component,
+                },
+                {
+                  key: 'state',
+                  header: 'State',
+                  headerClassName: 'font-normal',
+                  render: (h) => h.health_state,
+                },
+                {
+                  key: 'message',
+                  header: 'Message',
+                  headerClassName: 'font-normal',
+                  render: (h) => h.message,
+                },
+              ]}
+              rows={run.component_health}
+              rowKey={(h) => h.node_id}
+              rowClassName=''
+              rowProps={(h) => ({
+                'data-testid': 'sim-health-row',
+                'data-health-state': h.health_state,
+              })}
+            />
           )}
 
           {/* The sandbox Alloy's own stderr (design §6.4 step 3). Health says a
@@ -414,29 +437,9 @@ export function SandboxRunPanel({ orgId }: { orgId: string | undefined }) {
       )}
 
       {open && (
-        <div
-          data-testid='sandbox-run-overlay'
-          className='fixed inset-0 z-50 bg-black/50 flex items-center justify-center'
-          onClick={close}
-        >
-          <div
-            data-testid='sandbox-run-dialog'
-            className='bg-panel border border-border rounded-lg w-[720px] max-h-[85vh] flex flex-col text-xs'
-            onClick={(e) => e.stopPropagation()}
-          >
-            <div className='flex items-center justify-between px-4 py-2 border-b border-border shrink-0'>
-              <span className='text-sm font-medium'>Sandbox run</span>
-              <button
-                type='button'
-                data-testid='sandbox-run-close'
-                aria-label='Close'
-                onClick={close}
-                className='text-muted hover:text-muted-2'
-              >
-                ×
-              </button>
-            </div>
-            <div className='flex-1 overflow-y-auto p-4'>
+        <div data-testid='sandbox-run-overlay' className='text-xs'>
+          <Modal title='Sandbox run' onClose={close} size='xl' testId='sandbox-run-dialog'>
+            <div className='max-h-[70vh] overflow-y-auto'>
               {phase === 'error' ? (
                 <div data-testid='sandbox-run-error' className='text-red-500'>
                   {errorMessage}
@@ -463,7 +466,7 @@ export function SandboxRunPanel({ orgId }: { orgId: string | undefined }) {
                 </div>
               )}
             </div>
-          </div>
+          </Modal>
         </div>
       )}
     </div>

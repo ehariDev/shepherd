@@ -16,6 +16,7 @@ import { useCallback, useEffect, useState } from 'react';
 import '@xyflow/react/dist/base.css';
 import { type GraphViewResult, graphView } from '../../api/client';
 import { clients } from '../../api/transport';
+import { Modal } from '../../components/ui/Modal';
 import { useVisualStore } from '../store';
 import type { PipelineNodeData } from './PipelineNode';
 import { PipelineNode } from './PipelineNode';
@@ -204,31 +205,32 @@ export function GraphViewPage() {
 
       {/* Recreate confirm dialog */}
       {showRecreateConfirm && (
-        <div className='fixed inset-0 bg-black/40 flex items-center justify-center z-50'>
-          <div className='bg-card border rounded-lg p-6 max-w-md w-full shadow-lg'>
-            <h2 className='font-semibold mb-3'>Recreate as visual pipeline?</h2>
-            <p className='text-sm text-muted mb-4'>
-              This creates a <strong>new, separate draft</strong> from this pipeline&apos;s current
-              content. The conversion is lossy — complex expressions and unsupported constructs may
-              not transfer correctly. The original pipeline is not changed.
-            </p>
-            <div className='flex gap-3 justify-end'>
-              <button
-                className='text-sm px-3 py-1 rounded border hover:bg-accent'
-                onClick={() => setShowRecreateConfirm(false)}
-              >
-                Cancel
-              </button>
-              <button
-                className='text-sm px-3 py-1 rounded bg-indigo-600 text-white hover:bg-indigo-700'
-                onClick={handleRecreate}
-                data-testid='recreate-confirm-btn'
-              >
-                Recreate (lossy)
-              </button>
-            </div>
+        <Modal
+          title='Recreate as visual pipeline?'
+          onClose={() => setShowRecreateConfirm(false)}
+          testId='recreate-confirm-dialog'
+        >
+          <p className='text-sm text-muted mb-4'>
+            This creates a <strong>new, separate draft</strong> from this pipeline&apos;s current
+            content. The conversion is lossy — complex expressions and unsupported constructs may
+            not transfer correctly. The original pipeline is not changed.
+          </p>
+          <div className='flex gap-3 justify-end'>
+            <button
+              className='text-sm px-3 py-1 rounded border hover:bg-accent'
+              onClick={() => setShowRecreateConfirm(false)}
+            >
+              Cancel
+            </button>
+            <button
+              className='text-sm px-3 py-1 rounded bg-indigo-600 text-white hover:bg-indigo-700'
+              onClick={handleRecreate}
+              data-testid='recreate-confirm-btn'
+            >
+              Recreate (lossy)
+            </button>
           </div>
-        </div>
+        </Modal>
       )}
     </div>
   );
