@@ -247,17 +247,12 @@ func (s *AdminService) DeleteOrg(ctx context.Context, req *connect.Request[mgmtv
 		return nil, err
 	}
 
-	var clusterCount, pipelineCount int
-	// RAW-SQL-OK: cross-table count with two columns — no sqlc equivalent
-	if err := s.store.Pool().QueryRow(ctx,
-		`SELECT
-			(SELECT count(*) FROM clusters WHERE org_id = $1)::int,
-			(SELECT count(*) FROM pipelines WHERE org_id = $1)::int`,
-		id).Scan(&clusterCount, &pipelineCount); err != nil {
+	content, err := s.store.Queries.CountOrgContent(ctx, id)
+	if err != nil {
 		return nil, connect.NewError(connect.CodeInternal, errors.New("failed to check org content"))
 	}
-	if clusterCount > 0 || pipelineCount > 0 {
-		msg := fmt.Sprintf("org has %d clusters, %d pipelines", clusterCount, pipelineCount)
+	if content.ClusterCount > 0 || content.PipelineCount > 0 {
+		msg := fmt.Sprintf("org has %d clusters, %d pipelines", content.ClusterCount, content.PipelineCount)
 		return nil, connect.NewError(connect.CodeAlreadyExists, &orgNotEmptyError{message: msg})
 	}
 

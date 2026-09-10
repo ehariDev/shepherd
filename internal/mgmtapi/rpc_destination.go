@@ -234,8 +234,8 @@ func (s *DestinationService) UpdateDestination(ctx context.Context, req *connect
 
 // DeleteDestination deletes a destination, refusing (with a
 // destinationInUseError) when it is still referenced by a wizard-managed
-// pipeline's wizard_state. Mirrors OrgsHandler.DeleteDestination's raw JSONB
-// containment query exactly — sqlc has no equivalent.
+// pipeline's wizard_state. Mirrors OrgsHandler.DeleteDestination's JSONB
+// containment check exactly (ListPipelineNamesReferencingDestination).
 func (s *DestinationService) DeleteDestination(ctx context.Context, req *connect.Request[mgmtv1.DeleteDestinationRequest]) (*connect.Response[mgmtv1.DeleteDestinationResponse], error) {
 	if err := requireWriteAuthorized(ctx); err != nil {
 		return nil, err
@@ -246,26 +246,9 @@ func (s *DestinationService) DeleteDestination(ctx context.Context, req *connect
 	}
 	id := owned.ID
 
-	// RAW-SQL-OK: JSONB containment check on wizard_state — no sqlc equivalent
-	rows, err := s.store.Pool().Query(ctx,
-		`SELECT name FROM pipelines
-		 WHERE wizard_state IS NOT NULL
-		 AND wizard_state @> jsonb_build_object('destination_id', $1::text)
-		 ORDER BY name`,
-		id.String())
+	refNames, err := s.store.Queries.ListPipelineNamesReferencingDestination(ctx, id.String())
 	if err != nil {
 		return nil, connect.NewError(connect.CodeInternal, errors.New("failed to check destination references"))
-	}
-	var refNames []string
-	for rows.Next() {
-		var name string
-		if scanErr := rows.Scan(&name); scanErr == nil {
-			refNames = append(refNames, name)
-		}
-	}
-	rows.Close()
-	if err := rows.Err(); err != nil {
-		return nil, connect.NewError(connect.CodeInternal, errors.New("failed to scan references"))
 	}
 	if len(refNames) > 0 {
 		msg := fmt.Sprintf("referenced by %d wizard pipeline(s): %s", len(refNames), strings.Join(refNames, ", "))

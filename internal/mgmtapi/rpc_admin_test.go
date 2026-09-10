@@ -148,6 +148,35 @@ var _ = Describe("shepherd.mgmt.v1 AdminService and MeService RPC", Label("integ
 			Expect(payload["code"]).To(Equal("not_found"))
 		})
 
+		It("DeleteOrg refuses an org that still has clusters or pipelines, and deletes one that is empty", func() {
+			appAdmin := createSession(true, nil)
+
+			nonEmptyOrg, err := st.Queries.CreateOrg(ctx, sqlc.CreateOrgParams{
+				Name: "delete-org-rpc-nonempty", DisplayName: "Delete Org RPC Non-Empty", AdminGroupID: "delete-org-rpc-admin",
+			})
+			Expect(err).NotTo(HaveOccurred())
+			cluster, err := st.Queries.UpsertCluster(ctx, "delete-org-rpc-cluster")
+			Expect(err).NotTo(HaveOccurred())
+			Expect(st.Queries.ClaimCluster(ctx, sqlc.ClaimClusterParams{ID: cluster.ID, OrgID: nonEmptyOrg.ID})).To(Succeed())
+
+			refuseResp := postConnect("/shepherd.mgmt.v1.AdminService/DeleteOrg", map[string]any{
+				"orgId": nonEmptyOrg.ID.String(),
+			}, appAdmin)
+			Expect(refuseResp.StatusCode).To(Equal(http.StatusConflict))
+			refusePayload := decodeBody(refuseResp)
+			Expect(refusePayload["code"]).To(Equal("already_exists"))
+			Expect(refusePayload["message"]).To(ContainSubstring("1 clusters"))
+
+			emptyOrg, err := st.Queries.CreateOrg(ctx, sqlc.CreateOrgParams{
+				Name: "delete-org-rpc-empty", DisplayName: "Delete Org RPC Empty", AdminGroupID: "delete-org-rpc-empty-admin",
+			})
+			Expect(err).NotTo(HaveOccurred())
+			deleteResp := postConnect("/shepherd.mgmt.v1.AdminService/DeleteOrg", map[string]any{
+				"orgId": emptyOrg.ID.String(),
+			}, appAdmin)
+			Expect(deleteResp.StatusCode).To(Equal(http.StatusOK))
+		})
+
 		It("UnclaimCluster marks every collector in the cluster dirty and clears the org assignment", func() {
 			appAdmin := createSession(true, nil)
 

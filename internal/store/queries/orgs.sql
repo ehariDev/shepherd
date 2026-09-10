@@ -6,6 +6,15 @@ RETURNING *;
 -- name: GetOrgByID :one
 SELECT * FROM orgs WHERE id = $1;
 
+-- name: CountOrgContent :one
+-- Backs DeleteOrg's not-empty check: an org with any cluster or pipeline
+-- still attached must refuse deletion rather than orphan them. Derived
+-- tables (rather than two scalar subqueries sharing one placeholder) sidestep
+-- sqlc's analyzer treating the repeated org_id column name as ambiguous.
+SELECT c.cluster_count::int AS cluster_count, p.pipeline_count::int AS pipeline_count
+FROM (SELECT count(*) AS cluster_count FROM clusters WHERE clusters.org_id = sqlc.arg('target_org_id')) c,
+     (SELECT count(*) AS pipeline_count FROM pipelines WHERE pipelines.org_id = sqlc.arg('target_org_id')) p;
+
 -- name: ListOrgs :many
 SELECT * FROM orgs ORDER BY name;
 

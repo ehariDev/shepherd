@@ -11,6 +11,28 @@ import (
 	"github.com/jackc/pgx/v5/pgtype"
 )
 
+const countOrgContent = `-- name: CountOrgContent :one
+SELECT c.cluster_count::int AS cluster_count, p.pipeline_count::int AS pipeline_count
+FROM (SELECT count(*) AS cluster_count FROM clusters WHERE clusters.org_id = $1) c,
+     (SELECT count(*) AS pipeline_count FROM pipelines WHERE pipelines.org_id = $1) p
+`
+
+type CountOrgContentRow struct {
+	ClusterCount  int32 `json:"cluster_count"`
+	PipelineCount int32 `json:"pipeline_count"`
+}
+
+// Backs DeleteOrg's not-empty check: an org with any cluster or pipeline
+// still attached must refuse deletion rather than orphan them. Derived
+// tables (rather than two scalar subqueries sharing one placeholder) sidestep
+// sqlc's analyzer treating the repeated org_id column name as ambiguous.
+func (q *Queries) CountOrgContent(ctx context.Context, targetOrgID pgtype.UUID) (CountOrgContentRow, error) {
+	row := q.db.QueryRow(ctx, countOrgContent, targetOrgID)
+	var i CountOrgContentRow
+	err := row.Scan(&i.ClusterCount, &i.PipelineCount)
+	return i, err
+}
+
 const createOrg = `-- name: CreateOrg :one
 INSERT INTO orgs (name, display_name, admin_group_id, reader_group_id, editor_group_id, tenant_id)
 VALUES ($1, $2, $3, $4, $5, $6)
