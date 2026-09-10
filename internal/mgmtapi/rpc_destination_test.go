@@ -156,6 +156,53 @@ var _ = Describe("shepherd.mgmt.v1.DestinationService RPC", Label("integration")
 		Expect(payload["message"]).To(ContainSubstring("destination-pipeline"))
 	})
 
+	It("maps a real lookup failure on GetDestination to Internal, not a false Not Found", func() {
+		destination, err := st.Queries.CreateDestination(ctx, sqlc.CreateDestinationParams{
+			OrgID: orgID, Name: "lookup-fault-destination", Type: "prometheus", Url: "http://prometheus",
+			SecretName: "secret", SecretNamespace: "default", AuthMode: "none", Extra: json.RawMessage("{}"),
+		})
+		Expect(err).NotTo(HaveOccurred())
+		admin := createSession(false, []string{"destination-admin-group"})
+
+		// Hold an ACCESS EXCLUSIVE lock on destinations from a separate
+		// connection so loadOwnedDestination's plain SELECT (which a row-level
+		// FOR UPDATE lock cannot block) blocks on it, then cancel that
+		// backend — forcing a real, non-ErrNoRows failure deterministically,
+		// without a fault-injection seam in store.go.
+		lockConn, err := st.Pool().Acquire(ctx)
+		Expect(err).NotTo(HaveOccurred())
+		defer lockConn.Release()
+		lockTx, err := lockConn.Begin(ctx)
+		Expect(err).NotTo(HaveOccurred())
+		defer func() { _ = lockTx.Rollback(ctx) }() //nolint:errcheck // best-effort cleanup; explicit Rollback below is the real one
+		_, err = lockTx.Exec(ctx, `LOCK TABLE destinations IN ACCESS EXCLUSIVE MODE`)
+		Expect(err).NotTo(HaveOccurred())
+
+		respCh := make(chan *http.Response, 1)
+		go func() {
+			defer GinkgoRecover()
+			respCh <- postConnect("/shepherd.mgmt.v1.DestinationService/GetDestination", map[string]any{
+				"orgId": orgID.String(), "id": destination.ID.String(),
+			}, admin)
+		}()
+
+		var pid int
+		Eventually(func() error {
+			return st.Pool().QueryRow(ctx,
+				`SELECT pid FROM pg_stat_activity
+				 WHERE datname = current_database() AND wait_event_type = 'Lock' AND query ILIKE '%GetDestinationByID%'`,
+			).Scan(&pid)
+		}, "5s", "20ms").Should(Succeed(), "GetDestination's lookup never blocked on the held table lock")
+		_, err = st.Pool().Exec(ctx, `SELECT pg_cancel_backend($1)`, pid)
+		Expect(err).NotTo(HaveOccurred())
+
+		resp := <-respCh
+		payload := decodeBody(resp)
+		Expect(payload["code"]).To(Equal("internal"), "a real lookup failure must not be reported as not_found")
+
+		Expect(lockTx.Rollback(ctx)).To(Succeed())
+	})
+
 	// Destination templates + tenant bindings (W2, docs/gateway-tier-plan.md
 	// §4). A Destination row acts as a "template" once a binding points at
 	// it; a binding may override tenant_id and nothing else.

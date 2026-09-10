@@ -8,6 +8,7 @@ import (
 	"strings"
 
 	"connectrpc.com/connect"
+	"github.com/jackc/pgx/v5"
 	"google.golang.org/protobuf/encoding/protojson"
 	"google.golang.org/protobuf/types/known/structpb"
 
@@ -127,7 +128,10 @@ func (s *DestinationService) loadOwnedDestination(ctx context.Context, orgIDStr,
 	}
 	d, err := s.store.Queries.GetDestinationByID(ctx, id)
 	if err != nil {
-		return sqlc.Destination{}, connect.NewError(connect.CodeNotFound, errDestinationNotFound)
+		if errors.Is(err, pgx.ErrNoRows) {
+			return sqlc.Destination{}, connect.NewError(connect.CodeNotFound, errDestinationNotFound)
+		}
+		return sqlc.Destination{}, mapError(err)
 	}
 	if d.OrgID != orgID {
 		return sqlc.Destination{}, connect.NewError(connect.CodeNotFound, errDestinationNotFound)
@@ -346,7 +350,10 @@ func (s *DestinationService) loadOwnedDestinationBinding(ctx context.Context, or
 	}
 	b, err := s.store.Queries.GetDestinationBindingByID(ctx, id)
 	if err != nil {
-		return sqlc.DestinationBinding{}, connect.NewError(connect.CodeNotFound, errDestinationBindingNotFound)
+		if errors.Is(err, pgx.ErrNoRows) {
+			return sqlc.DestinationBinding{}, connect.NewError(connect.CodeNotFound, errDestinationBindingNotFound)
+		}
+		return sqlc.DestinationBinding{}, mapError(err)
 	}
 	if b.OrgID != orgID {
 		return sqlc.DestinationBinding{}, connect.NewError(connect.CodeNotFound, errDestinationBindingNotFound)
@@ -417,7 +424,10 @@ func (s *DestinationService) CreateDestinationBinding(ctx context.Context, req *
 
 	dest, err := s.store.Queries.GetDestinationByID(ctx, destID)
 	if err != nil {
-		return nil, connect.NewError(connect.CodeNotFound, errDestinationNotFound)
+		if errors.Is(err, pgx.ErrNoRows) {
+			return nil, connect.NewError(connect.CodeNotFound, errDestinationNotFound)
+		}
+		return nil, mapError(err)
 	}
 	if dest.OrgID != orgID {
 		return nil, connect.NewError(connect.CodeNotFound, errDestinationNotFound)
@@ -532,7 +542,10 @@ func (s *DestinationService) ResolveDestinationBinding(ctx context.Context, req 
 	}
 	row, err := s.store.Queries.GetResolvedDestinationBinding(ctx, id)
 	if err != nil {
-		return nil, connect.NewError(connect.CodeNotFound, errDestinationBindingNotFound)
+		if errors.Is(err, pgx.ErrNoRows) {
+			return nil, connect.NewError(connect.CodeNotFound, errDestinationBindingNotFound)
+		}
+		return nil, mapError(err)
 	}
 	if row.OrgID != orgID {
 		return nil, connect.NewError(connect.CodeNotFound, errDestinationBindingNotFound)

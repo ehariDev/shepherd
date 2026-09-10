@@ -278,6 +278,13 @@ type orgNotEmptyError struct {
 
 func (e *orgNotEmptyError) Error() string { return e.message }
 
+// errClusterNotFound is returned by ClaimCluster/UnclaimCluster when the
+// named cluster genuinely does not exist (GetClusterByName's error was
+// pgx.ErrNoRows specifically) — any other lookup failure is mapError(err)
+// instead, so a connection error or similar is never misreported to the
+// caller as "this cluster does not exist".
+var errClusterNotFound = errors.New("cluster not found")
+
 // ListClusters lists all clusters, or only unclaimed clusters when
 // unclaimed=true (matching the legacy ?unclaimed=true query param).
 func (s *AdminService) ListClusters(ctx context.Context, req *connect.Request[mgmtv1.ListClustersRequest]) (*connect.Response[mgmtv1.ListClustersResponse], error) {
@@ -308,7 +315,10 @@ func (s *AdminService) ClaimCluster(ctx context.Context, req *connect.Request[mg
 	msg := req.Msg
 	cluster, err := s.store.Queries.GetClusterByName(ctx, msg.GetCluster())
 	if err != nil {
-		return nil, connect.NewError(connect.CodeNotFound, errors.New("cluster not found"))
+		if errors.Is(err, pgx.ErrNoRows) {
+			return nil, connect.NewError(connect.CodeNotFound, errClusterNotFound)
+		}
+		return nil, mapError(err)
 	}
 	orgID, err := scanUUID(msg.GetOrgId())
 	if err != nil {
@@ -333,7 +343,10 @@ func (s *AdminService) UnclaimCluster(ctx context.Context, req *connect.Request[
 	}
 	cluster, err := s.store.Queries.GetClusterByName(ctx, req.Msg.GetCluster())
 	if err != nil {
-		return nil, connect.NewError(connect.CodeNotFound, errors.New("cluster not found"))
+		if errors.Is(err, pgx.ErrNoRows) {
+			return nil, connect.NewError(connect.CodeNotFound, errClusterNotFound)
+		}
+		return nil, mapError(err)
 	}
 
 	tx, err := s.store.Pool().Begin(ctx)
