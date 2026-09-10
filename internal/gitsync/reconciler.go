@@ -18,6 +18,7 @@ import (
 	"shepherd/internal/config"
 	"shepherd/internal/crypto"
 	"shepherd/internal/gitrepo"
+	"shepherd/internal/merge"
 	"shepherd/internal/metrics"
 	"shepherd/internal/store"
 	"shepherd/internal/store/sqlc"
@@ -249,21 +250,48 @@ func (r *Reconciler) buildAuth(cred sqlc.GitCredential) (gitrepo.Auth, error) {
 }
 
 func (r *Reconciler) syncFile(ctx context.Context, link sqlc.RepoLink, file gitrepo.File, commit string) error {
-	contents := string(file.Content)
-
-	// Stage 1 validation.
-	result := validate.Stage1(contents)
-	if !result.Valid {
-		return fmt.Errorf("syntax errors in %s: %v", file.Path, result.Diagnostics)
+	if r.validator == nil {
+		// Fail closed: syncing a file into a pipeline on Stage 1 (syntax)
+		// alone was the bug this gate closes. A Reconciler built without a
+		// validator (see New) must refuse to sync rather than silently fall
+		// back to the weaker check.
+		return errors.New("gitsync: validator not configured")
 	}
 
+	contents := string(file.Content)
+
 	// Build pipeline name from path (strip leading / and .alloy extension).
+	// Derived before validation because Stage 2 validates the content
+	// declare-wrapped exactly as it will be served, and the wrapper needs
+	// this name for its block label (validate.WrapForValidation).
 	name := file.Path
 	if len(name) > 0 && name[0] == '/' {
 		name = name[1:]
 	}
 	if len(name) > 6 && name[len(name)-6:] == ".alloy" {
 		name = name[:len(name)-6]
+	}
+
+	// Stages 1 and 2: syntax, then `alloy validate` on the content wrapped
+	// the same way the merge engine wraps it. r.validator was injected at
+	// construction (New) but never referenced here before this change —
+	// every synced file passed on Stage 1 syntax alone, regardless of
+	// whether it would actually validate.
+	wrapped := validate.WrapForValidation(name, contents)
+	if result := r.validator.Stages12(ctx, wrapped); !result.Valid {
+		return fmt.Errorf("validation errors in %s: %v", file.Path, result.Diagnostics)
+	}
+
+	// Stage 3 dry-run: merge this file's content against the linked
+	// collector's other enabled pipelines and validate the merged result.
+	// gitsync has no schema registry (see this package's doc comment and
+	// New), so this validates the UNENFORCED superset of what production
+	// would actually serve for that collector — strictly stricter, never
+	// looser: production's own Stage 3 (internal/mgmtapi's stage3Check)
+	// additionally drops role/signal-mismatched pipelines, so anything this
+	// dry-run accepts, production either accepts too or safely excludes.
+	if err := r.stage3DryRun(ctx, link, name, contents); err != nil {
+		return fmt.Errorf("stage-3 merge dry-run for %s: %w", file.Path, err)
 	}
 
 	matchersJSON, err := json.Marshal([]string{})
@@ -339,6 +367,79 @@ func (r *Reconciler) syncFile(ctx context.Context, link sqlc.RepoLink, file gitr
 	}
 
 	r.recordPipelineChange(ctx, updated, orgID, link.CollectorID, commit, "update")
+	return nil
+}
+
+// stage3DryRun assembles the merged config the linked collector would be
+// served if this file's content (candidateName, candidateContents) were
+// synced, and validates that merged result with Stages 1 and 2. It never
+// applies role/signal enforcement (merge.WithRoleEnforcement) — gitsync has
+// no schema registry — so this always validates a superset of what
+// production's own Stage 3 (internal/mgmtapi's stage3Check) would actually
+// serve for the same collector: strictly stricter, never looser.
+func (r *Reconciler) stage3DryRun(ctx context.Context, link sqlc.RepoLink, candidateName, candidateContents string) error {
+	enabledPipelines, err := r.store.Queries.ListEnabledPipelinesForMerge(ctx, link.OrgID)
+	if err != nil {
+		return fmt.Errorf("loading pipelines: %w", err)
+	}
+
+	// Every other enabled pipeline, minus any existing row for this same
+	// name — it is superseded by the candidate below, which represents the
+	// file as it would be AFTER this sync.
+	mergePipelines := make([]merge.Pipeline, 0, len(enabledPipelines)+1)
+	for i := range enabledPipelines {
+		ep := enabledPipelines[i]
+		if ep.Name == candidateName {
+			continue
+		}
+		var m []string
+		if jsonErr := json.Unmarshal(ep.Matchers, &m); jsonErr != nil {
+			continue
+		}
+		repoLinkCollectorID := ""
+		if ep.RepoLinkCollectorID.Valid {
+			repoLinkCollectorID = ep.RepoLinkCollectorID.String()
+		}
+		mergePipelines = append(mergePipelines, merge.Pipeline{
+			ID:                  ep.ID.String(),
+			Name:                ep.Name,
+			Contents:            ep.Contents,
+			Matchers:            m,
+			Source:              ep.Source,
+			RepoLinkCollectorID: repoLinkCollectorID,
+		})
+	}
+	mergePipelines = append(mergePipelines, merge.Pipeline{
+		ID:                  "dry-run-candidate",
+		Name:                candidateName,
+		Contents:            candidateContents,
+		Source:              "git",
+		RepoLinkCollectorID: link.CollectorID.String(),
+	})
+
+	coll, err := r.store.Queries.GetCollectorByID(ctx, link.CollectorID)
+	if err != nil {
+		return fmt.Errorf("loading collector: %w", err)
+	}
+	cluster, err := r.store.Queries.GetClusterByID(ctx, coll.ClusterID)
+	if err != nil {
+		return fmt.Errorf("loading cluster: %w", err)
+	}
+
+	cl := merge.CollectorLabels{
+		CollectorID: link.CollectorID.String(),
+		Labels:      map[string]string{"role": coll.Role, "cluster": cluster.Name},
+	}
+	// No WithRoleEnforcement option: gitsync has no schema registry, so this
+	// deliberately validates the unenforced superset (see doc comment above).
+	assembled, err := merge.Assemble(link.CollectorID.String(), cluster.Name+"/"+coll.Role, cl, mergePipelines, "dev", "")
+	if err != nil {
+		return fmt.Errorf("merge: %w", err)
+	}
+
+	if result := r.validator.Stages12(ctx, assembled.Content); !result.Valid {
+		return fmt.Errorf("merged config invalid: %v", result.Diagnostics)
+	}
 	return nil
 }
 

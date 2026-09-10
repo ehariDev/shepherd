@@ -3,10 +3,12 @@ package gitsync
 import (
 	"context"
 	"encoding/base64"
+	"encoding/json"
 	"fmt"
 	"io"
 	"log/slog"
 	"sync/atomic"
+	"time"
 
 	"github.com/jackc/pgx/v5/pgtype"
 	. "github.com/onsi/ginkgo/v2"
@@ -17,6 +19,8 @@ import (
 	"shepherd/internal/gitrepo"
 	"shepherd/internal/store"
 	"shepherd/internal/store/sqlc"
+	"shepherd/internal/validate"
+	"shepherd/internal/wizard/wizardtest"
 )
 
 // giteaFixtureCounter makes repo/token names unique across every spec that
@@ -104,9 +108,30 @@ var _ = Describe("Reconciler.reconcileLink", Label("integration"), func() {
 		})
 		Expect(err).NotTo(HaveOccurred())
 
+		// A real validator, same shape production wires via validate.New
+		// (server.go): without it, syncFile now fails closed (W2-S1) rather
+		// than syncing on Stage 1 syntax alone. bin resolves to a real alloy
+		// binary, an operator override, or a docker shim around the pinned
+		// grafana/alloy image — see wizardtest.AlloyBinary's doc comment for
+		// why "" must Fail here rather than silently skip: skipWithoutGitea
+		// above already gates the Docker-unavailable case, so reaching this
+		// point with no usable binary is a real environment problem, not an
+		// expected local-dev gap.
+		bin := wizardtest.AlloyBinary()
+		if bin == "" {
+			Fail("gitsync: no alloy binary and no usable docker image to run Stage 2/3 validation")
+		}
+		v := validate.New(&config.ValidateConfig{
+			AlloyBinary:    bin,
+			StabilityLevel: "experimental",
+			Timeout:        30 * time.Second,
+			Stage3Timeout:  30 * time.Second,
+		})
+
 		r = &Reconciler{
 			store:      st,
 			crypto:     enc,
+			validator:  v,
 			limits:     gitrepo.Limits{},
 			tokenCache: gitrepo.NewTokenCache(),
 			logger:     slog.New(slog.NewTextHandler(io.Discard, nil)),
@@ -280,5 +305,64 @@ var _ = Describe("Reconciler.reconcileLink", Label("integration"), func() {
 		Expect(unchanged.Contents).To(Equal("// original content"))
 
 		Expect(dirtyFlag()).To(BeFalse())
+	})
+
+	// W2-S1: r.validator was injected at construction but never referenced
+	// inside syncFile, so every synced file passed on Stage 1 (syntax)
+	// alone. This file parses fine (a component block is syntactically
+	// valid) but references a component that does not exist, which only
+	// Stage 2's real `alloy validate` catches.
+	It("rejects a file that parses but fails alloy validate (stage 2)", func() {
+		push(`nonexistent.component "x" {
+  forward_to = []
+}`)
+
+		err := r.reconcileLink(ctx, link)
+		Expect(err).To(HaveOccurred())
+
+		_, lookupErr := st.Queries.GetPipelineByOrgAndName(ctx, sqlc.GetPipelineByOrgAndNameParams{OrgID: link.OrgID, Name: pipelineName})
+		Expect(lookupErr).To(HaveOccurred(), "a file that fails stage 2 must never be synced as a pipeline")
+
+		updatedLink, linkErr := st.Queries.GetRepoLinkByID(ctx, link.ID)
+		Expect(linkErr).NotTo(HaveOccurred())
+		Expect(updatedLink.SyncStatus.String).To(Equal("error"))
+		Expect(updatedLink.SyncError.String).To(ContainSubstring("validation errors"))
+	})
+
+	// W2-S1's stage-3 dry-run: this file is individually valid, but merging
+	// it against the linked collector's other enabled pipelines produces a
+	// declare-block-name collision — the same failure mode
+	// internal/mgmtapi's stage3Check refuses to enable on. gitsync
+	// previously never ran this check at all, so a file like this synced
+	// "ok" and only surfaced as a merge failure later, on the serve path.
+	It("rejects a file that merges into a duplicate block label", func() {
+		// "my_service" and "my-service" both sanitize to declare block
+		// "pipe_my_service" (merge.SanitizeName lowercases and folds "-" to
+		// "_") — pre-seed the former as an already-enabled UI pipeline
+		// matching this collector's labels.
+		_, err := st.Queries.CreatePipeline(ctx, sqlc.CreatePipelineParams{
+			OrgID: link.OrgID, Name: "my_service", Contents: "// pre-existing",
+			Matchers: json.RawMessage(`["cluster=\"gitsync-cluster\""]`),
+			Enabled:  true, Source: "ui",
+			WizardState: json.RawMessage(`{}`), CreatedBy: "test", UpdatedBy: "test",
+		})
+		Expect(err).NotTo(HaveOccurred())
+
+		p, err := newPusher(ctx, repoCloneURL, giteaAdminUser, giteaAdminPass)
+		Expect(err).NotTo(HaveOccurred())
+		Expect(p.commitAndPush(ctx, map[string]string{
+			"my-service.alloy": "// duplicate label candidate",
+		}, "dup label fixture")).To(Succeed())
+
+		err = r.reconcileLink(ctx, link)
+		Expect(err).To(HaveOccurred())
+		Expect(err.Error()).To(ContainSubstring("collision"))
+
+		_, lookupErr := st.Queries.GetPipelineByOrgAndName(ctx, sqlc.GetPipelineByOrgAndNameParams{OrgID: link.OrgID, Name: "my-service"})
+		Expect(lookupErr).To(HaveOccurred(), "a file whose stage-3 merge dry-run fails must never be synced as a pipeline")
+
+		updatedLink, linkErr := st.Queries.GetRepoLinkByID(ctx, link.ID)
+		Expect(linkErr).NotTo(HaveOccurred())
+		Expect(updatedLink.SyncStatus.String).To(Equal("error"))
 	})
 })
