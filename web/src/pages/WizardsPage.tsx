@@ -2,6 +2,7 @@ import { useQuery } from '@tanstack/react-query';
 import { Link } from '@tanstack/react-router';
 import { AppWindow } from 'lucide-react';
 import { clients } from '@/api/transport';
+import { QueryError } from '@/components/QueryError';
 import { useOrgId } from '@/hooks/useOrg';
 
 // The catalog is whatever the backend registry serves — title and description
@@ -16,7 +17,7 @@ import { useOrgId } from '@/hooks/useOrg';
 // and the failure is quiet in exactly this direction.
 export function WizardsPage() {
   const orgId = useOrgId();
-  const { data, isLoading } = useQuery({
+  const { data, isLoading, isError, error } = useQuery({
     queryKey: ['wizards', orgId],
     queryFn: () => clients.wizard.listWizards({ orgId }),
     enabled: !!orgId,
@@ -33,6 +34,8 @@ export function WizardsPage() {
 
       {!orgId ? (
         <p className='text-sm text-muted'>No organisation context.</p>
+      ) : isError ? (
+        <QueryError error={error} noun='wizards' />
       ) : isLoading ? (
         <p className='text-sm text-muted'>Loading…</p>
       ) : wizards.length === 0 ? (

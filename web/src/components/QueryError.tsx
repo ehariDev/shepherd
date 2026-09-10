@@ -13,13 +13,22 @@ import { toApiError } from '@/api/transport';
  * Permission denials get their own wording, because "retry" is useless advice
  * for a request that will always be refused.
  */
-export function QueryError({ error, noun }: { error: unknown; noun: string }) {
+export function QueryError({
+  error,
+  noun,
+  testId = 'query-error',
+}: {
+  error: unknown;
+  noun: string;
+  /** Override the default testid — kept stable for pages migrated off a bespoke error box. */
+  testId?: string;
+}) {
   const err = toApiError(error);
   const denied = err.code === 'permission_denied' || err.code === 'unauthenticated';
   return (
     <div
       role='alert'
-      data-testid='query-error'
+      data-testid={testId}
       className='rounded-lg border border-red-500/30 bg-red-500/10 px-4 py-3 text-sm text-red-400'
     >
       {denied

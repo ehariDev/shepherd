@@ -4,10 +4,68 @@ import { ChevronLeft, ChevronRight } from 'lucide-react';
 import { useState } from 'react';
 import { clients } from '@/api/transport';
 import { QueryError } from '@/components/QueryError';
+import { DataTable, type DataTableColumn } from '@/components/ui/DataTable';
+import { Field, Input } from '@/components/ui/Field';
+import type { AuditEntry } from '@/gen/shepherd/mgmt/v1/audit_pb';
 import { useOrgId } from '@/hooks/useOrg';
 import { formatTimestampRelative } from '@/lib/utils';
 
 const PAGE_SIZE = 25;
+
+const auditColumns: DataTableColumn<AuditEntry>[] = [
+  {
+    key: 'when',
+    header: 'When',
+    cellClassName: 'px-4 py-2.5 text-muted whitespace-nowrap',
+    render: (entry) => (
+      <span title={entry.at ? timestampDate(entry.at).toLocaleString() : undefined}>
+        {formatTimestampRelative(entry.at)}
+      </span>
+    ),
+  },
+  {
+    key: 'actor',
+    header: 'Actor',
+    cellClassName: 'px-4 py-2.5 font-mono text-xs',
+    render: (entry) => (
+      <>
+        {entry.actor || '—'}
+        {entry.actorType && <span className='ml-1.5 text-muted-3'>({entry.actorType})</span>}
+      </>
+    ),
+  },
+  {
+    key: 'onBehalfOf',
+    header: 'On behalf of',
+    cellClassName: 'px-4 py-2.5 font-mono text-xs',
+    // The delegated half of a machine action. It was stored and returned by
+    // the API but never shown, which defeats the point: two-part
+    // attribution exists so a human reading this log can see who authorised
+    // a machine's write. A dash means no delegation -- a person acting for
+    // themselves -- not a missing value.
+    render: (entry) =>
+      entry.onBehalfOf ? entry.onBehalfOf : <span className='text-muted-3'>—</span>,
+  },
+  {
+    key: 'action',
+    header: 'Action',
+    cellClassName: 'px-4 py-2.5 font-mono text-xs',
+    render: (entry) => entry.action,
+  },
+  {
+    key: 'resource',
+    header: 'Resource',
+    cellClassName: 'px-4 py-2.5 text-muted text-xs',
+    render: (entry) => (
+      <>
+        {entry.resourceType}
+        {entry.resourceId && (
+          <span className='ml-1 font-mono text-muted-3'>{entry.resourceId}</span>
+        )}
+      </>
+    ),
+  },
+];
 
 export function AuditPage() {
   const orgId = useOrgId();
@@ -56,24 +114,24 @@ export function AuditPage() {
       </div>
 
       <form onSubmit={applyFilters} className='flex flex-wrap items-end gap-3'>
-        <label className='block text-xs font-medium text-muted'>
-          Actor
-          <input
-            value={actorDraft}
-            onChange={(e) => setActorDraft(e.target.value)}
-            placeholder='user@example.com'
-            className='mt-1 block w-56 rounded-md border border-border-strong bg-card px-3 py-1.5 text-sm'
-          />
-        </label>
-        <label className='block text-xs font-medium text-muted'>
-          Action
-          <input
-            value={actionDraft}
-            onChange={(e) => setActionDraft(e.target.value)}
-            placeholder='pipeline.update'
-            className='mt-1 block w-56 rounded-md border border-border-strong bg-card px-3 py-1.5 text-sm'
-          />
-        </label>
+        <div className='w-56'>
+          <Field label='Actor'>
+            <Input
+              value={actorDraft}
+              onChange={(e) => setActorDraft(e.target.value)}
+              placeholder='user@example.com'
+            />
+          </Field>
+        </div>
+        <div className='w-56'>
+          <Field label='Action'>
+            <Input
+              value={actionDraft}
+              onChange={(e) => setActionDraft(e.target.value)}
+              placeholder='pipeline.update'
+            />
+          </Field>
+        </div>
         <button
           type='submit'
           className='rounded-md bg-indigo-600 px-3 py-1.5 text-xs font-medium text-white hover:bg-indigo-500'
@@ -105,59 +163,12 @@ export function AuditPage() {
         </div>
       ) : (
         <>
-          <div className='rounded-lg border border-border overflow-hidden overflow-x-auto'>
-            <table className='w-full text-sm'>
-              <thead className='bg-card text-muted'>
-                <tr>
-                  <th className='px-4 py-3 text-left font-medium'>When</th>
-                  <th className='px-4 py-3 text-left font-medium'>Actor</th>
-                  <th className='px-4 py-3 text-left font-medium'>On behalf of</th>
-                  <th className='px-4 py-3 text-left font-medium'>Action</th>
-                  <th className='px-4 py-3 text-left font-medium'>Resource</th>
-                </tr>
-              </thead>
-              <tbody>
-                {items.map((entry) => (
-                  <tr key={String(entry.id)} className='border-t border-border hover:bg-card/60'>
-                    <td
-                      className='px-4 py-2.5 text-muted whitespace-nowrap'
-                      title={entry.at ? timestampDate(entry.at).toLocaleString() : undefined}
-                    >
-                      {formatTimestampRelative(entry.at)}
-                    </td>
-                    <td className='px-4 py-2.5 font-mono text-xs'>
-                      {entry.actor || '—'}
-                      {entry.actorType && (
-                        <span className='ml-1.5 text-muted-3'>({entry.actorType})</span>
-                      )}
-                    </td>
-                    {/*
-                      The delegated half of a machine action. It was stored and
-                      returned by the API but never shown, which defeats the
-                      point: two-part attribution exists so a human reading this
-                      log can see who authorised a machine's write. A dash means
-                      no delegation — a person acting for themselves — not a
-                      missing value.
-                    */}
-                    <td className='px-4 py-2.5 font-mono text-xs'>
-                      {entry.onBehalfOf ? (
-                        entry.onBehalfOf
-                      ) : (
-                        <span className='text-muted-3'>—</span>
-                      )}
-                    </td>
-                    <td className='px-4 py-2.5 font-mono text-xs'>{entry.action}</td>
-                    <td className='px-4 py-2.5 text-muted text-xs'>
-                      {entry.resourceType}
-                      {entry.resourceId && (
-                        <span className='ml-1 font-mono text-muted-3'>{entry.resourceId}</span>
-                      )}
-                    </td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
+          <DataTable
+            columns={auditColumns}
+            rows={items}
+            rowKey={(entry) => String(entry.id)}
+            scrollX
+          />
 
           <div className='flex items-center justify-between text-xs text-muted'>
             <span>

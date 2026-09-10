@@ -5,8 +5,54 @@ import { toast } from 'sonner';
 import { clients, toApiError } from '@/api/transport';
 import { AdminConfirmDialog } from '@/components/admin/AdminConfirmDialog';
 import { AdminModal, AdminModalActions } from '@/components/admin/AdminModal';
+import { QueryError } from '@/components/QueryError';
+import { DataTable, type DataTableColumn } from '@/components/ui/DataTable';
+import { Field, Input } from '@/components/ui/Field';
 import type { AgentToken } from '@/gen/shepherd/mgmt/v1/admin_pb';
 import { useMe } from '@/hooks/useMe';
+
+function tokenColumns(
+  isAppAdmin: boolean,
+  setRevokeToken: (t: AgentToken) => void,
+): DataTableColumn<AgentToken>[] {
+  const cols: DataTableColumn<AgentToken>[] = [
+    { key: 'name', header: 'Name', render: (t) => t.name },
+    {
+      key: 'status',
+      header: 'Status',
+      render: (t) => (
+        <span
+          className={`text-xs font-medium ${t.status === 'active' ? 'text-emerald-500' : 'text-muted-2'}`}
+        >
+          {t.status}
+        </span>
+      ),
+    },
+    {
+      key: 'createdBy',
+      header: 'Created by',
+      cellClassName: 'px-4 py-2.5 text-muted',
+      render: (t) => t.createdBy,
+    },
+  ];
+  if (isAppAdmin) {
+    cols.push({
+      key: 'actions',
+      header: '',
+      cellClassName: 'px-4 py-2.5 text-right',
+      render: (t) =>
+        t.status === 'active' && (
+          <button
+            onClick={() => setRevokeToken(t)}
+            className='text-xs text-muted hover:text-red-400'
+          >
+            Revoke
+          </button>
+        ),
+    });
+  }
+  return cols;
+}
 
 export function AdminTokensPage() {
   const { data: me } = useMe();
@@ -23,7 +69,7 @@ export function AdminTokensPage() {
   const [copied, setCopied] = useState(false);
   const [revokeToken, setRevokeToken] = useState<AgentToken | null>(null);
 
-  const { data, isLoading } = useQuery({
+  const { data, isLoading, isError, error } = useQuery({
     queryKey: ['tokens'],
     queryFn: () => clients.admin.listAgentTokens({}),
   });
@@ -76,52 +122,20 @@ export function AdminTokensPage() {
         )}
       </div>
 
-      {isLoading ? (
+      {isError ? (
+        <QueryError error={error} noun='agent tokens' />
+      ) : isLoading ? (
         <p className='text-sm text-muted'>Loading…</p>
       ) : (data?.items ?? []).length === 0 ? (
         <div className='rounded-lg border border-border bg-card/40 p-8 text-center'>
           <p className='text-sm text-muted'>No agent tokens yet.</p>
         </div>
       ) : (
-        <div className='rounded-lg border border-border overflow-hidden'>
-          <table className='w-full text-sm'>
-            <thead className='bg-card text-muted'>
-              <tr>
-                <th className='px-4 py-3 text-left font-medium'>Name</th>
-                <th className='px-4 py-3 text-left font-medium'>Status</th>
-                <th className='px-4 py-3 text-left font-medium'>Created by</th>
-                {isAppAdmin && <th className='px-4 py-3' />}
-              </tr>
-            </thead>
-            <tbody>
-              {(data?.items ?? []).map((t) => (
-                <tr key={t.id} className='border-t border-border hover:bg-card/60'>
-                  <td className='px-4 py-2.5'>{t.name}</td>
-                  <td className='px-4 py-2.5'>
-                    <span
-                      className={`text-xs font-medium ${t.status === 'active' ? 'text-emerald-500' : 'text-muted-2'}`}
-                    >
-                      {t.status}
-                    </span>
-                  </td>
-                  <td className='px-4 py-2.5 text-muted'>{t.createdBy}</td>
-                  {isAppAdmin && (
-                    <td className='px-4 py-2.5 text-right'>
-                      {t.status === 'active' && (
-                        <button
-                          onClick={() => setRevokeToken(t)}
-                          className='text-xs text-muted hover:text-red-400'
-                        >
-                          Revoke
-                        </button>
-                      )}
-                    </td>
-                  )}
-                </tr>
-              ))}
-            </tbody>
-          </table>
-        </div>
+        <DataTable
+          columns={tokenColumns(isAppAdmin, setRevokeToken)}
+          rows={data?.items ?? []}
+          rowKey={(t) => t.id}
+        />
       )}
 
       {showCreate && (
@@ -133,16 +147,14 @@ export function AdminTokensPage() {
             }}
             className='space-y-4'
           >
-            <label className='block text-xs font-medium text-muted'>
-              Name
-              <input
+            <Field label='Name'>
+              <Input
                 value={name}
                 onChange={(e) => setName(e.target.value)}
                 required
-                className='mt-1 w-full rounded-md border border-border-strong bg-card px-3 py-1.5 text-sm'
                 placeholder='prod-eu-1-agent'
               />
-            </label>
+            </Field>
             <AdminModalActions
               onCancel={() => setShowCreate(false)}
               submitLabel='Create'

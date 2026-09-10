@@ -5,6 +5,10 @@ import { toast } from 'sonner';
 import { clients, toApiError } from '@/api/transport';
 import { AdminConfirmDialog } from '@/components/admin/AdminConfirmDialog';
 import { AdminModal, AdminModalActions } from '@/components/admin/AdminModal';
+import { QueryError } from '@/components/QueryError';
+import { Banner } from '@/components/ui/Banner';
+import { DataTable, type DataTableColumn } from '@/components/ui/DataTable';
+import { Field, Input, Select } from '@/components/ui/Field';
 import type { Team } from '@/gen/shepherd/mgmt/v1/team_pb';
 import { useMe } from '@/hooks/useMe';
 import { useOrg } from '@/hooks/useOrg';
@@ -19,6 +23,79 @@ import { useOrg } from '@/hooks/useOrg';
  * explicit local users (a real list, editable here). A team can use both, and
  * a team with neither can still own pipelines — it just has no members yet.
  */
+function teamColumns(
+  canManage: boolean,
+  setMembersOf: (t: Team) => void,
+  setDeleteTeam: (t: Team) => void,
+): DataTableColumn<Team>[] {
+  return [
+    {
+      key: 'name',
+      header: 'Team',
+      headerClassName: 'px-4 py-3 text-left font-medium',
+      cellClassName: 'px-4 py-3 font-medium',
+      render: (t) => t.name,
+    },
+    {
+      key: 'membership',
+      header: 'Membership',
+      headerClassName: 'px-4 py-3 text-left font-medium',
+      cellClassName: 'px-4 py-3',
+      render: (t) => (
+        <div className='flex flex-wrap items-center gap-1.5'>
+          {t.idpGroupId && (
+            <span
+              data-testid={`team-source-group-${t.name}`}
+              className='inline-flex items-center gap-1 rounded bg-sky-500/15 px-1.5 py-0.5 text-xs text-sky-300'
+              title='Anyone whose identity provider token carries this group is a member'
+            >
+              group <span className='font-mono'>{t.idpGroupId}</span>
+            </span>
+          )}
+          {t.memberCount > 0 && (
+            <span
+              data-testid={`team-source-members-${t.name}`}
+              className='inline-flex items-center gap-1 rounded bg-emerald-500/15 px-1.5 py-0.5 text-xs text-emerald-300'
+            >
+              {t.memberCount} {t.memberCount === 1 ? 'member' : 'members'}
+            </span>
+          )}
+          {!t.idpGroupId && t.memberCount === 0 && (
+            <span className='text-xs text-muted-2'>no members yet</span>
+          )}
+        </div>
+      ),
+    },
+    {
+      key: 'actions',
+      header: '',
+      headerClassName: 'px-4 py-3',
+      cellClassName: 'px-4 py-3 text-right whitespace-nowrap',
+      render: (t) =>
+        canManage && (
+          <>
+            <button
+              data-testid={`team-members-${t.name}`}
+              onClick={() => setMembersOf(t)}
+              title='Manage members'
+              className='mr-2 text-muted-3 hover:text-zinc-200'
+            >
+              <UserPlus size={15} />
+            </button>
+            <button
+              data-testid={`team-delete-${t.name}`}
+              onClick={() => setDeleteTeam(t)}
+              title='Delete'
+              className='text-muted-3 hover:text-red-400'
+            >
+              <Trash2 size={15} />
+            </button>
+          </>
+        ),
+    },
+  ];
+}
+
 export function TeamsPage() {
   const { data: me } = useMe();
   const { orgId, orgs } = useOrg();
@@ -73,14 +150,7 @@ export function TeamsPage() {
   }
   if (isLoading) return <p className='text-sm text-muted'>Loading…</p>;
   if (isError) {
-    return (
-      <div
-        data-testid='teams-error'
-        className='rounded-md border border-red-500/30 bg-red-500/10 p-3 text-sm text-red-400'
-      >
-        {toApiError(error).message || 'Could not load teams.'}
-      </div>
-    );
+    return <QueryError error={error} noun='teams' testId='teams-error' />;
   }
 
   const teams = data?.items ?? [];
@@ -119,74 +189,13 @@ export function TeamsPage() {
           </p>
         </div>
       ) : (
-        <div className='rounded-lg border border-border overflow-hidden'>
-          <table className='w-full text-sm'>
-            <thead className='bg-card text-muted'>
-              <tr>
-                <th className='px-4 py-3 text-left font-medium'>Team</th>
-                <th className='px-4 py-3 text-left font-medium'>Membership</th>
-                <th className='px-4 py-3' />
-              </tr>
-            </thead>
-            <tbody>
-              {teams.map((t) => (
-                <tr
-                  key={t.id}
-                  data-testid={`team-row-${t.name}`}
-                  className='border-t border-border'
-                >
-                  <td className='px-4 py-3 font-medium'>{t.name}</td>
-                  <td className='px-4 py-3'>
-                    <div className='flex flex-wrap items-center gap-1.5'>
-                      {t.idpGroupId && (
-                        <span
-                          data-testid={`team-source-group-${t.name}`}
-                          className='inline-flex items-center gap-1 rounded bg-sky-500/15 px-1.5 py-0.5 text-xs text-sky-300'
-                          title='Anyone whose identity provider token carries this group is a member'
-                        >
-                          group <span className='font-mono'>{t.idpGroupId}</span>
-                        </span>
-                      )}
-                      {t.memberCount > 0 && (
-                        <span
-                          data-testid={`team-source-members-${t.name}`}
-                          className='inline-flex items-center gap-1 rounded bg-emerald-500/15 px-1.5 py-0.5 text-xs text-emerald-300'
-                        >
-                          {t.memberCount} {t.memberCount === 1 ? 'member' : 'members'}
-                        </span>
-                      )}
-                      {!t.idpGroupId && t.memberCount === 0 && (
-                        <span className='text-xs text-muted-2'>no members yet</span>
-                      )}
-                    </div>
-                  </td>
-                  <td className='px-4 py-3 text-right whitespace-nowrap'>
-                    {canManage && (
-                      <>
-                        <button
-                          data-testid={`team-members-${t.name}`}
-                          onClick={() => setMembersOf(t)}
-                          title='Manage members'
-                          className='mr-2 text-muted-3 hover:text-zinc-200'
-                        >
-                          <UserPlus size={15} />
-                        </button>
-                        <button
-                          data-testid={`team-delete-${t.name}`}
-                          onClick={() => setDeleteTeam(t)}
-                          title='Delete'
-                          className='text-muted-3 hover:text-red-400'
-                        >
-                          <Trash2 size={15} />
-                        </button>
-                      </>
-                    )}
-                  </td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
-        </div>
+        <DataTable
+          columns={teamColumns(canManage, setMembersOf, setDeleteTeam)}
+          rows={teams}
+          rowKey={(t) => t.id}
+          rowClassName='border-t border-border'
+          rowProps={(t) => ({ 'data-testid': `team-row-${t.name}` })}
+        />
       )}
 
       {showCreate && (
@@ -198,31 +207,28 @@ export function TeamsPage() {
             }}
             className='space-y-3'
           >
-            <label className='block text-xs font-medium text-muted'>
-              Name
-              <input
+            <Field label='Name'>
+              <Input
                 data-testid='team-name'
                 value={createForm.name}
                 onChange={(e) => setCreateForm((f) => ({ ...f, name: e.target.value }))}
                 required
-                className='mt-1 w-full rounded-md border border-border-strong bg-card px-3 py-1.5 text-sm'
                 placeholder='platform'
               />
-            </label>
-            <label className='block text-xs font-medium text-muted'>
-              Identity provider group <span className='text-muted-3'>(optional)</span>
-              <input
+            </Field>
+            <Field
+              label='Identity provider group'
+              optional
+              hint='Whatever your provider emits in the groups claim. Leave it empty to build the team from local users instead — you can add them once it exists.'
+            >
+              <Input
                 data-testid='team-group'
                 value={createForm.idpGroupId}
                 onChange={(e) => setCreateForm((f) => ({ ...f, idpGroupId: e.target.value }))}
-                className='mt-1 w-full rounded-md border border-border-strong bg-card px-3 py-1.5 text-sm font-mono'
+                mono
                 placeholder='platform-engineers'
               />
-              <span className='mt-1 block text-2xs font-normal text-muted-3'>
-                Whatever your provider emits in the groups claim. Leave it empty to build the team
-                from local users instead — you can add them once it exists.
-              </span>
-            </label>
+            </Field>
             <AdminModalActions
               onCancel={() => setShowCreate(false)}
               submitLabel='Create'
@@ -319,14 +325,11 @@ function TeamMembersModal({
     <AdminModal title={`Members of ${team.name}`} onClose={onClose}>
       <div className='space-y-4'>
         {team.idpGroupId && (
-          <p
-            data-testid='team-members-group-note'
-            className='rounded-md border border-sky-500/30 bg-sky-500/10 p-2.5 text-xs text-sky-200'
-          >
+          <Banner variant='info' testId='team-members-group-note'>
             Anyone in the group <span className='font-mono'>{team.idpGroupId}</span> is already a
             member. Those people are not listed here — membership lives in your identity provider,
             not in Shepherd. Anyone added below is a member in addition to them.
-          </p>
+          </Banner>
         )}
 
         {isLoading ? (
@@ -375,14 +378,12 @@ function TeamMembersModal({
           }}
           className='flex items-end gap-2'
         >
-          <label className='block flex-1 text-xs font-medium text-muted'>
-            Add a local user
+          <Field label='Add a local user' className='flex-1'>
             {users ? (
-              <select
+              <Select
                 data-testid='team-member-add-select'
                 value={addUserId}
                 onChange={(e) => setAddUserId(e.target.value)}
-                className='mt-1 w-full rounded-md border border-border-strong bg-card px-3 py-1.5 text-sm'
               >
                 <option value=''>Select a user…</option>
                 {candidates.map((u) => (
@@ -391,17 +392,17 @@ function TeamMembersModal({
                     {u.displayName ? ` — ${u.displayName}` : ''}
                   </option>
                 ))}
-              </select>
+              </Select>
             ) : (
-              <input
+              <Input
                 data-testid='team-member-add-input'
                 value={addUserId}
                 onChange={(e) => setAddUserId(e.target.value)}
                 placeholder='user id'
-                className='mt-1 w-full rounded-md border border-border-strong bg-card px-3 py-1.5 text-sm font-mono'
+                mono
               />
             )}
-          </label>
+          </Field>
           <button
             data-testid='team-member-add'
             type='submit'

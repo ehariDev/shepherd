@@ -5,6 +5,9 @@ import { toast } from 'sonner';
 import { clients, toApiError } from '@/api/transport';
 import { AdminConfirmDialog } from '@/components/admin/AdminConfirmDialog';
 import { AdminModal, AdminModalActions } from '@/components/admin/AdminModal';
+import { QueryError } from '@/components/QueryError';
+import { DataTable, type DataTableColumn } from '@/components/ui/DataTable';
+import { Field, Input } from '@/components/ui/Field';
 import type { Org } from '@/gen/shepherd/mgmt/v1/admin_pb';
 import { useMe } from '@/hooks/useMe';
 
@@ -16,6 +19,62 @@ const emptyCreateForm = {
   readerGroupId: '',
   tenantId: '',
 };
+
+function orgColumns(
+  isAppAdmin: boolean,
+  openEdit: (o: Org) => void,
+  setDeleteOrg: (o: Org) => void,
+): DataTableColumn<Org>[] {
+  const cols: DataTableColumn<Org>[] = [
+    {
+      key: 'name',
+      header: 'Name',
+      cellClassName: 'px-4 py-2.5 font-mono text-xs',
+      render: (o) => o.name,
+    },
+    { key: 'displayName', header: 'Display name', render: (o) => o.displayName },
+    {
+      key: 'tenant',
+      header: 'Tenant',
+      cellClassName: 'px-4 py-2.5 font-mono text-xs',
+      render: (o) =>
+        o.tenantId ? (
+          o.tenantId
+        ) : (
+          // An org without a tenant cannot have tenant routes, so say that
+          // rather than showing an empty cell an admin would read as
+          // "nothing to do here".
+          <span className='text-muted-3 italic'>not set &mdash; no routes possible</span>
+        ),
+    },
+  ];
+  if (isAppAdmin) {
+    cols.push({
+      key: 'actions',
+      header: '',
+      cellClassName: 'px-4 py-2.5 text-right',
+      render: (o) => (
+        <div className='flex justify-end gap-3'>
+          <button
+            onClick={() => openEdit(o)}
+            className='text-muted-3 transition-colors hover:text-indigo-400'
+            aria-label={`Edit ${o.name}`}
+          >
+            <Pencil size={14} />
+          </button>
+          <button
+            onClick={() => setDeleteOrg(o)}
+            className='text-muted-3 transition-colors hover:text-red-400'
+            aria-label={`Delete ${o.name}`}
+          >
+            <Trash2 size={14} />
+          </button>
+        </div>
+      ),
+    });
+  }
+  return cols;
+}
 
 export function AdminOrgsPage() {
   const { data: me } = useMe();
@@ -33,7 +92,7 @@ export function AdminOrgsPage() {
   });
   const [deleteOrg, setDeleteOrg] = useState<Org | null>(null);
 
-  const { data, isLoading } = useQuery({
+  const { data, isLoading, isError, error } = useQuery({
     queryKey: ['orgs'],
     queryFn: () => clients.admin.listOrgs({}),
   });
@@ -103,7 +162,9 @@ export function AdminOrgsPage() {
         )}
       </div>
 
-      {isLoading ? (
+      {isError ? (
+        <QueryError error={error} noun='organisations' />
+      ) : isLoading ? (
         <p className='text-sm text-muted'>Loading…</p>
       ) : (data?.items ?? []).length === 0 ? (
         <div className='rounded-lg border border-border bg-card/40 p-8 text-center'>
@@ -118,58 +179,11 @@ export function AdminOrgsPage() {
           )}
         </div>
       ) : (
-        <div className='rounded-lg border border-border overflow-hidden'>
-          <table className='w-full text-sm'>
-            <thead className='bg-card text-muted'>
-              <tr>
-                <th className='px-4 py-3 text-left font-medium'>Name</th>
-                <th className='px-4 py-3 text-left font-medium'>Display name</th>
-                <th className='px-4 py-3 text-left font-medium'>Tenant</th>
-                {isAppAdmin && <th className='px-4 py-3' />}
-              </tr>
-            </thead>
-            <tbody>
-              {(data?.items ?? []).map((o) => (
-                <tr key={o.id} className='border-t border-border hover:bg-card/60'>
-                  <td className='px-4 py-2.5 font-mono text-xs'>{o.name}</td>
-                  <td className='px-4 py-2.5'>{o.displayName}</td>
-                  <td className='px-4 py-2.5 font-mono text-xs'>
-                    {o.tenantId ? (
-                      o.tenantId
-                    ) : (
-                      // An org without a tenant cannot have tenant routes, so
-                      // say that rather than showing an empty cell an admin
-                      // would read as "nothing to do here".
-                      <span className='text-muted-3 italic'>
-                        not set &mdash; no routes possible
-                      </span>
-                    )}
-                  </td>
-                  {isAppAdmin && (
-                    <td className='px-4 py-2.5 text-right'>
-                      <div className='flex justify-end gap-3'>
-                        <button
-                          onClick={() => openEdit(o)}
-                          className='text-muted-3 transition-colors hover:text-indigo-400'
-                          aria-label={`Edit ${o.name}`}
-                        >
-                          <Pencil size={14} />
-                        </button>
-                        <button
-                          onClick={() => setDeleteOrg(o)}
-                          className='text-muted-3 transition-colors hover:text-red-400'
-                          aria-label={`Delete ${o.name}`}
-                        >
-                          <Trash2 size={14} />
-                        </button>
-                      </div>
-                    </td>
-                  )}
-                </tr>
-              ))}
-            </tbody>
-          </table>
-        </div>
+        <DataTable
+          columns={orgColumns(isAppAdmin, openEdit, setDeleteOrg)}
+          rows={data?.items ?? []}
+          rowKey={(o) => o.id}
+        />
       )}
 
       {showCreate && (
@@ -181,74 +195,72 @@ export function AdminOrgsPage() {
             }}
             className='space-y-4'
           >
-            <label className='block text-xs font-medium text-muted'>
-              Name
-              <input
+            <Field label='Name'>
+              <Input
                 value={createForm.name}
                 onChange={(e) => setCreateForm((f) => ({ ...f, name: e.target.value }))}
                 required
-                className='mt-1 w-full rounded-md border border-border-strong bg-card px-3 py-1.5 text-sm font-mono'
+                mono
                 placeholder='prod-org'
               />
-            </label>
-            <label className='block text-xs font-medium text-muted'>
-              Display name
-              <input
+            </Field>
+            <Field label='Display name'>
+              <Input
                 value={createForm.displayName}
                 onChange={(e) => setCreateForm((f) => ({ ...f, displayName: e.target.value }))}
                 required
-                className='mt-1 w-full rounded-md border border-border-strong bg-card px-3 py-1.5 text-sm'
                 placeholder='Production Org'
               />
-            </label>
-            <label className='block text-xs font-medium text-muted'>
-              Admin group ID
-              <input
+            </Field>
+            <Field label='Admin group ID'>
+              <Input
                 value={createForm.adminGroupId}
                 onChange={(e) => setCreateForm((f) => ({ ...f, adminGroupId: e.target.value }))}
                 required
-                className='mt-1 w-full rounded-md border border-border-strong bg-card px-3 py-1.5 text-sm font-mono'
+                mono
                 placeholder='11111111-1111-1111-1111-111111111111'
               />
-            </label>
-            <label className='block text-xs font-medium text-muted'>
-              Editor group ID <span className='text-muted-3'>(optional)</span>
-              <input
+            </Field>
+            <Field
+              label='Editor group ID'
+              optional
+              hint='Members may author pipelines, wizards and simulations, but cannot change destinations, tenant routes, git credentials or teams. Leave empty for no editor tier.'
+            >
+              <Input
                 value={createForm.editorGroupId}
                 onChange={(e) => setCreateForm((f) => ({ ...f, editorGroupId: e.target.value }))}
-                className='mt-1 w-full rounded-md border border-border-strong bg-card px-3 py-1.5 text-sm font-mono'
+                mono
                 placeholder='33333333-3333-3333-3333-333333333333'
               />
-              <span className='mt-1 block text-2xs font-normal text-muted-3'>
-                Members may author pipelines, wizards and simulations, but cannot change
-                destinations, tenant routes, git credentials or teams. Leave empty for no editor
-                tier.
-              </span>
-            </label>
-            <label className='block text-xs font-medium text-muted'>
-              Reader group ID <span className='text-muted-3'>(optional)</span>
-              <input
+            </Field>
+            <Field label='Reader group ID' optional>
+              <Input
                 value={createForm.readerGroupId}
                 onChange={(e) => setCreateForm((f) => ({ ...f, readerGroupId: e.target.value }))}
-                className='mt-1 w-full rounded-md border border-border-strong bg-card px-3 py-1.5 text-sm font-mono'
+                mono
                 placeholder='22222222-2222-2222-2222-222222222222'
               />
-            </label>
-            <label className='block text-xs font-medium text-muted'>
-              Tenant ID <span className='text-muted-3'>(optional, set once)</span>
-              <input
+            </Field>
+            <Field
+              label='Tenant ID'
+              optional
+              hint={
+                <>
+                  The tenant this org&rsquo;s telemetry ships under, sent downstream as
+                  X-Scope-OrgID. Only an application administrator sets it, and it cannot be changed
+                  afterwards &mdash; routes already issued would keep working while naming the wrong
+                  tenant. Leave blank to decide later; the org cannot have tenant routes until it is
+                  set.
+                </>
+              }
+            >
+              <Input
                 value={createForm.tenantId}
                 onChange={(e) => setCreateForm((f) => ({ ...f, tenantId: e.target.value }))}
-                className='mt-1 w-full rounded-md border border-border-strong bg-card px-3 py-1.5 text-sm font-mono'
+                mono
                 placeholder='acme'
               />
-              <span className='mt-1 block text-2xs font-normal text-muted-3'>
-                The tenant this org&rsquo;s telemetry ships under, sent downstream as X-Scope-OrgID.
-                Only an application administrator sets it, and it cannot be changed afterwards
-                &mdash; routes already issued would keep working while naming the wrong tenant.
-                Leave blank to decide later; the org cannot have tenant routes until it is set.
-              </span>
-            </label>
+            </Field>
             <AdminModalActions
               onCancel={() => setShowCreate(false)}
               submitLabel='Create'
@@ -268,44 +280,39 @@ export function AdminOrgsPage() {
             }}
             className='space-y-4'
           >
-            <label className='block text-xs font-medium text-muted'>
-              Display name
-              <input
+            <Field label='Display name'>
+              <Input
                 value={editForm.displayName}
                 onChange={(e) => setEditForm((f) => ({ ...f, displayName: e.target.value }))}
                 required
-                className='mt-1 w-full rounded-md border border-border-strong bg-card px-3 py-1.5 text-sm'
               />
-            </label>
-            <label className='block text-xs font-medium text-muted'>
-              Admin group ID
-              <input
+            </Field>
+            <Field label='Admin group ID'>
+              <Input
                 value={editForm.adminGroupId}
                 onChange={(e) => setEditForm((f) => ({ ...f, adminGroupId: e.target.value }))}
                 required
-                className='mt-1 w-full rounded-md border border-border-strong bg-card px-3 py-1.5 text-sm font-mono'
+                mono
               />
-            </label>
-            <label className='block text-xs font-medium text-muted'>
-              Editor group ID <span className='text-muted-3'>(optional)</span>
-              <input
+            </Field>
+            <Field
+              label='Editor group ID'
+              optional
+              hint='Members may author pipelines, wizards and simulations, but cannot change destinations, tenant routes, git credentials or teams.'
+            >
+              <Input
                 value={editForm.editorGroupId}
                 onChange={(e) => setEditForm((f) => ({ ...f, editorGroupId: e.target.value }))}
-                className='mt-1 w-full rounded-md border border-border-strong bg-card px-3 py-1.5 text-sm font-mono'
+                mono
               />
-              <span className='mt-1 block text-2xs font-normal text-muted-3'>
-                Members may author pipelines, wizards and simulations, but cannot change
-                destinations, tenant routes, git credentials or teams.
-              </span>
-            </label>
-            <label className='block text-xs font-medium text-muted'>
-              Reader group ID <span className='text-muted-3'>(optional)</span>
-              <input
+            </Field>
+            <Field label='Reader group ID' optional>
+              <Input
                 value={editForm.readerGroupId}
                 onChange={(e) => setEditForm((f) => ({ ...f, readerGroupId: e.target.value }))}
-                className='mt-1 w-full rounded-md border border-border-strong bg-card px-3 py-1.5 text-sm font-mono'
+                mono
               />
-            </label>
+            </Field>
             <AdminModalActions
               onCancel={() => setEditOrg(null)}
               submitLabel='Save'
