@@ -504,6 +504,7 @@ func handleReadyz(db dbPinger, latestMigration uint64) http.HandlerFunc {
 
 			var current uint64
 			var dirty bool
+			// RAW-SQL-OK: readiness probe of golang-migrate's own bookkeeping table, which has no sqlc model
 			switch scanErr := db.QueryRow(ctx, "SELECT version, dirty FROM schema_migrations LIMIT 1").Scan(&current, &dirty); {
 			case scanErr != nil:
 				// schema_migrations may not exist yet, or the query may fail
