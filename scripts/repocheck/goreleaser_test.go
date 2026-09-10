@@ -64,4 +64,29 @@ var _ = Describe(".goreleaser.yaml", func() {
 			Expect(matches(subject)).To(BeFalse(), subject)
 		}
 	})
+
+	// Red run, 2026-09-10: release.yml's goreleaser step pinned
+	// `distribution: goreleaser` but left `version: latest` -- every release
+	// could silently pick up a new goreleaser major/behaviour change between
+	// runs, even though .goreleaser.yaml declares a `version: 2` config
+	// schema that assumes a v2.x CLI.
+	It("pins the goreleaser CLI to an exact v2 release, not latest", func() {
+		rel := loadWorkflow("release.yml")
+		release, ok := rel.Jobs["release"]
+		Expect(ok).To(BeTrue(), "release.yml has no release job")
+
+		var version string
+		var found bool
+		for _, s := range release.Steps {
+			if regexp.MustCompile(`^goreleaser/goreleaser-action@`).MatchString(s.Uses) {
+				v, ok := s.With["version"].(string)
+				Expect(ok).To(BeTrue(), "goreleaser step has no with.version")
+				version, found = v, true
+			}
+		}
+		Expect(found).To(BeTrue(), "no goreleaser-action step found")
+		Expect(version).NotTo(Equal("latest"))
+		Expect(version).To(MatchRegexp(`^v2\.\d+\.\d+$`),
+			"goreleaser version must be an exact v2.x.y release, matching .goreleaser.yaml's `version: 2` config schema")
+	})
 })
