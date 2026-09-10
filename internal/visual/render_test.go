@@ -8,6 +8,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"sort"
 	"strings"
 	"sync"
 	"testing"
@@ -108,6 +109,46 @@ func unmarshalDoc(data []byte) visual.GraphDocument {
 	return doc
 }
 
+// diagExpectation is the recorded shape of a `<name>.diagnostics.json` file:
+// just the two fields (Code, Severity) that must agree between this renderer
+// and web/src/visual/renderTS.ts's — NodeID/Message are renderer-internal
+// detail, not a parity contract.
+type diagExpectation struct {
+	Code     string `json:"code"`
+	Severity string `json:"severity"`
+}
+
+// readExpectedDiagnostics loads the corpus entry's recorded diagnostics. Every
+// entry has one, even if it's `[]` — a corpus entry with no file would silently
+// skip the parity check rather than assert cleanliness.
+func readExpectedDiagnostics(name string) []diagExpectation {
+	GinkgoHelper()
+	root := filepath.Join("testdata", "corpus")
+	data, err := os.ReadFile(filepath.Join(root, name+".diagnostics.json"))
+	Expect(err).NotTo(HaveOccurred(), "reading %s.diagnostics.json", name)
+	var want []diagExpectation
+	Expect(json.Unmarshal(data, &want)).To(Succeed())
+	return want
+}
+
+// actualDiagnostics strips a render result down to the same {code, severity}
+// shape and sorts it, so entries that emit diagnostics in a different order
+// than they were recorded (or than the TS renderer emits them) still compare
+// equal — only the set of codes and severities is the parity contract.
+func actualDiagnostics(diags []visual.RenderDiagnostic) []diagExpectation {
+	got := make([]diagExpectation, len(diags))
+	for i, d := range diags {
+		got[i] = diagExpectation{Code: d.Code, Severity: d.Severity}
+	}
+	sort.Slice(got, func(i, j int) bool {
+		if got[i].Code != got[j].Code {
+			return got[i].Code < got[j].Code
+		}
+		return got[i].Severity < got[j].Severity
+	})
+	return got
+}
+
 var corpusNames = []string{
 	"minimal-scrape",
 	"fanin-fanout",
@@ -129,12 +170,22 @@ var _ = Describe("Renderer", func() {
 	// "Expected '...' to equal '...'" — the golden files become mismatched. Since the schema is
 	// now the shipped artifact, renaming a port inside it (e.g. prometheus.remote_write's
 	// "receiver" export) also fails here, as an edge_unresolved diagnostic.
+	//
+	// Diagnostics are checked against `<name>.diagnostics.json` rather than a
+	// hard-coded BeEmpty(): nine of the ten entries record `[]`, and
+	// "diagnostics-mixed" records the three codes (secret_by_value,
+	// empty_binding_expr, empty_binding_prop) that both this renderer and
+	// web/src/visual/renderTS.ts claim to emit for the same graph —
+	// renderTS.test.ts's "7.5.2 TS codegen vs corpus" loop asserts the same
+	// file, so a renderer that drops or renames one of these codes fails on
+	// whichever side changed, not just its own.
 	DescribeTable("7.2.1 corpus renders byte-exact",
 		func(name string) {
 			graphJSON, golden := readCorpus(name)
 			doc := unmarshalDoc(graphJSON)
 			result := visual.Render(doc, schema)
-			Expect(result.Diagnostics).To(BeEmpty(), "unexpected diagnostics for %s", name)
+			Expect(actualDiagnostics(result.Diagnostics)).To(Equal(readExpectedDiagnostics(name)),
+				"diagnostics mismatch for %s", name)
 			Expect(result.Content).To(Equal(string(golden)), "output mismatch for %s", name)
 		},
 		Entry("minimal-scrape", "minimal-scrape"),
@@ -146,6 +197,7 @@ var _ = Describe("Renderer", func() {
 		Entry("label-edgecases", "label-edgecases"),
 		Entry("otel-three-signals", "otel-three-signals"),
 		Entry("kitchen-sink", "kitchen-sink"),
+		Entry("diagnostics-mixed", "diagnostics-mixed"),
 	)
 
 	// 7.2.2 — render is permutation-invariant

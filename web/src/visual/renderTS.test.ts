@@ -10,28 +10,54 @@
  * receiver), the Go suite declared the same fiction, and all nine goldens matched
  * on both sides while being config that real Alloy rejects. A fixture cannot
  * disagree with the artifact if it *is* the artifact.
+ *
+ * The corpus itself is read directly from `internal/visual/testdata/corpus` —
+ * the same directory `internal/visual/render_test.go` reads — rather than from
+ * a web-local copy. A copy needs a sync step (`make generate-corpus`) and a
+ * test proving the copy stayed in sync; reading the one source directly needs
+ * neither. Same precedent as `web/tests/fixtures/schema-fixture.ts` reading
+ * `internal/schema/artifacts` directly instead of vendoring it.
  */
-import { readdirSync, readFileSync } from 'node:fs';
+import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { describe, expect, it } from 'vitest';
 import { shippedSchema } from '../../tests/fixtures/schema-fixture';
-import bindingsSecretGraph from './__fixtures__/corpus/bindings-secret.graph.json';
-import disabledNodeGraph from './__fixtures__/corpus/disabled-node.graph.json';
-import fanInFanOutGraph from './__fixtures__/corpus/fanin-fanout.graph.json';
-import kitchenSinkGraph from './__fixtures__/corpus/kitchen-sink.graph.json';
-import labelEdgecasesGraph from './__fixtures__/corpus/label-edgecases.graph.json';
-import logsChainGraph from './__fixtures__/corpus/logs-chain.graph.json';
-// Import corpus fixtures
-import minimalScrapeGraph from './__fixtures__/corpus/minimal-scrape.graph.json';
-import nestedBlocksGraph from './__fixtures__/corpus/nested-blocks.graph.json';
-import otelThreeSignalsGraph from './__fixtures__/corpus/otel-three-signals.graph.json';
 import { renderTS } from './renderTS';
 import type { GraphDocument } from './types';
 
-const fixtureDir = join(__dirname, '__fixtures__/corpus');
 const goCorpusDir = join(__dirname, '../../../internal/visual/testdata/corpus');
+const readGraph = (name: string): GraphDocument =>
+  JSON.parse(readFileSync(join(goCorpusDir, `${name}.graph.json`), 'utf-8')) as GraphDocument;
 const readGolden = (name: string) =>
-  readFileSync(join(fixtureDir, `${name}.golden.alloy`), 'utf-8');
+  readFileSync(join(goCorpusDir, `${name}.golden.alloy`), 'utf-8');
+// The diagnostics parity contract between this renderer and
+// internal/visual/render.go: every corpus entry records the {code, severity}
+// pairs both renderers must emit for the same graph, sorted so emission order
+// isn't part of the contract. internal/visual/render_test.go's "7.2.1 corpus
+// renders byte-exact" DescribeTable reads the exact same file per entry.
+interface DiagExpectation {
+  code: string;
+  severity: string;
+}
+const readDiagnostics = (name: string): DiagExpectation[] =>
+  JSON.parse(
+    readFileSync(join(goCorpusDir, `${name}.diagnostics.json`), 'utf-8'),
+  ) as DiagExpectation[];
+const sortDiagnostics = (diags: Array<{ code: string; severity?: string }>): DiagExpectation[] =>
+  diags
+    .map(({ code, severity }) => ({ code, severity: severity ?? '' }))
+    .sort((a, b) => a.code.localeCompare(b.code) || a.severity.localeCompare(b.severity));
+
+const minimalScrapeGraph = readGraph('minimal-scrape');
+const fanInFanOutGraph = readGraph('fanin-fanout');
+const nestedBlocksGraph = readGraph('nested-blocks');
+const bindingsSecretGraph = readGraph('bindings-secret');
+const logsChainGraph = readGraph('logs-chain');
+const disabledNodeGraph = readGraph('disabled-node');
+const labelEdgecasesGraph = readGraph('label-edgecases');
+const otelThreeSignalsGraph = readGraph('otel-three-signals');
+const kitchenSinkGraph = readGraph('kitchen-sink');
+const diagnosticsMixedGraph = readGraph('diagnostics-mixed');
 
 const minimalScrapeGolden = readGolden('minimal-scrape');
 const fanInFanOutGolden = readGolden('fanin-fanout');
@@ -42,6 +68,7 @@ const disabledNodeGolden = readGolden('disabled-node');
 const labelEdgecasesGolden = readGolden('label-edgecases');
 const otelThreeSignalsGolden = readGolden('otel-three-signals');
 const kitchenSinkGolden = readGolden('kitchen-sink');
+const diagnosticsMixedGolden = readGolden('diagnostics-mixed');
 
 // Seeded shuffle for deterministic permutation tests (matches Go test seed 42)
 function seededShuffle<T>(arr: T[], seed: number): T[] {
@@ -59,16 +86,72 @@ function seededShuffle<T>(arr: T[], seed: number): T[] {
   return result;
 }
 
-const corpus: Array<{ name: string; graph: unknown; golden: string }> = [
-  { name: 'minimal-scrape', graph: minimalScrapeGraph, golden: minimalScrapeGolden },
-  { name: 'fanin-fanout', graph: fanInFanOutGraph, golden: fanInFanOutGolden },
-  { name: 'nested-blocks', graph: nestedBlocksGraph, golden: nestedBlocksGolden },
-  { name: 'bindings-secret', graph: bindingsSecretGraph, golden: bindingsSecretGolden },
-  { name: 'logs-chain', graph: logsChainGraph, golden: logsChainGolden },
-  { name: 'disabled-node', graph: disabledNodeGraph, golden: disabledNodeGolden },
-  { name: 'label-edgecases', graph: labelEdgecasesGraph, golden: labelEdgecasesGolden },
-  { name: 'otel-three-signals', graph: otelThreeSignalsGraph, golden: otelThreeSignalsGolden },
-  { name: 'kitchen-sink', graph: kitchenSinkGraph, golden: kitchenSinkGolden },
+const corpus: Array<{
+  name: string;
+  graph: unknown;
+  golden: string;
+  diagnostics: DiagExpectation[];
+}> = [
+  {
+    name: 'minimal-scrape',
+    graph: minimalScrapeGraph,
+    golden: minimalScrapeGolden,
+    diagnostics: readDiagnostics('minimal-scrape'),
+  },
+  {
+    name: 'fanin-fanout',
+    graph: fanInFanOutGraph,
+    golden: fanInFanOutGolden,
+    diagnostics: readDiagnostics('fanin-fanout'),
+  },
+  {
+    name: 'nested-blocks',
+    graph: nestedBlocksGraph,
+    golden: nestedBlocksGolden,
+    diagnostics: readDiagnostics('nested-blocks'),
+  },
+  {
+    name: 'bindings-secret',
+    graph: bindingsSecretGraph,
+    golden: bindingsSecretGolden,
+    diagnostics: readDiagnostics('bindings-secret'),
+  },
+  {
+    name: 'logs-chain',
+    graph: logsChainGraph,
+    golden: logsChainGolden,
+    diagnostics: readDiagnostics('logs-chain'),
+  },
+  {
+    name: 'disabled-node',
+    graph: disabledNodeGraph,
+    golden: disabledNodeGolden,
+    diagnostics: readDiagnostics('disabled-node'),
+  },
+  {
+    name: 'label-edgecases',
+    graph: labelEdgecasesGraph,
+    golden: labelEdgecasesGolden,
+    diagnostics: readDiagnostics('label-edgecases'),
+  },
+  {
+    name: 'otel-three-signals',
+    graph: otelThreeSignalsGraph,
+    golden: otelThreeSignalsGolden,
+    diagnostics: readDiagnostics('otel-three-signals'),
+  },
+  {
+    name: 'kitchen-sink',
+    graph: kitchenSinkGraph,
+    golden: kitchenSinkGolden,
+    diagnostics: readDiagnostics('kitchen-sink'),
+  },
+  {
+    name: 'diagnostics-mixed',
+    graph: diagnosticsMixedGraph,
+    golden: diagnosticsMixedGolden,
+    diagnostics: readDiagnostics('diagnostics-mixed'),
+  },
 ];
 
 // 7.5.2 — TS codegen vs corpus
@@ -78,12 +161,21 @@ const corpus: Array<{ name: string; graph: unknown; golden: string }> = [
 // Because the schema is the shipped artifact, renaming a port inside it — say
 // prometheus.remote_write's `receiver` export — also fails here, as the metrics hop
 // stops resolving and reports edge_unresolved.
+//
+// Diagnostics are checked against `<name>.diagnostics.json` rather than a
+// hard-coded `[]`: nine of the ten entries record no diagnostics, and
+// "diagnostics-mixed" records the three codes (secret_by_value,
+// empty_binding_expr, empty_binding_prop) this renderer and
+// internal/visual/render.go both claim to emit for the same graph —
+// render_test.go's "7.2.1 corpus renders byte-exact" DescribeTable asserts the
+// same file, so a renderer that drops or renames one of these codes fails on
+// whichever side changed.
 describe('7.5.2 TS codegen vs corpus', () => {
-  for (const { name, graph, golden } of corpus) {
+  for (const { name, graph, golden, diagnostics } of corpus) {
     it(`${name} renders byte-exact`, () => {
       const doc = graph as GraphDocument;
       const result = renderTS(doc, shippedSchema);
-      expect(result.diagnostics).toEqual([]);
+      expect(sortDiagnostics(result.diagnostics)).toEqual(sortDiagnostics(diagnostics));
       expect(result.content).toBe(golden);
     });
   }
@@ -105,19 +197,6 @@ describe('7.5.2 TS codegen vs corpus', () => {
       }
     });
   }
-
-  // `make generate-corpus` copies the Go corpus into web/src/visual/__fixtures__.
-  // A half-run copy is invisible otherwise: the TS suite would keep passing
-  // against a stale golden while the Go suite asserts a newer one.
-  it('the web corpus copies are byte-identical to the Go originals', () => {
-    const goFiles = readdirSync(goCorpusDir).sort();
-    expect(readdirSync(fixtureDir).sort()).toEqual(goFiles);
-    for (const file of goFiles) {
-      expect(readFileSync(join(fixtureDir, file), 'utf-8'), `${file} is out of sync`).toBe(
-        readFileSync(join(goCorpusDir, file), 'utf-8'),
-      );
-    }
-  });
 });
 
 // ---------------------------------------------------------------------------
