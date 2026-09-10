@@ -49,6 +49,11 @@ type runnerOptions struct {
 	AlloyBinary    string
 	AlloyHTTP      string
 	StabilityLevel string
+	// KillGrace overrides the package's killGrace constant when non-zero.
+	// Production (queue.go) never sets it, so it always gets the real
+	// 15-second grace; tests inject a short one so a spec proving the grace
+	// period is honored doesn't itself take 15+ seconds to run.
+	KillGrace time.Duration
 }
 
 // runOutcome is what one sandbox execution produced.
@@ -96,10 +101,27 @@ func runAlloy(ctx context.Context, opts runnerOptions, logger *slog.Logger) runO
 		"--server.http.disable-support-bundle",
 		"--stability.level="+opts.StabilityLevel,
 	)
+	// The sandboxed Alloy gets a minimal, explicit environment rather than
+	// inheriting the simulator's (exec.Cmd falls back to os.Environ() only
+	// when Env is nil): the simulator's own env is where operator secrets
+	// live — SIM_TOKEN once the control API requires auth — and a user
+	// config can read any inherited variable via sys.env(...) and ship it
+	// to a capture endpoint the harness already lets it reach.
+	cmd.Env = []string{
+		"PATH=" + os.Getenv("PATH"),
+		"HOME=" + opts.StorageDir,
+		"TMPDIR=" + opts.RunDir,
+	}
 	// SIGTERM first, then SIGKILL after the grace period: Alloy flushes its
 	// remote_write queue on shutdown, and killing it outright loses the last
 	// batch — which the results view would show as a truncated capture.
-	cmd.WaitDelay = killGrace
+	// opts.KillGrace overrides the package constant; production (queue.go)
+	// never sets it, so it always gets the real 15s.
+	grace := killGrace
+	if opts.KillGrace > 0 {
+		grace = opts.KillGrace
+	}
+	cmd.WaitDelay = grace
 	cmd.Cancel = func() error { return cmd.Process.Signal(os.Interrupt) }
 
 	stderr, err := cmd.StderrPipe()
