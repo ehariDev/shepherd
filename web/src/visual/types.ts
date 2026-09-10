@@ -39,6 +39,17 @@ export interface GraphEdge {
   order?: number;
 }
 
+/**
+ * A TOP-LEVEL prop binding — the pre-existing import channel (e.g. from a
+ * hand-authored or imported graph), not what the UI's binding picker writes.
+ * `render.go`/`renderTS.ts` emit `${prop} = ${ref.expr}` verbatim with no path
+ * parsing, so `prop` must name an un-nested attribute. A binding authored
+ * through the canvas (`store.ts`'s `setBinding`/`removeBinding`, W5-01) is
+ * stored a different way instead — as `{"$expr": expr}` in `props`, at the
+ * prop's own instance path, however deep — because both renderers already
+ * emit a props value shaped that way correctly at any depth (see
+ * `bindings.ts`'s module doc). This array is left untouched by that path.
+ */
 export interface GraphBinding {
   node: string;
   prop: string;
@@ -79,6 +90,12 @@ export interface ComponentDef {
   icon?: string;
   terminal_ok?: boolean;
   key_props?: string[];
+  /** Present when this component is a config/secret source the simulator
+   *  resolves specially (S3's overlay field) — `local.file`, `remote.http`,
+   *  `remote.s3`, `remote.vault`, `remote.kubernetes.secret`,
+   *  `remote.kubernetes.configmap`. `bindings.ts`'s `secretSourceNodes` reads
+   *  it to populate the inspector's binding picker (W5-01/W5-02). */
+  sim_secret_source?: { mode: string };
 }
 export interface BlockDef {
   name: string;

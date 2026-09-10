@@ -662,3 +662,58 @@ describe('L1 degrades gracefully (D4)', () => {
     ).not.toThrow();
   });
 });
+
+describe('L1 binding rules (W5-01)', () => {
+  it('binding_dangling — a binding whose source node no longer exists in the graph is flagged', () => {
+    const stale = validateGraph(
+      doc(
+        [node('n', 'discovery.kubernetes', { role: 'pod' })],
+        [],
+        [
+          {
+            node: 'n',
+            prop: 'role',
+            ref: { node: 'gone', export: 'content', expr: 'local.file.gone.content' },
+          },
+        ],
+      ),
+      schema,
+    );
+    const d = stale.find((x) => x.code === 'binding_dangling');
+    expect(d?.node_id).toBe('n');
+    expect(d?.severity).toBe('warning');
+  });
+
+  it('a binding whose source node is still present is not flagged', () => {
+    const live = validateGraph(
+      doc(
+        [
+          node('n', 'discovery.kubernetes', { role: 'pod' }),
+          node('src', 'local.file', { filename: '/x' }),
+        ],
+        [],
+        [
+          {
+            node: 'n',
+            prop: 'role',
+            ref: { node: 'src', export: 'content', expr: 'local.file.src.content' },
+          },
+        ],
+      ),
+      schema,
+    );
+    expect(codes(live)).not.toContain('binding_dangling');
+  });
+
+  it('a binding owned by a disabled node is not flagged (it is not emitted either)', () => {
+    const diags = validateGraph(
+      doc(
+        [node('n', 'discovery.kubernetes', { role: 'pod' }, { disabled: true })],
+        [],
+        [{ node: 'n', prop: 'role', ref: { node: 'gone', export: 'content', expr: 'x' } }],
+      ),
+      schema,
+    );
+    expect(codes(diags)).not.toContain('binding_dangling');
+  });
+});

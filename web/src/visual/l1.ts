@@ -578,6 +578,23 @@ export function validateGraph(
       });
   }
 
+  // --- Bindings (W5-01): a `doc.bindings[]` entry (the top-level import
+  // channel — see types.ts's GraphBinding doc; the canvas's own binding
+  // picker never writes here) whose source node was since deleted or renamed
+  // can no longer resolve. A binding owned by a disabled node is skipped: it
+  // is not emitted either, the same rule labels/edges/attrs already follow.
+  for (const b of doc.bindings) {
+    const owner = nodeById.get(b.node);
+    if (!owner || !activeIds.has(b.node)) continue;
+    if (!nodeById.has(b.ref.node) || !activeIds.has(b.ref.node))
+      push({
+        severity: 'warning',
+        code: 'binding_dangling',
+        node_id: b.node,
+        message: `${named(owner)}'s binding for "${b.prop}" references "${b.ref.node}", which no longer exists in this graph`,
+      });
+  }
+
   if (
     doc.nodes.length > 0 &&
     !active.some((n) => compDef(n.component)?.category === 'destinations')

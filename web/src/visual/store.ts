@@ -2,6 +2,7 @@ import deepEqual from 'fast-deep-equal';
 import { nanoid } from 'nanoid';
 import { temporal } from 'zundo';
 import { create } from 'zustand';
+import { deleteAtPath, EXPR_KEY, setAtPath } from './bindings';
 import { portsCompatible, validateGraph } from './l1';
 import { portHandleId } from './schemaAdapter';
 import type {
@@ -133,6 +134,16 @@ interface VisualStore {
     label: string,
   ) => void;
   updateNode: (id: string, patch: Partial<GraphNode>) => void;
+  /** Writes `{"$expr": expr}` at `path` inside node `id`'s props (W5-01) — the
+   *  prop's own instance path, with a numeric segment per repeatable-block
+   *  index (matches `L1DiagnosticEx.path`, e.g.
+   *  `["endpoint", "0", "basic_auth", "password"]`). One undo step, like every
+   *  other mutation here. See bindings.ts's module doc for why this writes
+   *  into `props` rather than `doc.bindings[]`. */
+  setBinding: (nodeId: string, path: string[], expr: string) => void;
+  /** The inverse of `setBinding`: deletes the value at `path`, restoring the
+   *  unset state a literal or a wire could then fill. */
+  removeBinding: (nodeId: string, path: string[]) => void;
   removeNode: (id: string) => void;
   addEdge: (from: { node: string; port: string }, to: { node: string; port: string }) => void;
   /** Deletes every currently-selected node and edge (selected ids may name either)
@@ -265,6 +276,30 @@ export const useVisualStore = create<VisualStore>()(
           const doc = {
             ...state.doc,
             nodes: state.doc.nodes.map((n) => (n.id === id ? { ...n, ...defined } : n)),
+          };
+          return { doc, diagnostics: revalidate({ ...state, doc }) };
+        }),
+
+      setBinding: (nodeId, path, expr) =>
+        set((state) => {
+          const doc = {
+            ...state.doc,
+            nodes: state.doc.nodes.map((n) =>
+              n.id === nodeId
+                ? { ...n, props: setAtPath(n.props ?? {}, path, { [EXPR_KEY]: expr }) }
+                : n,
+            ),
+          };
+          return { doc, diagnostics: revalidate({ ...state, doc }) };
+        }),
+
+      removeBinding: (nodeId, path) =>
+        set((state) => {
+          const doc = {
+            ...state.doc,
+            nodes: state.doc.nodes.map((n) =>
+              n.id === nodeId ? { ...n, props: deleteAtPath(n.props ?? {}, path) } : n,
+            ),
           };
           return { doc, diagnostics: revalidate({ ...state, doc }) };
         }),

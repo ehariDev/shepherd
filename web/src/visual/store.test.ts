@@ -319,3 +319,84 @@ describe('undo/redo keep diagnostics in step with the document', () => {
     ).toHaveLength(0);
   });
 });
+
+describe('setBinding / removeBinding (W5-01)', () => {
+  // A minimal hand-built schema (store.test.ts's established pattern —
+  // selectConnectionState's `scalarSink` above, and the undo/redo describe
+  // block's own `schema` const) with a secret attribute nested inside a
+  // repeatable block, so the nested-instance-path case is exercised the same
+  // way a real remote_write endpoint's basic_auth.password is.
+  const schema = {
+    _meta: { alloy_version: 'alloy-v1.18.1' },
+    components: {
+      'test.sink': {
+        category: 'destinations',
+        attributes: [],
+        blocks: [
+          {
+            name: 'endpoint',
+            repeatable: true,
+            attributes: [{ name: 'password', type: 'secret', required: false }],
+          },
+        ],
+        inputs: [],
+        outputs: [],
+      },
+    },
+  } as unknown as SchemaPayload;
+
+  beforeEach(() => {
+    useVisualStore.setState({
+      doc: {
+        kind: 'alloy-graph/v1',
+        schema_version: 'alloy-v1.18.1',
+        nodes: [],
+        edges: [],
+        bindings: [],
+        viewport: { x: 0, y: 0, zoom: 1 },
+        meta: { created_with: 'test' },
+      },
+      selected: [],
+      diagnostics: [],
+      schema,
+      allowExperimental: false,
+      connectingFrom: null,
+    });
+    useVisualStore.temporal.getState().clear();
+  });
+
+  it('writes a $expr at a nested instance path and clears secret_by_value', () => {
+    const store = useVisualStore;
+    store.getState().addNode('test.sink', { x: 0, y: 0 });
+    const id = store.getState().doc.nodes[0].id;
+    store.getState().updateNode(id, { props: { endpoint: [{ password: 'a literal secret' }] } });
+    expect(store.getState().diagnostics.map((d) => d.code)).toContain('secret_by_value');
+
+    const before = store.temporal.getState().pastStates.length;
+    store.getState().setBinding(id, ['endpoint', '0', 'password'], 'local.file.creds.content');
+
+    const node = store.getState().doc.nodes[0];
+    expect(node.props).toEqual({ endpoint: [{ password: { $expr: 'local.file.creds.content' } }] });
+    expect(store.getState().diagnostics.map((d) => d.code)).not.toContain('secret_by_value');
+    // One undo step for the whole write, like every other mutation.
+    expect(store.temporal.getState().pastStates.length).toBe(before + 1);
+
+    store.temporal.getState().undo();
+    expect(store.getState().doc.nodes[0].props).toEqual({
+      endpoint: [{ password: 'a literal secret' }],
+    });
+  });
+
+  it('removeBinding clears the bound prop back to unset, leaving sibling attributes alone', () => {
+    const store = useVisualStore;
+    store.getState().addNode('test.sink', { x: 0, y: 0 });
+    const id = store.getState().doc.nodes[0].id;
+    store.getState().updateNode(id, {
+      props: { endpoint: [{ url: 'http://x', password: { $expr: 'local.file.creds.content' } }] },
+    });
+
+    store.getState().removeBinding(id, ['endpoint', '0', 'password']);
+
+    expect(store.getState().doc.nodes[0].props).toEqual({ endpoint: [{ url: 'http://x' }] });
+  });
+});
