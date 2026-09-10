@@ -51,5 +51,15 @@ export default defineConfig({
   test: {
     include: ['src/**/*.test.ts', 'src/**/*.test.tsx'],
     exclude: ['tests/**', 'node_modules/**', 'dist/**'],
+    // Environment stays 'node' by default (the 16 pure-TS tests keep their
+    // speed); component tests opt into jsdom with a per-file
+    // `// @vitest-environment jsdom` docblock instead.
+    //
+    // `globals: true` is needed for exactly one thing: @testing-library/react
+    // registers its automatic cleanup() via `afterEach` only when `afterEach`
+    // already exists on globalThis at import time (see its index.js). Without
+    // this, unmounted components from one test's render() pile up in the
+    // jsdom document and leak into the next test in the same file.
+    globals: true,
   },
 });
