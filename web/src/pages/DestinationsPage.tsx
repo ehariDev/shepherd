@@ -6,6 +6,7 @@ import { clients, toApiError } from '@/api/transport';
 import { AdminConfirmDialog } from '@/components/admin/AdminConfirmDialog';
 import { QueryError } from '@/components/QueryError';
 import { DataTable, type DataTableColumn } from '@/components/ui/DataTable';
+import { Field, Input, Select } from '@/components/ui/Field';
 import { Modal, ModalActions } from '@/components/ui/Modal';
 import type { Destination } from '@/gen/shepherd/mgmt/v1/destination_pb';
 import { useCanAdminister, useOrgId } from '@/hooks/useOrg';
@@ -230,31 +231,26 @@ export function DestinationsPage() {
           }}
         >
           <form onSubmit={handleCreate} className='space-y-4'>
-            <label className='block text-xs font-medium text-muted'>
-              Name
-              <input
+            <Field label='Name'>
+              <Input
                 value={form.name}
                 onChange={(e) => setForm((f) => ({ ...f, name: e.target.value }))}
                 required
-                className='mt-1 w-full rounded-md border border-border-strong bg-card px-3 py-1.5 text-sm'
                 placeholder='prom-prod'
               />
-            </label>
-            <label className='block text-xs font-medium text-muted'>
-              Type
-              <select
+            </Field>
+            <Field label='Type'>
+              <Select
                 value={form.type}
                 onChange={(e) => setForm((f) => ({ ...f, type: e.target.value }))}
-                className='mt-1 w-full rounded-md border border-border-strong bg-card px-3 py-1.5 text-sm'
               >
                 <option value='prometheus'>Prometheus</option>
                 <option value='loki'>Loki</option>
                 <option value='tempo'>Tempo</option>
-              </select>
-            </label>
-            <label className='block text-xs font-medium text-muted'>
-              URL
-              <input
+              </Select>
+            </Field>
+            <Field label='URL' error={urlError}>
+              <Input
                 value={form.url}
                 onChange={(e) => {
                   setForm((f) => ({ ...f, url: e.target.value }));
@@ -262,23 +258,20 @@ export function DestinationsPage() {
                 }}
                 onBlur={() => form.url && validateUrl(form.url)}
                 required
-                className='mt-1 w-full rounded-md border border-border-strong bg-card px-3 py-1.5 text-sm font-mono'
+                mono
                 placeholder='http://prometheus:9090'
               />
-              {urlError && <span className='mt-1 block text-xs text-red-400'>{urlError}</span>}
-            </label>
-            <label className='block text-xs font-medium text-muted'>
-              Auth mode
-              <select
+            </Field>
+            <Field label='Auth mode'>
+              <Select
                 value={form.authMode}
                 onChange={(e) => setForm((f) => ({ ...f, authMode: e.target.value }))}
-                className='mt-1 w-full rounded-md border border-border-strong bg-card px-3 py-1.5 text-sm'
               >
                 <option value='none'>None</option>
                 <option value='oauth2_secret'>OAuth2 secret</option>
                 <option value='basic_secret'>Basic secret</option>
-              </select>
-            </label>
+              </Select>
+            </Field>
             <ModalActions
               onCancel={() => {
                 setShowCreate(false);

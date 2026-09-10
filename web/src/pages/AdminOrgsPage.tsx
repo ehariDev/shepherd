@@ -6,6 +6,7 @@ import { clients, toApiError } from '@/api/transport';
 import { AdminConfirmDialog } from '@/components/admin/AdminConfirmDialog';
 import { AdminModal, AdminModalActions } from '@/components/admin/AdminModal';
 import { DataTable, type DataTableColumn } from '@/components/ui/DataTable';
+import { Field, Input } from '@/components/ui/Field';
 import type { Org } from '@/gen/shepherd/mgmt/v1/admin_pb';
 import { useMe } from '@/hooks/useMe';
 
@@ -191,74 +192,72 @@ export function AdminOrgsPage() {
             }}
             className='space-y-4'
           >
-            <label className='block text-xs font-medium text-muted'>
-              Name
-              <input
+            <Field label='Name'>
+              <Input
                 value={createForm.name}
                 onChange={(e) => setCreateForm((f) => ({ ...f, name: e.target.value }))}
                 required
-                className='mt-1 w-full rounded-md border border-border-strong bg-card px-3 py-1.5 text-sm font-mono'
+                mono
                 placeholder='prod-org'
               />
-            </label>
-            <label className='block text-xs font-medium text-muted'>
-              Display name
-              <input
+            </Field>
+            <Field label='Display name'>
+              <Input
                 value={createForm.displayName}
                 onChange={(e) => setCreateForm((f) => ({ ...f, displayName: e.target.value }))}
                 required
-                className='mt-1 w-full rounded-md border border-border-strong bg-card px-3 py-1.5 text-sm'
                 placeholder='Production Org'
               />
-            </label>
-            <label className='block text-xs font-medium text-muted'>
-              Admin group ID
-              <input
+            </Field>
+            <Field label='Admin group ID'>
+              <Input
                 value={createForm.adminGroupId}
                 onChange={(e) => setCreateForm((f) => ({ ...f, adminGroupId: e.target.value }))}
                 required
-                className='mt-1 w-full rounded-md border border-border-strong bg-card px-3 py-1.5 text-sm font-mono'
+                mono
                 placeholder='11111111-1111-1111-1111-111111111111'
               />
-            </label>
-            <label className='block text-xs font-medium text-muted'>
-              Editor group ID <span className='text-muted-3'>(optional)</span>
-              <input
+            </Field>
+            <Field
+              label='Editor group ID'
+              optional
+              hint='Members may author pipelines, wizards and simulations, but cannot change destinations, tenant routes, git credentials or teams. Leave empty for no editor tier.'
+            >
+              <Input
                 value={createForm.editorGroupId}
                 onChange={(e) => setCreateForm((f) => ({ ...f, editorGroupId: e.target.value }))}
-                className='mt-1 w-full rounded-md border border-border-strong bg-card px-3 py-1.5 text-sm font-mono'
+                mono
                 placeholder='33333333-3333-3333-3333-333333333333'
               />
-              <span className='mt-1 block text-2xs font-normal text-muted-3'>
-                Members may author pipelines, wizards and simulations, but cannot change
-                destinations, tenant routes, git credentials or teams. Leave empty for no editor
-                tier.
-              </span>
-            </label>
-            <label className='block text-xs font-medium text-muted'>
-              Reader group ID <span className='text-muted-3'>(optional)</span>
-              <input
+            </Field>
+            <Field label='Reader group ID' optional>
+              <Input
                 value={createForm.readerGroupId}
                 onChange={(e) => setCreateForm((f) => ({ ...f, readerGroupId: e.target.value }))}
-                className='mt-1 w-full rounded-md border border-border-strong bg-card px-3 py-1.5 text-sm font-mono'
+                mono
                 placeholder='22222222-2222-2222-2222-222222222222'
               />
-            </label>
-            <label className='block text-xs font-medium text-muted'>
-              Tenant ID <span className='text-muted-3'>(optional, set once)</span>
-              <input
+            </Field>
+            <Field
+              label='Tenant ID'
+              optional
+              hint={
+                <>
+                  The tenant this org&rsquo;s telemetry ships under, sent downstream as
+                  X-Scope-OrgID. Only an application administrator sets it, and it cannot be changed
+                  afterwards &mdash; routes already issued would keep working while naming the wrong
+                  tenant. Leave blank to decide later; the org cannot have tenant routes until it is
+                  set.
+                </>
+              }
+            >
+              <Input
                 value={createForm.tenantId}
                 onChange={(e) => setCreateForm((f) => ({ ...f, tenantId: e.target.value }))}
-                className='mt-1 w-full rounded-md border border-border-strong bg-card px-3 py-1.5 text-sm font-mono'
+                mono
                 placeholder='acme'
               />
-              <span className='mt-1 block text-2xs font-normal text-muted-3'>
-                The tenant this org&rsquo;s telemetry ships under, sent downstream as X-Scope-OrgID.
-                Only an application administrator sets it, and it cannot be changed afterwards
-                &mdash; routes already issued would keep working while naming the wrong tenant.
-                Leave blank to decide later; the org cannot have tenant routes until it is set.
-              </span>
-            </label>
+            </Field>
             <AdminModalActions
               onCancel={() => setShowCreate(false)}
               submitLabel='Create'
@@ -278,44 +277,39 @@ export function AdminOrgsPage() {
             }}
             className='space-y-4'
           >
-            <label className='block text-xs font-medium text-muted'>
-              Display name
-              <input
+            <Field label='Display name'>
+              <Input
                 value={editForm.displayName}
                 onChange={(e) => setEditForm((f) => ({ ...f, displayName: e.target.value }))}
                 required
-                className='mt-1 w-full rounded-md border border-border-strong bg-card px-3 py-1.5 text-sm'
               />
-            </label>
-            <label className='block text-xs font-medium text-muted'>
-              Admin group ID
-              <input
+            </Field>
+            <Field label='Admin group ID'>
+              <Input
                 value={editForm.adminGroupId}
                 onChange={(e) => setEditForm((f) => ({ ...f, adminGroupId: e.target.value }))}
                 required
-                className='mt-1 w-full rounded-md border border-border-strong bg-card px-3 py-1.5 text-sm font-mono'
+                mono
               />
-            </label>
-            <label className='block text-xs font-medium text-muted'>
-              Editor group ID <span className='text-muted-3'>(optional)</span>
-              <input
+            </Field>
+            <Field
+              label='Editor group ID'
+              optional
+              hint='Members may author pipelines, wizards and simulations, but cannot change destinations, tenant routes, git credentials or teams.'
+            >
+              <Input
                 value={editForm.editorGroupId}
                 onChange={(e) => setEditForm((f) => ({ ...f, editorGroupId: e.target.value }))}
-                className='mt-1 w-full rounded-md border border-border-strong bg-card px-3 py-1.5 text-sm font-mono'
+                mono
               />
-              <span className='mt-1 block text-2xs font-normal text-muted-3'>
-                Members may author pipelines, wizards and simulations, but cannot change
-                destinations, tenant routes, git credentials or teams.
-              </span>
-            </label>
-            <label className='block text-xs font-medium text-muted'>
-              Reader group ID <span className='text-muted-3'>(optional)</span>
-              <input
+            </Field>
+            <Field label='Reader group ID' optional>
+              <Input
                 value={editForm.readerGroupId}
                 onChange={(e) => setEditForm((f) => ({ ...f, readerGroupId: e.target.value }))}
-                className='mt-1 w-full rounded-md border border-border-strong bg-card px-3 py-1.5 text-sm font-mono'
+                mono
               />
-            </label>
+            </Field>
             <AdminModalActions
               onCancel={() => setEditOrg(null)}
               submitLabel='Save'

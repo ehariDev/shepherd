@@ -5,6 +5,7 @@ import { useState } from 'react';
 import { clients } from '@/api/transport';
 import { QueryError } from '@/components/QueryError';
 import { DataTable, type DataTableColumn } from '@/components/ui/DataTable';
+import { Field, Input } from '@/components/ui/Field';
 import type { AuditEntry } from '@/gen/shepherd/mgmt/v1/audit_pb';
 import { useOrgId } from '@/hooks/useOrg';
 import { formatTimestampRelative } from '@/lib/utils';
@@ -113,24 +114,24 @@ export function AuditPage() {
       </div>
 
       <form onSubmit={applyFilters} className='flex flex-wrap items-end gap-3'>
-        <label className='block text-xs font-medium text-muted'>
-          Actor
-          <input
-            value={actorDraft}
-            onChange={(e) => setActorDraft(e.target.value)}
-            placeholder='user@example.com'
-            className='mt-1 block w-56 rounded-md border border-border-strong bg-card px-3 py-1.5 text-sm'
-          />
-        </label>
-        <label className='block text-xs font-medium text-muted'>
-          Action
-          <input
-            value={actionDraft}
-            onChange={(e) => setActionDraft(e.target.value)}
-            placeholder='pipeline.update'
-            className='mt-1 block w-56 rounded-md border border-border-strong bg-card px-3 py-1.5 text-sm'
-          />
-        </label>
+        <div className='w-56'>
+          <Field label='Actor'>
+            <Input
+              value={actorDraft}
+              onChange={(e) => setActorDraft(e.target.value)}
+              placeholder='user@example.com'
+            />
+          </Field>
+        </div>
+        <div className='w-56'>
+          <Field label='Action'>
+            <Input
+              value={actionDraft}
+              onChange={(e) => setActionDraft(e.target.value)}
+              placeholder='pipeline.update'
+            />
+          </Field>
+        </div>
         <button
           type='submit'
           className='rounded-md bg-indigo-600 px-3 py-1.5 text-xs font-medium text-white hover:bg-indigo-500'

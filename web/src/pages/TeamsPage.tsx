@@ -5,7 +5,9 @@ import { toast } from 'sonner';
 import { clients, toApiError } from '@/api/transport';
 import { AdminConfirmDialog } from '@/components/admin/AdminConfirmDialog';
 import { AdminModal, AdminModalActions } from '@/components/admin/AdminModal';
+import { Banner } from '@/components/ui/Banner';
 import { DataTable, type DataTableColumn } from '@/components/ui/DataTable';
+import { Field, Input, Select } from '@/components/ui/Field';
 import type { Team } from '@/gen/shepherd/mgmt/v1/team_pb';
 import { useMe } from '@/hooks/useMe';
 import { useOrg } from '@/hooks/useOrg';
@@ -211,31 +213,28 @@ export function TeamsPage() {
             }}
             className='space-y-3'
           >
-            <label className='block text-xs font-medium text-muted'>
-              Name
-              <input
+            <Field label='Name'>
+              <Input
                 data-testid='team-name'
                 value={createForm.name}
                 onChange={(e) => setCreateForm((f) => ({ ...f, name: e.target.value }))}
                 required
-                className='mt-1 w-full rounded-md border border-border-strong bg-card px-3 py-1.5 text-sm'
                 placeholder='platform'
               />
-            </label>
-            <label className='block text-xs font-medium text-muted'>
-              Identity provider group <span className='text-muted-3'>(optional)</span>
-              <input
+            </Field>
+            <Field
+              label='Identity provider group'
+              optional
+              hint='Whatever your provider emits in the groups claim. Leave it empty to build the team from local users instead — you can add them once it exists.'
+            >
+              <Input
                 data-testid='team-group'
                 value={createForm.idpGroupId}
                 onChange={(e) => setCreateForm((f) => ({ ...f, idpGroupId: e.target.value }))}
-                className='mt-1 w-full rounded-md border border-border-strong bg-card px-3 py-1.5 text-sm font-mono'
+                mono
                 placeholder='platform-engineers'
               />
-              <span className='mt-1 block text-2xs font-normal text-muted-3'>
-                Whatever your provider emits in the groups claim. Leave it empty to build the team
-                from local users instead — you can add them once it exists.
-              </span>
-            </label>
+            </Field>
             <AdminModalActions
               onCancel={() => setShowCreate(false)}
               submitLabel='Create'
@@ -332,14 +331,11 @@ function TeamMembersModal({
     <AdminModal title={`Members of ${team.name}`} onClose={onClose}>
       <div className='space-y-4'>
         {team.idpGroupId && (
-          <p
-            data-testid='team-members-group-note'
-            className='rounded-md border border-sky-500/30 bg-sky-500/10 p-2.5 text-xs text-sky-200'
-          >
+          <Banner variant='info' testId='team-members-group-note'>
             Anyone in the group <span className='font-mono'>{team.idpGroupId}</span> is already a
             member. Those people are not listed here — membership lives in your identity provider,
             not in Shepherd. Anyone added below is a member in addition to them.
-          </p>
+          </Banner>
         )}
 
         {isLoading ? (
@@ -388,14 +384,12 @@ function TeamMembersModal({
           }}
           className='flex items-end gap-2'
         >
-          <label className='block flex-1 text-xs font-medium text-muted'>
-            Add a local user
+          <Field label='Add a local user' className='flex-1'>
             {users ? (
-              <select
+              <Select
                 data-testid='team-member-add-select'
                 value={addUserId}
                 onChange={(e) => setAddUserId(e.target.value)}
-                className='mt-1 w-full rounded-md border border-border-strong bg-card px-3 py-1.5 text-sm'
               >
                 <option value=''>Select a user…</option>
                 {candidates.map((u) => (
@@ -404,17 +398,17 @@ function TeamMembersModal({
                     {u.displayName ? ` — ${u.displayName}` : ''}
                   </option>
                 ))}
-              </select>
+              </Select>
             ) : (
-              <input
+              <Input
                 data-testid='team-member-add-input'
                 value={addUserId}
                 onChange={(e) => setAddUserId(e.target.value)}
                 placeholder='user id'
-                className='mt-1 w-full rounded-md border border-border-strong bg-card px-3 py-1.5 text-sm font-mono'
+                mono
               />
             )}
-          </label>
+          </Field>
           <button
             data-testid='team-member-add'
             type='submit'

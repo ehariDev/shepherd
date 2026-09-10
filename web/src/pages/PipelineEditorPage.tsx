@@ -5,6 +5,7 @@ import { CheckCircle2, ChevronDown, Save, XCircle } from 'lucide-react';
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { toast } from 'sonner';
 import { clients, toApiError } from '@/api/transport';
+import { Input } from '@/components/ui/Field';
 import { AlloyEditor } from '@/editor/AlloyEditor';
 import type { Diagnostic } from '@/gen/shepherd/mgmt/v1/common_pb';
 import { useCanWrite, useOrgId } from '@/hooks/useOrg';
@@ -112,11 +113,11 @@ export function PipelineEditorPage() {
       <div className='w-[380px] shrink-0 border-r border-border overflow-y-auto p-6 space-y-5'>
         <div className='space-y-1'>
           <label className='text-xs font-medium text-muted'>Name</label>
-          <input
+          <Input
             value={name}
             onChange={(e) => setName(e.target.value)}
             disabled={readOnly}
-            className='w-full rounded-md border border-border-strong bg-card px-3 py-1.5 text-sm focus:outline-none focus:ring-1 focus:ring-indigo-500'
+            className='focus:outline-none focus:ring-1 focus:ring-indigo-500'
             placeholder='my-pipeline'
           />
         </div>

@@ -5,6 +5,7 @@ import { clients, toApiError } from '@/api/transport';
 import { AdminConfirmDialog } from '@/components/admin/AdminConfirmDialog';
 import { AdminModal, AdminModalActions } from '@/components/admin/AdminModal';
 import { DataTable, type DataTableColumn } from '@/components/ui/DataTable';
+import { Field, Select } from '@/components/ui/Field';
 import type { Cluster } from '@/gen/shepherd/mgmt/v1/admin_pb';
 import { useMe } from '@/hooks/useMe';
 
@@ -144,14 +145,8 @@ export function AdminClustersPage() {
             }}
             className='space-y-4'
           >
-            <label className='block text-xs font-medium text-muted'>
-              Organisation
-              <select
-                value={claimOrgId}
-                onChange={(e) => setClaimOrgId(e.target.value)}
-                required
-                className='mt-1 w-full rounded-md border border-border-strong bg-card px-3 py-1.5 text-sm'
-              >
+            <Field label='Organisation'>
+              <Select value={claimOrgId} onChange={(e) => setClaimOrgId(e.target.value)} required>
                 <option value='' disabled>
                   Select an organisation…
                 </option>
@@ -160,8 +155,8 @@ export function AdminClustersPage() {
                     {o.displayName || o.name}
                   </option>
                 ))}
-              </select>
-            </label>
+              </Select>
+            </Field>
             <AdminModalActions
               onCancel={() => setClaimCluster(null)}
               submitLabel='Claim'

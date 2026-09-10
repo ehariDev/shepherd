@@ -5,6 +5,7 @@ import { useEffect, useState } from 'react';
 import { toast } from 'sonner';
 import { clients, toApiError } from '@/api/transport';
 import { DataTable, type DataTableColumn } from '@/components/ui/DataTable';
+import { Field, Input } from '@/components/ui/Field';
 import type { Assignment, CollectorInstance } from '@/gen/shepherd/mgmt/v1/fleet_pb';
 import { useMe } from '@/hooks/useMe';
 import { useOrgId } from '@/hooks/useOrg';
@@ -411,25 +412,22 @@ export function CollectorDetailPage() {
             </div>
 
             <form onSubmit={addByPaste} className='flex flex-wrap items-end gap-2 max-w-md'>
-              <label className='block flex-1 min-w-40 text-xs font-medium text-muted'>
-                Group ID
-                <input
+              <Field label='Group ID' className='flex-1 min-w-40'>
+                <Input
                   value={pastedGroupId}
                   onChange={(e) => setPastedGroupId(e.target.value)}
                   placeholder='11111111-1111-1111-1111-111111111111'
-                  className='mt-1 block w-full rounded-md border border-border-strong bg-card px-3 py-1.5 text-sm font-mono'
+                  mono
                   data-testid='group-id-input'
                 />
-              </label>
-              <label className='block flex-1 min-w-40 text-xs font-medium text-muted'>
-                Display name <span className='text-muted-3'>(optional)</span>
-                <input
+              </Field>
+              <Field label='Display name' optional className='flex-1 min-w-40'>
+                <Input
                   value={pastedDisplayName}
                   onChange={(e) => setPastedDisplayName(e.target.value)}
                   placeholder='SRE Readers'
-                  className='mt-1 block w-full rounded-md border border-border-strong bg-card px-3 py-1.5 text-sm'
                 />
-              </label>
+              </Field>
               <button
                 type='submit'
                 disabled={!pastedGroupId.trim() || addAssignment.isPending}
