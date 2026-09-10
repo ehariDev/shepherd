@@ -369,18 +369,22 @@ func serviceAccountTierRequirement(role string) string {
 	return auth.RoleOrgEditor
 }
 
-// toConnectError maps auth's sentinel errors to connect.Error codes.
+// toConnectError maps auth's sentinel errors to connect.Error codes. It
+// delegates to the merged mapError (rpc_errors.go) — which already carries
+// the auth.ErrUnauthenticated/ErrOrgNotFound/ErrInvalidOrgID cases this
+// function used to duplicate in its own partial sentinel table (W2-S7c) —
+// with one deliberate override: mapError's default is CodeInternal ("we
+// don't know what this is"), but toConnectError maps the OUTCOME of an
+// access check, where "reason unclear" must still mean "no access", not a
+// 5xx that reads like a server bug. auth.ErrForbidden (the common case: a
+// session authenticated fine but doesn't hold the required role) is exactly
+// what falls through to that override today.
 func toConnectError(err error) error {
-	switch {
-	case err == nil:
+	if err == nil {
 		return nil
-	case errors.Is(err, auth.ErrUnauthenticated):
-		return connect.NewError(connect.CodeUnauthenticated, err)
-	case errors.Is(err, auth.ErrOrgNotFound):
-		return connect.NewError(connect.CodeNotFound, err)
-	case errors.Is(err, auth.ErrInvalidOrgID):
-		return connect.NewError(connect.CodeInvalidArgument, err)
-	default:
-		return connect.NewError(connect.CodePermissionDenied, err)
 	}
+	if mapped := mapError(err); connect.CodeOf(mapped) != connect.CodeInternal {
+		return mapped
+	}
+	return connect.NewError(connect.CodePermissionDenied, err)
 }
