@@ -22,8 +22,14 @@ simulator       Up 5 minutes (healthy)
 
 Brought up with `SHEPHERD_SIM_ENABLED=true docker compose -f e2e/docker-compose.e2e.yaml
 --profile sim up -d --wait`. `SHEPHERD_SIM_ENABLED` is set on the command line for the run only —
-the committed default in `e2e/docker-compose.e2e.yaml` is still `false`, and the feature remains
-disabled by default in every committed file.
+the committed default in `e2e/docker-compose.e2e.yaml` is still `false`, and the `sim` profile
+itself is not started unless asked for (`--profile sim`). The real posture differs by artifact:
+opt-in in both compose stacks (`SHEPHERD_SIM_ENABLED` defaults `false`, pinned by
+`internal/simsvc/compose_containment_test.go`), but on by default in the Helm chart
+(`simulator.enabled: true` in `deploy/helm/shepherd/values.yaml`, asserted by
+`deploy/helm/chart_test.go` and `e2e/k8s/helm_install_test.go`). This document's own stack is a
+compose one, so "opt-in, and explicitly opted in here" is what its transcript demonstrates — it
+says nothing about the chart's default.
 
 Runs were driven through the same REST surface the UI uses: local-admin login →
 `POST /api/admin/orgs` → `POST /api/orgs/{org}/simulate/runs` → poll
@@ -448,3 +454,32 @@ ok  	shepherd/internal/schema	3.463s
 ok  	shepherd/internal/visual	9.127s
 ok  	shepherd/internal/simsvc	2.281s
 ```
+
+That `go test ./internal/simulate/` line already carries the real-binary coverage this document is
+about: `internal/simulate/transform_validate_test.go`'s `Label("needs-alloy-binary")` spec (every
+transformed corpus graph run through stages 1-2 against the actual Alloy binary, not a stub) has no
+`Skip` for a missing binary — only an explicit, env-gated opt-out — so `go test`, which runs every
+spec regardless of Ginkgo label (labels only filter under `--label-filter`), executes it on every
+invocation. `.github/workflows/ci.yml`'s `test` job runs plain `go test ./...`, and pulls the pinned
+`ALLOY_IMAGE` (`deploy/versions.env`) immediately before that step so `findAlloyBinary`'s Docker
+fallback has an image to shell out to. The spec is therefore already exercised, with a real binary,
+on every CI run — just without a step that names it, which is why it reads as untested until you
+dry-run the label:
+
+```
+$ ginkgo --label-filter=needs-alloy-binary --fail-on-empty --dry-run ./internal/simulate
+Will run 1 of 94 specs
+SUCCESS! -- 1 Passed | 0 Failed | 0 Pending | 93 Skipped
+
+$ ginkgo --label-filter=needs-alloy-binar --fail-on-empty --dry-run ./internal/simulate   # typo'd label, on purpose
+Will run 0 of 94 specs
+FAIL! - Detected no specs ran and --fail-on-empty is set
+Test Suite Failed
+```
+
+The second run is the control: it shows `--fail-on-empty` actually catching a label that matches
+nothing, so the first run's "1 of 94" is real confirmation the spec exists and is labelled, not an
+artifact of a filter that matches everything. `ci.yml` should say this explicitly — an added
+`ginkgo --label-filter=needs-alloy-binary --fail-on-empty ./internal/simulate` step, right after
+the image pull, turns today's implicit coverage into a named, independently-failing gate instead of
+one spec buried inside a 20-minute `go test ./...` run.
