@@ -1,4 +1,4 @@
-package simulate
+package worker
 
 import (
 	"context"
@@ -7,6 +7,7 @@ import (
 	"strings"
 	"unicode/utf8"
 
+	"shepherd/internal/simulate"
 	"shepherd/internal/validate"
 	"shepherd/internal/visual"
 )
@@ -20,8 +21,8 @@ func isDeadlineErr(err error) bool {
 // decodeSchemaPayload converts the schema registry's merged map[string]any
 // into visual.SchemaPayload via a JSON round-trip — the same conversion
 // rpc_visual.go's loadSchemaPayload performs, duplicated here because
-// internal/simulate cannot import internal/mgmtapi (mgmtapi already imports
-// internal/simulate).
+// internal/simulate/worker cannot import internal/mgmtapi (mgmtapi already
+// imports internal/simulate).
 func decodeSchemaPayload(merged map[string]any) (visual.SchemaPayload, error) {
 	b, err := json.Marshal(merged)
 	if err != nil {
@@ -37,10 +38,10 @@ func decodeSchemaPayload(merged map[string]any) (visual.SchemaPayload, error) {
 // renderDiagnosticsToGate converts L1 render diagnostics into the
 // gate_diagnostics shape. Render diagnostics carry no line/col (they are
 // found before any Alloy text exists), so Line/Col are left zero.
-func renderDiagnosticsToGate(diags []visual.RenderDiagnostic) []RunGateDiagnostic {
-	out := make([]RunGateDiagnostic, 0, len(diags))
+func renderDiagnosticsToGate(diags []visual.RenderDiagnostic) []simulate.RunGateDiagnostic {
+	out := make([]simulate.RunGateDiagnostic, 0, len(diags))
 	for _, d := range diags {
-		out = append(out, RunGateDiagnostic{Layer: "L1", NodeID: d.NodeID, Message: d.Message})
+		out = append(out, simulate.RunGateDiagnostic{Layer: "L1", NodeID: d.NodeID, Message: d.Message})
 	}
 	return out
 }
@@ -48,8 +49,8 @@ func renderDiagnosticsToGate(diags []visual.RenderDiagnostic) []RunGateDiagnosti
 // validateDiagnosticsToGate converts Stage1/2 diagnostics into
 // gate_diagnostics, resolving each diagnostic's line back to the node whose
 // rendered range contains it — the same lookup rpc_visual.go's Validate uses.
-func validateDiagnosticsToGate(diags []validate.Diagnostic, nodeMap map[string]visual.NodeRange) []RunGateDiagnostic {
-	out := make([]RunGateDiagnostic, 0, len(diags))
+func validateDiagnosticsToGate(diags []validate.Diagnostic, nodeMap map[string]visual.NodeRange) []simulate.RunGateDiagnostic {
+	out := make([]simulate.RunGateDiagnostic, 0, len(diags))
 	for _, d := range diags {
 		id := ""
 		for node, rg := range nodeMap {
@@ -58,7 +59,7 @@ func validateDiagnosticsToGate(diags []validate.Diagnostic, nodeMap map[string]v
 				break
 			}
 		}
-		out = append(out, RunGateDiagnostic{Layer: "L2", NodeID: id, Line: d.Line, Col: d.Col, Message: d.Message})
+		out = append(out, simulate.RunGateDiagnostic{Layer: "L2", NodeID: id, Line: d.Line, Col: d.Col, Message: d.Message})
 	}
 	return out
 }
@@ -70,7 +71,7 @@ func validateDiagnosticsToGate(diags []validate.Diagnostic, nodeMap map[string]v
 // AUTHORED graph: the transform rewrites node.Component to the stub
 // component, so only the pre-transform component still names the original
 // policy entry).
-func buildRunInputs(original, transformed visual.GraphDocument, policy Policy, nodeMap map[string]visual.NodeRange) (map[string]string, []string) {
+func buildRunInputs(original, transformed visual.GraphDocument, policy simulate.Policy, nodeMap map[string]visual.NodeRange) (map[string]string, []string) {
 	byID := make(map[string]visual.GraphNode, len(transformed.Nodes))
 	for _, n := range transformed.Nodes {
 		byID[n.ID] = n
@@ -91,7 +92,7 @@ func buildRunInputs(original, transformed visual.GraphDocument, policy Policy, n
 			continue
 		}
 		cp, ok := policy.Components[n.Component]
-		if !ok || cp.Stub == nil || cp.Stub.Type != StubTypeLokiFile {
+		if !ok || cp.Stub == nil || cp.Stub.Type != simulate.StubTypeLokiFile {
 			continue
 		}
 		if !seen[cp.Stub.Fixture] {
@@ -118,27 +119,27 @@ func indexOriginalNodes(doc visual.GraphDocument) map[string]originalNodeInfo {
 	return out
 }
 
-func toRunSeries(in []ClientSeries) []RunSeries {
-	out := make([]RunSeries, 0, len(in))
+func toRunSeries(in []simulate.ClientSeries) []simulate.RunSeries {
+	out := make([]simulate.RunSeries, 0, len(in))
 	for _, s := range in {
-		out = append(out, RunSeries{Name: s.Name, Labels: s.Labels, SampleCount: s.SampleCount})
+		out = append(out, simulate.RunSeries{Name: s.Name, Labels: s.Labels, SampleCount: s.SampleCount})
 	}
 	return out
 }
 
-func toRunLogLines(in []ClientLogLine) []RunLogLine {
-	out := make([]RunLogLine, 0, len(in))
+func toRunLogLines(in []simulate.ClientLogLine) []simulate.RunLogLine {
+	out := make([]simulate.RunLogLine, 0, len(in))
 	for _, l := range in {
-		out = append(out, RunLogLine{Labels: l.Labels, Line: l.Line})
+		out = append(out, simulate.RunLogLine{Labels: l.Labels, Line: l.Line})
 	}
 	return out
 }
 
-func toRunComponentHealth(in []ClientComponentHealth, nodeInfo map[string]originalNodeInfo) []RunComponentHealth {
-	out := make([]RunComponentHealth, 0, len(in))
+func toRunComponentHealth(in []simulate.ClientComponentHealth, nodeInfo map[string]originalNodeInfo) []simulate.RunComponentHealth {
+	out := make([]simulate.RunComponentHealth, 0, len(in))
 	for _, c := range in {
 		info := nodeInfo[c.NodeID]
-		out = append(out, RunComponentHealth{
+		out = append(out, simulate.RunComponentHealth{
 			NodeID: c.NodeID, NodeLabel: info.Label, Component: info.Component,
 			HealthState: c.Health, Message: c.Message,
 		})
@@ -168,7 +169,7 @@ func capStderr(s string) string {
 // UTF-8 at that layer. A plain byte-index cut (s[len(s)-max:]) can start
 // mid-rune, and Postgres rejects the resulting invalid UTF-8 with SQLSTATE
 // 22021; CompleteSimulateRun then fails and the run sits until the janitor
-// reaps it (worker.go:363-368).
+// reaps it (worker.go's finish/CompleteSimulateRun call).
 func SanitizeStderrTail(s string) string {
 	s = strings.ToValidUTF8(stripControlChars(s), "")
 	if len(s) <= maxStderrTailBytes {
@@ -220,11 +221,11 @@ func marshalOrEmptyArray(v any) json.RawMessage {
 // classifySimulatorError maps a Client error into one of the closed
 // SimulateRun.error_code values, per the run-API spec's error-mapping table.
 func classifySimulatorError(err error) (code, message string) {
-	var apiErr *ClientAPIError
+	var apiErr *simulate.ClientAPIError
 	if errors.As(err, &apiErr) {
 		switch apiErr.Code {
 		case "queue_full", "shutting_down":
-			return RunErrorSimulatorUnavailable, apiErr.Message
+			return simulate.RunErrorSimulatorUnavailable, apiErr.Message
 		case "unauthorized":
 			// A 401 here means the bearer token Shepherd is configured with
 			// (SHEPHERD_SIMULATOR_TOKEN / config.simulator.token) doesn't
@@ -234,22 +235,22 @@ func classifySimulatorError(err error) (code, message string) {
 			// simulator being unreachable) with a message that names the
 			// actual cause instead of the bare "internal error" a user
 			// cannot act on.
-			return RunErrorSimulatorUnavailable,
+			return simulate.RunErrorSimulatorUnavailable,
 				"simulator rejected the configured bearer token — check that config.simulator.token (or SHEPHERD_SIMULATOR_TOKEN) matches the simulator's SIM_TOKEN: " + apiErr.Message
 		case "invalid_config", "endpoint_not_allowed", "config_too_large":
 			// Shepherd renders and validates the config before ever sending
 			// it; the simulator rejecting it is a Shepherd-side bug, not a
 			// user-actionable condition.
-			return RunErrorInternal, apiErr.Message
+			return simulate.RunErrorInternal, apiErr.Message
 		default:
-			return RunErrorInternal, apiErr.Message
+			return simulate.RunErrorInternal, apiErr.Message
 		}
 	}
-	if errors.Is(err, ErrSimulatorUnreachable) {
-		return RunErrorSimulatorUnavailable, err.Error()
+	if errors.Is(err, simulate.ErrSimulatorUnreachable) {
+		return simulate.RunErrorSimulatorUnavailable, err.Error()
 	}
 	if isDeadlineErr(err) {
-		return RunErrorTimeout, err.Error()
+		return simulate.RunErrorTimeout, err.Error()
 	}
-	return RunErrorInternal, err.Error()
+	return simulate.RunErrorInternal, err.Error()
 }

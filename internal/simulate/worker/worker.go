@@ -1,4 +1,13 @@
-package simulate
+// Package worker runs Shepherd's S3 sandbox simulate_run rows to completion.
+//
+// It is split out from the otherwise pure internal/simulate transform
+// package (graph in, rewritten graph out — no database, config, or validator
+// dependency) because RunWorker is the opposite: it claims queued rows from
+// Postgres, drives the render -> transform -> render -> validate -> simulator
+// lifecycle using internal/simulate as a library, and writes the terminal
+// result back. See internal/simulate/deps_test.go for the guard that keeps
+// the transform package free of this package's dependencies.
+package worker
 
 import (
 	"context"
@@ -15,6 +24,7 @@ import (
 
 	"shepherd/internal/config"
 	"shepherd/internal/schema"
+	"shepherd/internal/simulate"
 	"shepherd/internal/store"
 	"shepherd/internal/store/sqlc"
 	"shepherd/internal/validate"
@@ -39,19 +49,19 @@ type RunWorker struct {
 	store     *store.Store
 	schema    *schema.Registry
 	validator *validate.Validator
-	client    *Client
+	client    *simulate.Client
 	cfg       config.SimulatorConfig
 	logger    *slog.Logger
 }
 
-// NewRunWorker builds a RunWorker. It does not start anything — call Start.
-func NewRunWorker(st *store.Store, schemaReg *schema.Registry, v *validate.Validator, cfg config.SimulatorConfig, logger *slog.Logger) *RunWorker {
+// New builds a RunWorker. It does not start anything — call Start.
+func New(st *store.Store, schemaReg *schema.Registry, v *validate.Validator, cfg config.SimulatorConfig, logger *slog.Logger) *RunWorker {
 	if logger == nil {
 		logger = slog.New(slog.DiscardHandler)
 	}
 	return &RunWorker{
 		store: st, schema: schemaReg, validator: v, cfg: cfg,
-		client: NewClient(cfg.ControlURL, cfg.Token, &http.Client{Timeout: cfg.RunTTL + 30*time.Second}),
+		client: simulate.NewClient(cfg.ControlURL, cfg.Token, &http.Client{Timeout: cfg.RunTTL + 30*time.Second}),
 		logger: logger.With("component", "simulate.worker"),
 	}
 }
@@ -187,7 +197,7 @@ func (w *RunWorker) execute(ctx context.Context, q *sqlc.Queries, run sqlc.Simul
 
 	var doc visual.GraphDocument
 	if err := json.Unmarshal(run.Graph, &doc); err != nil {
-		w.finish(ctx, q, run, runOutcome{errorCode: RunErrorInternal, errorMessage: "stored graph is not valid JSON: " + err.Error()})
+		w.finish(ctx, q, run, runOutcome{errorCode: simulate.RunErrorInternal, errorMessage: "stored graph is not valid JSON: " + err.Error()})
 		return
 	}
 
@@ -197,17 +207,17 @@ func (w *RunWorker) execute(ctx context.Context, q *sqlc.Queries, run sqlc.Simul
 	}
 	merged, _, err := w.schema.Get(version)
 	if err != nil {
-		w.finish(ctx, q, run, runOutcome{errorCode: RunErrorInternal, errorMessage: "schema unavailable: " + err.Error()})
+		w.finish(ctx, q, run, runOutcome{errorCode: simulate.RunErrorInternal, errorMessage: "schema unavailable: " + err.Error()})
 		return
 	}
 	schemaPayload, err := decodeSchemaPayload(merged)
 	if err != nil {
-		w.finish(ctx, q, run, runOutcome{errorCode: RunErrorInternal, errorMessage: "schema decode failed: " + err.Error()})
+		w.finish(ctx, q, run, runOutcome{errorCode: simulate.RunErrorInternal, errorMessage: "schema decode failed: " + err.Error()})
 		return
 	}
-	policy, err := LoadPolicy(merged)
+	policy, err := simulate.LoadPolicy(merged)
 	if err != nil {
-		w.finish(ctx, q, run, runOutcome{errorCode: RunErrorInternal, errorMessage: "simulation policy decode failed: " + err.Error()})
+		w.finish(ctx, q, run, runOutcome{errorCode: simulate.RunErrorInternal, errorMessage: "simulation policy decode failed: " + err.Error()})
 		return
 	}
 
@@ -216,26 +226,26 @@ func (w *RunWorker) execute(ctx context.Context, q *sqlc.Queries, run sqlc.Simul
 	// problem, not a transform bug, but it still fails the run rather than
 	// reaching the transform with an already-broken graph.
 	if p1 := visual.Render(doc, schemaPayload); len(p1.Diagnostics) > 0 {
-		w.finish(ctx, q, run, runOutcome{errorCode: RunErrorGateFailed, errorMessage: "graph failed to render", gateDiagnostics: renderDiagnosticsToGate(p1.Diagnostics)})
+		w.finish(ctx, q, run, runOutcome{errorCode: simulate.RunErrorGateFailed, errorMessage: "graph failed to render", gateDiagnostics: renderDiagnosticsToGate(p1.Diagnostics)})
 		return
 	}
 
-	harness := HarnessEndpoints{
+	harness := simulate.HarnessEndpoints{
 		CaptureBaseURL: w.cfg.CaptureBaseURL, OTLPGRPCAddress: w.cfg.OTLPGRPCAddress,
 		SyslogHost: w.cfg.SyslogHost, SyslogPort: w.cfg.SyslogPort,
 		CaptureDir: w.cfg.CaptureDir, TargetAddress: w.cfg.TargetAddress, LogDir: w.cfg.LogDir,
 	}
-	result, err := Transform(TransformRequest{Graph: doc, Schema: schemaPayload, Policy: policy, Harness: harness})
+	result, err := simulate.Transform(simulate.TransformRequest{Graph: doc, Schema: schemaPayload, Policy: policy, Harness: harness})
 	if err != nil {
-		var terrs TransformErrors
+		var terrs simulate.TransformErrors
 		msg := err.Error()
-		gate := []RunGateDiagnostic(nil)
+		gate := []simulate.RunGateDiagnostic(nil)
 		if errors.As(err, &terrs) {
 			for _, te := range terrs {
-				gate = append(gate, RunGateDiagnostic{Layer: "transform", NodeID: te.NodeID, Message: te.Message})
+				gate = append(gate, simulate.RunGateDiagnostic{Layer: "transform", NodeID: te.NodeID, Message: te.Message})
 			}
 		}
-		w.finish(ctx, q, run, runOutcome{errorCode: RunErrorCannotStub, errorMessage: msg, gateDiagnostics: gate})
+		w.finish(ctx, q, run, runOutcome{errorCode: simulate.RunErrorCannotStub, errorMessage: msg, gateDiagnostics: gate})
 		return
 	}
 
@@ -244,18 +254,18 @@ func (w *RunWorker) execute(ctx context.Context, q *sqlc.Queries, run sqlc.Simul
 	// (VisualService.Validate), applied here to the rewritten graph.
 	p2 := visual.Render(result.Graph, schemaPayload)
 	if len(p2.Diagnostics) > 0 {
-		w.finish(ctx, q, run, runOutcome{errorCode: RunErrorGateFailed, errorMessage: "transformed graph failed to render", gateDiagnostics: renderDiagnosticsToGate(p2.Diagnostics)})
+		w.finish(ctx, q, run, runOutcome{errorCode: simulate.RunErrorGateFailed, errorMessage: "transformed graph failed to render", gateDiagnostics: renderDiagnosticsToGate(p2.Diagnostics)})
 		return
 	}
 	vr := w.validator.Stages12(ctx, p2.Content)
 	if !vr.Valid {
-		w.finish(ctx, q, run, runOutcome{errorCode: RunErrorGateFailed, errorMessage: "transformed graph failed Alloy validation", gateDiagnostics: validateDiagnosticsToGate(vr.Diagnostics, p2.NodeMap)})
+		w.finish(ctx, q, run, runOutcome{errorCode: simulate.RunErrorGateFailed, errorMessage: "transformed graph failed Alloy validation", gateDiagnostics: validateDiagnosticsToGate(vr.Diagnostics, p2.NodeMap)})
 		return
 	}
 
 	componentIndex, logFixtures := buildRunInputs(doc, result.Graph, policy, p2.NodeMap)
 
-	clientRun, err := w.client.Start(ctx, ClientStartRequest{
+	clientRun, err := w.client.Start(ctx, simulate.ClientStartRequest{
 		Config: p2.Content, DurationSeconds: int(run.RequestedDurationSeconds),
 		LogFixtures: logFixtures, LogEmitInterval: 500, ComponentIndex: componentIndex,
 	})
@@ -283,7 +293,7 @@ func (w *RunWorker) execute(ctx context.Context, q *sqlc.Queries, run sqlc.Simul
 		outcome.stderrTail = joinStderr(final.Results.StderrTail)
 	}
 	if final.State == "failed" {
-		errCode, errMsg := RunErrorGateFailed, "the sandbox run failed"
+		errCode, errMsg := simulate.RunErrorGateFailed, "the sandbox run failed"
 		if final.Error != nil {
 			errMsg = final.Error.Message
 			if final.Error.Code != "" {
@@ -299,21 +309,21 @@ func (w *RunWorker) execute(ctx context.Context, q *sqlc.Queries, run sqlc.Simul
 // state or ctx is done. The interval is fixed rather than config-driven: it
 // bounds only how quickly a finished run's terminal state is observed, not
 // any correctness property, so it does not need its own config key.
-func (w *RunWorker) pollUntilTerminal(ctx context.Context, id string) (ClientRun, error) {
+func (w *RunWorker) pollUntilTerminal(ctx context.Context, id string) (simulate.ClientRun, error) {
 	const interval = 750 * time.Millisecond
 	ticker := time.NewTicker(interval)
 	defer ticker.Stop()
 	for {
 		run, err := w.client.Get(ctx, id)
 		if err != nil {
-			return ClientRun{}, err
+			return simulate.ClientRun{}, err
 		}
-		if ClientTerminal(run.State) {
+		if simulate.ClientTerminal(run.State) {
 			return run, nil
 		}
 		select {
 		case <-ctx.Done():
-			return ClientRun{}, ctx.Err()
+			return simulate.ClientRun{}, ctx.Err()
 		case <-ticker.C:
 		}
 	}
@@ -322,11 +332,11 @@ func (w *RunWorker) pollUntilTerminal(ctx context.Context, id string) (ClientRun
 // runOutcome is what execute hands to finish: either a terminal success
 // (errorCode empty) or a terminal failure (errorCode set).
 type runOutcome struct {
-	rewrites        []Rewrite
-	series          []RunSeries
-	logLines        []RunLogLine
-	componentHealth []RunComponentHealth
-	gateDiagnostics []RunGateDiagnostic
+	rewrites        []simulate.Rewrite
+	series          []simulate.RunSeries
+	logLines        []simulate.RunLogLine
+	componentHealth []simulate.RunComponentHealth
+	gateDiagnostics []simulate.RunGateDiagnostic
 	stderrTail      string
 	errorCode       string
 	errorMessage    string
@@ -337,9 +347,9 @@ const maxCapturedSeries = 500
 const maxCapturedLogLines = 500
 
 func (w *RunWorker) finish(ctx context.Context, q *sqlc.Queries, run sqlc.SimulateRun, o runOutcome) {
-	status := RunStatusCompleted
+	status := simulate.RunStatusCompleted
 	if o.errorCode != "" {
-		status = RunStatusFailed
+		status = simulate.RunStatusFailed
 	}
 
 	// Caps per the run-API spec's decision 15: an unbounded capture becomes
@@ -370,7 +380,7 @@ func (w *RunWorker) finish(ctx context.Context, q *sqlc.Queries, run sqlc.Simula
 	}
 
 	action := "simulate.run.complete"
-	if status == RunStatusFailed {
+	if status == simulate.RunStatusFailed {
 		action = "simulate.run.fail"
 	}
 	w.auditSystem(ctx, q, updated.OrgID, action, updated.ID.String(), map[string]any{
@@ -399,7 +409,7 @@ func (w *RunWorker) sweepOnce(ctx context.Context) {
 		w.logger.Warn("expire stale simulate runs failed", "err", err)
 	}
 	for _, row := range expired {
-		w.auditSystem(ctx, w.store.Queries, row.OrgID, "simulate.run.expire", row.ID.String(), map[string]any{"status": RunStatusExpired})
+		w.auditSystem(ctx, w.store.Queries, row.OrgID, "simulate.run.expire", row.ID.String(), map[string]any{"status": simulate.RunStatusExpired})
 	}
 	if err := w.store.Queries.DeleteOldSimulateRuns(ctx, w.retentionSeconds()); err != nil {
 		w.logger.Warn("delete old simulate runs failed", "err", err)

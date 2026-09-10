@@ -30,7 +30,7 @@ import (
 	"shepherd/internal/mgmtapi"
 	"shepherd/internal/migrations"
 	"shepherd/internal/schema"
-	"shepherd/internal/simulate"
+	"shepherd/internal/simulate/worker"
 	"shepherd/internal/spa"
 	"shepherd/internal/store"
 	"shepherd/internal/telemetry"
@@ -380,7 +380,7 @@ func (s *Server) Run(ctx context.Context) error {
 		if schemaErr != nil {
 			s.logger.Error("simulate run worker not started: schema registry unavailable", "err", schemaErr)
 		} else {
-			simWorker := simulate.NewRunWorker(s.store, schemaReg, s.validator, s.cfg.Simulator, s.logger)
+			simWorker := worker.New(s.store, schemaReg, s.validator, s.cfg.Simulator, s.logger)
 			simWorker.Start(ctx)
 		}
 	}
