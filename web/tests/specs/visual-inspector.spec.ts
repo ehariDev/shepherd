@@ -133,6 +133,38 @@ test.describe('visual inspector', () => {
     await expect(page.locator('[data-testid="attr-wire-up-targets-0"]')).toBeDisabled();
   });
 
+  test('Code tab (W5-10): the render is debounced, not recomputed on every keystroke', async ({
+    page,
+  }) => {
+    // discovery.kubernetes' `role` is a required, top-level attribute
+    // (internal/schema/artifacts/alloy-*.json, overlaid with an enum of
+    // values) — visible without expanding "Show optional attributes" first,
+    // and absent from the render until set, so `role = "pod"` appearing is
+    // an unambiguous marker of "the edit reached the render".
+    await page.click('[data-component="discovery.kubernetes"]');
+    await page.waitForSelector('[data-testid="pipeline-node"]', { timeout: 5_000 });
+    await page.click('[data-testid="pipeline-node"]', { force: true });
+    await expect(page.locator('[data-testid="inspector"]')).toContainText('discovery.kubernetes', {
+      timeout: 5_000,
+    });
+
+    await page.click('[data-testid="drawer-toggle"]');
+    await page.click('[data-testid="drawer-tab-code"]');
+    const codeContent = page.locator('[data-testid="code-tab-content"]');
+    await expect(codeContent).toBeVisible({ timeout: 3_000 });
+    await expect(codeContent).not.toContainText('role = "pod"');
+
+    await page.selectOption('[data-testid="attr-select-role"]', 'pod');
+    // Immediately after the edit (well under the 300ms debounce), the Code
+    // tab must still show the OLD render — the value hasn't been committed
+    // to it yet. This is the assertion that is false today (renderTS runs
+    // on every keystroke, synchronously): it must go red before the fix.
+    await page.waitForTimeout(60);
+    await expect(codeContent).not.toContainText('role = "pod"');
+    // Once the debounce elapses, the render catches up.
+    await expect(codeContent).toContainText('role = "pod"', { timeout: 2_000 });
+  });
+
   test('placing two nodes and selecting second shows correct component', async ({ page }) => {
     await page.click('[data-component="prometheus.scrape"]');
     await page.click('[data-component="prometheus.remote_write"]');

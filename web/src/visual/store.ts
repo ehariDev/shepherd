@@ -213,6 +213,23 @@ function makeDefaultDoc(schemaVersion = 'alloy-v1.18.1'): GraphDocument {
   };
 }
 
+/**
+ * Exactly-one-selected-node projection (W5-10). Reference-stable across an
+ * UNRELATED mutation: every store action that touches `doc.nodes` does so
+ * with `.map((n) => (n.id === id ? { ...n, ...patch } : n))` (or an
+ * equivalent), so every node OTHER than the one just changed keeps its exact
+ * object reference — meaning this function returns the SAME object across
+ * two calls that bracket an unrelated update, and zustand's default
+ * `Object.is` output comparison (`useVisualStore(selectSelectedNode)`) skips
+ * the re-render. `InspectorPanel` subscribes with it instead of the whole
+ * `doc`, which changes reference on every single mutation.
+ */
+export function selectSelectedNode(
+  s: Pick<VisualStore, 'selected' | 'doc'>,
+): GraphNode | undefined {
+  return s.selected.length === 1 ? s.doc.nodes.find((n) => n.id === s.selected[0]) : undefined;
+}
+
 function revalidate(
   state: Pick<VisualStore, 'doc' | 'schema' | 'allowExperimental'>,
 ): L1Diagnostic[] {

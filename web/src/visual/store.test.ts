@@ -1,6 +1,11 @@
 import { beforeEach, describe, expect, it } from 'vitest';
 import { shallow } from 'zustand/shallow';
-import { type ConnectingFrom, selectConnectionState, useVisualStore } from './store';
+import {
+  type ConnectingFrom,
+  selectConnectionState,
+  selectSelectedNode,
+  useVisualStore,
+} from './store';
 import type { ComponentDef, SchemaPayload } from './types';
 
 describe('visual store', () => {
@@ -594,5 +599,56 @@ describe('setBinding / removeBinding (W5-01)', () => {
     store.getState().removeBinding(id, ['endpoint', '0', 'password']);
 
     expect(store.getState().doc.nodes[0].props).toEqual({ endpoint: [{ url: 'http://x' }] });
+  });
+});
+
+describe('selectSelectedNode (W5-10 narrow selector)', () => {
+  it('returns the exactly-one selected node', () => {
+    const store = useVisualStore;
+    store.getState().addNode('discovery.kubernetes', { x: 0, y: 0 });
+    const id = store.getState().doc.nodes[0].id;
+    store.getState().setSelected([id]);
+    expect(selectSelectedNode(store.getState())?.id).toBe(id);
+  });
+
+  it('returns undefined for zero or multiple selected nodes', () => {
+    const store = useVisualStore;
+    store.getState().addNode('discovery.kubernetes', { x: 0, y: 0 });
+    store.getState().addNode('prometheus.scrape', { x: 100, y: 0 });
+    const [a, b] = store.getState().doc.nodes.map((n) => n.id);
+
+    store.getState().setSelected([]);
+    expect(selectSelectedNode(store.getState())).toBeUndefined();
+
+    store.getState().setSelected([a, b]);
+    expect(selectSelectedNode(store.getState())).toBeUndefined();
+  });
+
+  it('returns the identical object reference after an unrelated node changes', () => {
+    const store = useVisualStore;
+    store.getState().addNode('discovery.kubernetes', { x: 0, y: 0 });
+    store.getState().addNode('prometheus.scrape', { x: 100, y: 0 });
+    const [a, b] = store.getState().doc.nodes.map((n) => n.id);
+    store.getState().setSelected([a]);
+
+    const before = selectSelectedNode(store.getState());
+    store.getState().updateNode(b, { label: 'renamed' });
+    const after = selectSelectedNode(store.getState());
+
+    expect(after).toBe(before);
+  });
+
+  it('returns a NEW reference once the selected node itself changes', () => {
+    const store = useVisualStore;
+    store.getState().addNode('discovery.kubernetes', { x: 0, y: 0 });
+    const id = store.getState().doc.nodes[0].id;
+    store.getState().setSelected([id]);
+
+    const before = selectSelectedNode(store.getState());
+    store.getState().setLabel(id, 'renamed');
+    const after = selectSelectedNode(store.getState());
+
+    expect(after).not.toBe(before);
+    expect(after?.label).toBe('renamed');
   });
 });
