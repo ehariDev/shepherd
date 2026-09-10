@@ -26,7 +26,13 @@ name: Release
 on:
   push:
     tags:
-      - "v*"
+      # GitHub's tag filter is a glob, not a regex -- there is no \d
+      # equivalent beyond a [0-9] character class, so this is the tightest
+      # match it allows ("vfoo", "v1" and "version-2" no longer trigger).
+      # The verify job's "Validate tag" step backs this up with a real regex
+      # at runtime, since e.g. "v1.2.3.4" still satisfies this glob.
+      - "v[0-9]+.[0-9]+.[0-9]+"
+      - "v[0-9]+.[0-9]+.[0-9]+-*"
 
 # One release at a time. Two tags pushed in quick succession would otherwise
 # race the "is this chart version already published" check below, and both
@@ -52,6 +58,16 @@ jobs:
     if: github.repository == 'procoduck/shepherd'
     timeout-minutes: 20
     steps:
+      # The push.tags glob above (GitHub Actions has no \d) still lets
+      # through e.g. "v1.2.3.4" or "v01.2.3" -- reject anything that isn't a
+      # real semver release tag before doing anything else.
+      - name: Validate tag
+        run: |
+          if [[ ! "$GITHUB_REF_NAME" =~ ^v[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z.-]+)?$ ]]; then
+            echo "::error::tag '$GITHUB_REF_NAME' is not a valid semver release tag (expected vMAJOR.MINOR.PATCH[-PRERELEASE])" >&2
+            exit 1
+          fi
+
       - name: Checkout
         uses: actions/checkout@v4
 

@@ -117,6 +117,34 @@ var _ = Describe("release.yml", func() {
 		}
 		Expect(attestsImages).To(BeTrue(), "attest-images job must call actions/attest-build-provenance")
 	})
+
+	// Red run, 2026-09-10: release.yml triggered on any tag matching the glob
+	// "v*" -- "vfoo", "v1" and "version-2" (no, but "v-2" etc.) all start a
+	// release. GitHub's tag filter has no \d character class equivalent
+	// beyond [0-9], so this is the tightest filter it allows; a runtime
+	// regex check backs it up.
+	It("only starts a release for a semver tag", func() {
+		rel := loadWorkflow("release.yml")
+
+		push, ok := rel.On["push"].(map[string]any)
+		Expect(ok).To(BeTrue(), "release.yml has no on.push")
+		tagsRaw, ok := push["tags"].([]any)
+		Expect(ok).To(BeTrue(), "on.push.tags is not a list")
+		var tags []string
+		for _, t := range tagsRaw {
+			s, ok := t.(string)
+			Expect(ok).To(BeTrue(), "tag filter entry is not a string")
+			tags = append(tags, s)
+		}
+		Expect(tags).NotTo(ContainElement("v*"))
+		Expect(tags).To(ContainElement("v[0-9]+.[0-9]+.[0-9]+"))
+		Expect(tags).To(ContainElement("v[0-9]+.[0-9]+.[0-9]+-*"))
+
+		verify, ok := rel.Jobs["verify"]
+		Expect(ok).To(BeTrue(), "release.yml has no verify job")
+		Expect(joinedRuns(verify.Steps)).To(ContainSubstring(`^v[0-9]+\.[0-9]+\.[0-9]+`),
+			"the verify job must validate the tag against a semver regex at runtime, since GitHub's tag glob cannot fully enforce one")
+	})
 })
 
 // needsList normalizes a job's `needs:` field (a bare string or a list of
