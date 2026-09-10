@@ -11,6 +11,28 @@ name: E2E
 on:
   workflow_dispatch: {}
   merge_group: {}
+  # Post-merge signal for the agent-protocol suite (D11): nothing else runs it
+  # in practice -- there is no merge queue configured on this repo (branch
+  # protection has no required_status_checks/rulesets), so merge_group never
+  # fires, and gh api confirmed workflow run 32844383559's `e2e` job was
+  # "skipped" on an ordinary PR. Path-filtered to what the suite actually
+  # exercises (registration, pipelines, GitOps, RBAC, agent protocol) rather
+  # than every push, at ~11 billed minutes per qualifying push (~90/month at
+  # an estimated 8 qualifying pushes) -- see the `e2e` job's own `if` below,
+  # which is unchanged (`!= 'pull_request'` already permits push) and the
+  # e2e-egress job's new `if`, which excludes push so this doesn't silently
+  # double the billed cost of every push to main.
+  push:
+    branches: [main]
+    paths:
+      - "e2e/**"
+      - "!e2e/k8s/**" # the k8s suite has its own workflow; irrelevant here
+      - "internal/agentapi/**"
+      - "internal/gitsync/**"
+      - "internal/auth/**"
+      - "deploy/Dockerfile*"
+      - "deploy/versions.env"
+      - ".github/workflows/e2e.yml"
   # The egress job ALSO runs on any PR that touches the S3 sandbox containment
   # surface. The rest of this workflow stays merge-queue-only per docs/spec.md's
   # "CI ordering" — this is a deliberate exception for one job, because the
@@ -118,6 +140,12 @@ jobs:
     name: e2e-sim (sandbox egress containment)
     runs-on: ubuntu-latest
     timeout-minutes: 30
+    # Excludes push: the on.push trigger above exists for the `e2e` job's
+    # post-merge signal only. Without this, a push to main matching those
+    # paths would also start this equally expensive job (its own image
+    # builds, its own compose stack) with no gate at all, silently doubling
+    # the billed cost the push trigger's budget assumed.
+    if: github.event_name != 'push'
     steps:
       - name: Checkout
         uses: actions/checkout@v4
