@@ -1,6 +1,9 @@
 package repocheck_test
 
 import (
+	"os"
+	"path/filepath"
+
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
 )
@@ -64,5 +67,28 @@ var _ = Describe("the smoke target", func() {
 var _ = Describe("the tools target", func() {
 	It("does not install the standalone gofumpt make fmt must not use", func() {
 		Expect(makeRecipe("tools")).NotTo(ContainSubstring("gofumpt"))
+	})
+})
+
+// Red run, 2026-09-10: check-raw-sql's pattern is `Pool\(\)\.(Exec|Query|QueryRow)\(`,
+// so a raw SQL call issued on a bare conn/tx/db variable (anything that isn't
+// a direct `.Pool()` chain) slips past unmarked. internal/server/server.go:507
+// (`db.QueryRow(ctx, "SELECT version, dirty FROM schema_migrations ...")`) is
+// exactly such a site, and it is the orchestrator's cross-cutting fix (a
+// RAW-SQL-OK comment) — this workstream widens the pattern, not that file.
+var _ = Describe("the check-raw-sql guard", func() {
+	It("catches raw SQL on a pooled conn, not only on a direct Pool() chain", func() {
+		root := GinkgoT().TempDir()
+		probeDir := filepath.Join(root, "probe")
+		Expect(os.MkdirAll(probeDir, 0o755)).To(Succeed())
+		probe := "package probe\n\nimport \"context\"\n\ntype conner interface {\n" +
+			"\tQueryRow(ctx context.Context, sql string, args ...any) int\n}\n\n" +
+			"func f(conn conner, ctx context.Context) int {\n" +
+			"\treturn conn.QueryRow(ctx, \"SELECT 1\")\n}\n"
+		Expect(os.WriteFile(filepath.Join(probeDir, "probe.go"), []byte(probe), 0o644)).To(Succeed())
+
+		out, err := runMake("check-raw-sql", "RAW_SQL_ROOT="+root)
+		Expect(err).To(HaveOccurred(), "expected check-raw-sql to fail on unmarked raw SQL in the fixture tree:\n%s", out)
+		Expect(out).To(ContainSubstring("probe.go"))
 	})
 })

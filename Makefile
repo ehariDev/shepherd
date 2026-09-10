@@ -325,11 +325,21 @@ check-build-script: ## Guard: pnpm build/install only in scripts/build-web.sh
 	fi
 	@echo "check-build-script: OK"
 
+# Root the raw-SQL scan under, overridable so the guard itself can be tested
+# against a fixture tree (scripts/repocheck/makefile_test.go) without any
+# fixture files living in the real source tree.
+RAW_SQL_ROOT ?= internal/
+
 # Guard: raw SQL calls in Go source outside internal/store must carry a RAW-SQL-OK comment.
+# Matches .Exec(/.Query(/.QueryRow( on ANY receiver (conn, tx, db, Pool()...),
+# not only a direct Pool() chain -- a conn or tx handed down from Pool() is
+# just as raw. The trailing [^)] requires at least one argument character
+# right after the open paren, so a zero-arg call such as r.URL.Query() (8
+# call sites in internal/auth and internal/mgmtapi) does not false-positive.
 check-raw-sql: ## Guard: raw SQL outside internal/store carries RAW-SQL-OK
 	@UNMARKED=$$(grep -rn --include='*.go' \
-	    -E 'Pool\(\)\.(Exec|Query|QueryRow)\(' \
-	    internal/ \
+	    -E '\.(Exec|Query|QueryRow)\([^)]' \
+	    $(RAW_SQL_ROOT) \
 	    | grep -v 'internal/store/' \
 	    | grep -v '_test\.go' \
 	    | grep -v 'internal/testutil/' \
