@@ -172,6 +172,49 @@ func authorizeOrgAccess(ctx context.Context, st *store.Store, sess *Session, org
 	return nil
 }
 
+// ResolveOrgRole reports the UI-facing role a session holds in org, or "" if
+// none: OrgRoleAdmin/OrgRoleEditor/OrgRoleViewer for a local session (read
+// straight off org_members), or the same three names for an OIDC session
+// resolved from its groups claim against the org's
+// admin/editor/reader_group_id, in that priority order.
+//
+// It is the GetMe-facing counterpart to authorizeOrgAccess: that function
+// answers "does this session clear requirement X", gated by a minimum;
+// this one answers "what is this session's role", full stop, which is what
+// drives the UI's own gating (offering the pipeline editor, the admin
+// screens, ...). Kept separate rather than derived from authorizeOrgAccess
+// because the two ask different questions — the "for is-app-admin, treat as
+// admin in every org" answer lives in the caller (rpc_me.go), which already
+// special-cases IsAppAdmin before this is reached.
+//
+// The empty-group guard matters here for exactly the reason it matters in
+// authorizeOrgAccess's hasGroup: an org whose admin_group_id is "" (never
+// configured) must not be reported as admin to a session whose groups claim
+// happens to carry an empty string.
+func ResolveOrgRole(ctx context.Context, st *store.Store, sess *Session, org sqlc.Org) string {
+	if sess.Source == SourceLocal && sess.UserID.Valid {
+		role, err := st.Queries.GetOrgMemberRole(ctx, sqlc.GetOrgMemberRoleParams{OrgID: org.ID, UserID: sess.UserID})
+		if err != nil {
+			return ""
+		}
+		return role
+	}
+
+	hasGroup := func(candidate string) bool {
+		return candidate != "" && slices.Contains(sess.GroupIDs, candidate)
+	}
+	switch {
+	case hasGroup(org.AdminGroupID):
+		return OrgRoleAdmin
+	case org.EditorGroupID.Valid && hasGroup(org.EditorGroupID.String):
+		return OrgRoleEditor
+	case org.ReaderGroupID.Valid && hasGroup(org.ReaderGroupID.String):
+		return OrgRoleViewer
+	default:
+		return ""
+	}
+}
+
 // orgRoleRank orders the org roles so a floor can be compared numerically.
 // Higher is more capable; admin satisfies every floor.
 func orgRoleRank(role string) int {
