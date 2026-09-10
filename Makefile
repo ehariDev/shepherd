@@ -1,4 +1,4 @@
-.PHONY: docs check-docs-drift check-docs-version web-ci check-gateway-pin check-chartvalues-pin chart-verify preflight-docker help build build-web build-all test e2e e2e-k8s e2e-k8s-clean e2e-sim e2e-egress smoke test-ui check-single-dist check-dist-consistency check-build-script check-raw-sql check-docker check-no-route-mocks guards vulncheck lint fmt generate gen-alloy-version generate-corpus schema schema-verify helm-lint release-snapshot docker-build docker-build-local docker-build-init docker-build-simulator dev dev-sim dev-frontend dev-restart dev-seed dev-reset test-fullstack clean clean-docker tools preflight-ginkgo preflight-k8s
+.PHONY: docs check-docs-drift check-docs-version web-ci check-gateway-pin check-chartvalues-pin chart-verify preflight-docker help build build-web build-all test e2e e2e-k8s e2e-k8s-clean e2e-sim e2e-egress smoke test-cover test-ui check-single-dist check-dist-consistency check-build-script check-raw-sql check-docker check-no-route-mocks guards vulncheck lint fmt generate gen-alloy-version generate-corpus schema schema-verify helm-lint release-snapshot docker-build docker-build-local docker-build-init docker-build-simulator dev dev-sim dev-frontend dev-restart dev-seed dev-reset test-fullstack clean clean-docker tools preflight-ginkgo preflight-k8s
 
 # Several recipes are bash-idiomatic (the smoke here-string, trap chains);
 # /bin/sh is dash on Debian/Ubuntu and rejects them.
@@ -97,6 +97,11 @@ build-all: build ## Alias of build
 # Requires Docker: internal/testutil spins up real Postgres via testcontainers.
 test: ## Run all Go tests (requires Docker)
 	go test ./...
+
+# coverage.out is *.out-ignored (.gitignore:4), so this never needs cleanup.
+test-cover: ## Run all Go tests with a coverage profile (requires Docker)
+	go test -coverprofile=coverage.out -covermode=atomic ./...
+	go tool cover -func=coverage.out | tail -1
 
 # E2E suite (requires Docker Compose; ~10 min)
 # Set E2E_KEEP=1 to leave the stack running after the suite (for debugging).

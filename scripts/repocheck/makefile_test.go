@@ -136,3 +136,15 @@ var _ = Describe("the vulncheck target", func() {
 		Expect(recipe).To(ContainSubstring("go run golang.org/x/vuln/cmd/govulncheck@"))
 	})
 })
+
+// Red run, 2026-09-10: `make test-cover` does not exist, so nothing local or
+// in CI emits a Go coverage profile. The ci.yml wiring (step summary +
+// artifact upload) and that half of the red run are A2 territory
+// (scripts/repocheck/ci_test.go); this spec only pins the Makefile target.
+var _ = Describe("the test-cover target", func() {
+	It("produces a coverprofile and prints the go tool cover summary", func() {
+		recipe := makeRecipe("test-cover")
+		Expect(recipe).To(ContainSubstring("-coverprofile"))
+		Expect(recipe).To(ContainSubstring("go tool cover"))
+	})
+})
