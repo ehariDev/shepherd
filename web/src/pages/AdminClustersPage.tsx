@@ -4,6 +4,7 @@ import { toast } from 'sonner';
 import { clients, toApiError } from '@/api/transport';
 import { AdminConfirmDialog } from '@/components/admin/AdminConfirmDialog';
 import { AdminModal, AdminModalActions } from '@/components/admin/AdminModal';
+import { QueryError } from '@/components/QueryError';
 import { DataTable, type DataTableColumn } from '@/components/ui/DataTable';
 import { Field, Select } from '@/components/ui/Field';
 import type { Cluster } from '@/gen/shepherd/mgmt/v1/admin_pb';
@@ -62,7 +63,7 @@ export function AdminClustersPage() {
   const [claimOrgId, setClaimOrgId] = useState('');
   const [unclaimCluster, setUnclaimCluster] = useState<Cluster | null>(null);
 
-  const { data, isLoading } = useQuery({
+  const { data, isLoading, isError, error } = useQuery({
     queryKey: ['clusters', unclaimedOnly],
     queryFn: () => clients.admin.listClusters({ unclaimed: unclaimedOnly }),
   });
@@ -117,7 +118,9 @@ export function AdminClustersPage() {
         </label>
       </div>
 
-      {isLoading ? (
+      {isError ? (
+        <QueryError error={error} noun='clusters' />
+      ) : isLoading ? (
         <p className='text-sm text-muted'>Loading…</p>
       ) : (data?.items ?? []).length === 0 ? (
         <div className='rounded-lg border border-border bg-card/40 p-8 text-center'>

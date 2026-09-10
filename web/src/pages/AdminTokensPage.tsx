@@ -5,6 +5,7 @@ import { toast } from 'sonner';
 import { clients, toApiError } from '@/api/transport';
 import { AdminConfirmDialog } from '@/components/admin/AdminConfirmDialog';
 import { AdminModal, AdminModalActions } from '@/components/admin/AdminModal';
+import { QueryError } from '@/components/QueryError';
 import { DataTable, type DataTableColumn } from '@/components/ui/DataTable';
 import { Field, Input } from '@/components/ui/Field';
 import type { AgentToken } from '@/gen/shepherd/mgmt/v1/admin_pb';
@@ -68,7 +69,7 @@ export function AdminTokensPage() {
   const [copied, setCopied] = useState(false);
   const [revokeToken, setRevokeToken] = useState<AgentToken | null>(null);
 
-  const { data, isLoading } = useQuery({
+  const { data, isLoading, isError, error } = useQuery({
     queryKey: ['tokens'],
     queryFn: () => clients.admin.listAgentTokens({}),
   });
@@ -121,7 +122,9 @@ export function AdminTokensPage() {
         )}
       </div>
 
-      {isLoading ? (
+      {isError ? (
+        <QueryError error={error} noun='agent tokens' />
+      ) : isLoading ? (
         <p className='text-sm text-muted'>Loading…</p>
       ) : (data?.items ?? []).length === 0 ? (
         <div className='rounded-lg border border-border bg-card/40 p-8 text-center'>

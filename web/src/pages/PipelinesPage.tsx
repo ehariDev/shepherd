@@ -2,6 +2,7 @@ import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { Link } from '@tanstack/react-router';
 import { Plus } from 'lucide-react';
 import { clients } from '@/api/transport';
+import { QueryError } from '@/components/QueryError';
 import { DataTable, type DataTableColumn } from '@/components/ui/DataTable';
 import type { Pipeline } from '@/gen/shepherd/mgmt/v1/pipeline_pb';
 import { useCanWrite, useOrgId } from '@/hooks/useOrg';
@@ -75,7 +76,7 @@ export function PipelinesPage() {
   const orgId = useOrgId();
   const canWrite = useCanWrite();
   const qc = useQueryClient();
-  const { data, isLoading, isError } = useQuery({
+  const { data, isLoading, isError, error } = useQuery({
     queryKey: ['pipelines', orgId],
     queryFn: () => clients.pipeline.listPipelines({ orgId }),
     enabled: !!orgId,
@@ -114,12 +115,7 @@ export function PipelinesPage() {
       </div>
 
       {isError ? (
-        <div
-          role='alert'
-          className='rounded-lg border border-red-500/30 bg-red-500/10 px-4 py-3 text-sm text-red-400'
-        >
-          Failed to load pipelines. Please retry.
-        </div>
+        <QueryError error={error} noun='pipelines' />
       ) : isLoading ? (
         <p className='text-sm text-muted'>Loading…</p>
       ) : (data?.items ?? []).length === 0 ? (

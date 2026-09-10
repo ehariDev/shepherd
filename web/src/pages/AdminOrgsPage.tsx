@@ -5,6 +5,7 @@ import { toast } from 'sonner';
 import { clients, toApiError } from '@/api/transport';
 import { AdminConfirmDialog } from '@/components/admin/AdminConfirmDialog';
 import { AdminModal, AdminModalActions } from '@/components/admin/AdminModal';
+import { QueryError } from '@/components/QueryError';
 import { DataTable, type DataTableColumn } from '@/components/ui/DataTable';
 import { Field, Input } from '@/components/ui/Field';
 import type { Org } from '@/gen/shepherd/mgmt/v1/admin_pb';
@@ -91,7 +92,7 @@ export function AdminOrgsPage() {
   });
   const [deleteOrg, setDeleteOrg] = useState<Org | null>(null);
 
-  const { data, isLoading } = useQuery({
+  const { data, isLoading, isError, error } = useQuery({
     queryKey: ['orgs'],
     queryFn: () => clients.admin.listOrgs({}),
   });
@@ -161,7 +162,9 @@ export function AdminOrgsPage() {
         )}
       </div>
 
-      {isLoading ? (
+      {isError ? (
+        <QueryError error={error} noun='organisations' />
+      ) : isLoading ? (
         <p className='text-sm text-muted'>Loading…</p>
       ) : (data?.items ?? []).length === 0 ? (
         <div className='rounded-lg border border-border bg-card/40 p-8 text-center'>

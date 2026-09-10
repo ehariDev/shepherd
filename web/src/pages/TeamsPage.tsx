@@ -5,6 +5,7 @@ import { toast } from 'sonner';
 import { clients, toApiError } from '@/api/transport';
 import { AdminConfirmDialog } from '@/components/admin/AdminConfirmDialog';
 import { AdminModal, AdminModalActions } from '@/components/admin/AdminModal';
+import { QueryError } from '@/components/QueryError';
 import { Banner } from '@/components/ui/Banner';
 import { DataTable, type DataTableColumn } from '@/components/ui/DataTable';
 import { Field, Input, Select } from '@/components/ui/Field';
@@ -149,14 +150,7 @@ export function TeamsPage() {
   }
   if (isLoading) return <p className='text-sm text-muted'>Loading…</p>;
   if (isError) {
-    return (
-      <div
-        data-testid='teams-error'
-        className='rounded-md border border-red-500/30 bg-red-500/10 p-3 text-sm text-red-400'
-      >
-        {toApiError(error).message || 'Could not load teams.'}
-      </div>
-    );
+    return <QueryError error={error} noun='teams' testId='teams-error' />;
   }
 
   const teams = data?.items ?? [];

@@ -4,6 +4,7 @@ import { CheckCircle, Copy, Plus, Search, Trash2 } from 'lucide-react';
 import { useEffect, useState } from 'react';
 import { toast } from 'sonner';
 import { clients, toApiError } from '@/api/transport';
+import { QueryError } from '@/components/QueryError';
 import { DataTable, type DataTableColumn } from '@/components/ui/DataTable';
 import { Field, Input } from '@/components/ui/Field';
 import type { Assignment, CollectorInstance } from '@/gen/shepherd/mgmt/v1/fleet_pb';
@@ -132,7 +133,12 @@ export function CollectorDetailPage() {
     if (tab === 'access' && !isOrgAdmin) setTab('config');
   }, [tab, isOrgAdmin]);
 
-  const { data: collector, isLoading: collectorLoading } = useQuery({
+  const {
+    data: collector,
+    isLoading: collectorLoading,
+    isError: collectorIsError,
+    error: collectorError,
+  } = useQuery({
     queryKey: ['collector', orgId, id],
     queryFn: () => clients.fleet.getCollector({ orgId, id }),
     enabled: !!orgId,
@@ -225,6 +231,13 @@ export function CollectorDetailPage() {
 
   if (!orgId || collectorLoading) {
     return <div className='text-sm text-muted p-6'>Loading…</div>;
+  }
+  if (collectorIsError) {
+    return (
+      <div className='p-6'>
+        <QueryError error={collectorError} noun='this collector' />
+      </div>
+    );
   }
 
   const detail = collector;

@@ -1,6 +1,7 @@
 import { useQuery } from '@tanstack/react-query';
 import { Link } from '@tanstack/react-router';
 import { clients } from '@/api/transport';
+import { QueryError } from '@/components/QueryError';
 import { DataTable, type DataTableColumn } from '@/components/ui/DataTable';
 import type { Collector } from '@/gen/shepherd/mgmt/v1/fleet_pb';
 import { useOrgId } from '@/hooks/useOrg';
@@ -52,7 +53,7 @@ const collectorColumns: DataTableColumn<Collector>[] = [
 
 export function CollectorsPage() {
   const orgId = useOrgId();
-  const { data, isLoading } = useQuery({
+  const { data, isLoading, isError, error } = useQuery({
     queryKey: ['collectors', orgId],
     queryFn: () => clients.fleet.listCollectors({ orgId }),
     enabled: !!orgId,
@@ -63,7 +64,9 @@ export function CollectorsPage() {
       <div className='flex items-center justify-between'>
         <h1 className='text-xl font-semibold'>Collectors</h1>
       </div>
-      {isLoading ? (
+      {isError ? (
+        <QueryError error={error} noun='collectors' />
+      ) : isLoading ? (
         <p className='text-sm text-muted'>Loading…</p>
       ) : (
         <DataTable
