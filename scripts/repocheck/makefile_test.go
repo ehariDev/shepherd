@@ -125,3 +125,14 @@ var _ = Describe("the guards target", func() {
 		}
 	})
 })
+
+// Red run, 2026-09-10: SECURITY.md:43 names govulncheck "the arbiter" for
+// reachable vulnerabilities, but no Makefile target runs it anywhere. The
+// ci.yml wiring and the scheduled govulncheck.yml workflow are A2 territory
+// (scripts/repocheck/ci_test.go); this spec only pins the Makefile target.
+var _ = Describe("the vulncheck target", func() {
+	It("runs govulncheck via go run so it never touches go.mod", func() {
+		recipe := makeRecipe("vulncheck")
+		Expect(recipe).To(ContainSubstring("go run golang.org/x/vuln/cmd/govulncheck@"))
+	})
+})

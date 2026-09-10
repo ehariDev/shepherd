@@ -1,4 +1,4 @@
-.PHONY: docs check-docs-drift check-docs-version web-ci check-gateway-pin check-chartvalues-pin chart-verify preflight-docker help build build-web build-all test e2e e2e-k8s e2e-k8s-clean e2e-sim e2e-egress smoke test-ui check-single-dist check-dist-consistency check-build-script check-raw-sql check-docker check-no-route-mocks guards lint fmt generate gen-alloy-version generate-corpus schema schema-verify helm-lint release-snapshot docker-build docker-build-local docker-build-init docker-build-simulator dev dev-sim dev-frontend dev-restart dev-seed dev-reset test-fullstack clean clean-docker tools preflight-ginkgo preflight-k8s
+.PHONY: docs check-docs-drift check-docs-version web-ci check-gateway-pin check-chartvalues-pin chart-verify preflight-docker help build build-web build-all test e2e e2e-k8s e2e-k8s-clean e2e-sim e2e-egress smoke test-ui check-single-dist check-dist-consistency check-build-script check-raw-sql check-docker check-no-route-mocks guards vulncheck lint fmt generate gen-alloy-version generate-corpus schema schema-verify helm-lint release-snapshot docker-build docker-build-local docker-build-init docker-build-simulator dev dev-sim dev-frontend dev-restart dev-seed dev-reset test-fullstack clean clean-docker tools preflight-ginkgo preflight-k8s
 
 # Several recipes are bash-idiomatic (the smoke here-string, trap chains);
 # /bin/sh is dash on Debian/Ubuntu and rejects them.
@@ -76,6 +76,7 @@ tools: ## Install the Go-installable CLIs the targets here shell out to
 	go install github.com/bufbuild/buf/cmd/buf@v1.72.0
 	go install google.golang.org/protobuf/cmd/protoc-gen-go@$$(go list -m -f '{{.Version}}' google.golang.org/protobuf)
 	go install connectrpc.com/connect/cmd/protoc-gen-connect-go@$$(go list -m -f '{{.Version}}' connectrpc.com/connect)
+	go install golang.org/x/vuln/cmd/govulncheck@v1.8.0
 
 clean: ## Remove build outputs (bin/, goreleaser dist/)
 	rm -rf bin/ dist/
@@ -542,6 +543,12 @@ lint: guards ## Repo guards + golangci-lint
 	@# accepted and ignored by `run`, and only `config verify` reported it.
 	golangci-lint config verify
 	golangci-lint run ./...
+
+# `go run pkg@version` does not touch go.mod/go.sum, so this needs no
+# ask-first dependency bump to run. SECURITY.md names govulncheck the arbiter
+# for which vulnerabilities are in scope: only ones on a reachable call path.
+vulncheck: ## Guard: no known-reachable vulnerabilities (govulncheck)
+	go run golang.org/x/vuln/cmd/govulncheck@v1.8.0 ./...
 
 # golangci-lint fmt runs BOTH formatters this repo enables (gofumpt, then gci
 # — see .golangci.yml's formatters block), so it is the whole job.
