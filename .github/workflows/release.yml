@@ -106,6 +106,85 @@ jobs:
             exit 1
           fi
 
+      # docker/login-action needs just the registry host, but IMAGE_REGISTRY
+      # (e.g. "ghcr.io/procoduck") includes the namespace path — split it.
+      # Resolved here, ahead of syft/buildx, because the chart-publication
+      # probe below needs it too.
+      - name: Resolve registry host
+        id: registry
+        run: |
+          full="${IMAGE_REGISTRY:-ghcr.io/procoduck}"
+          echo "host=${full%%/*}" >> "$GITHUB_OUTPUT"
+        env:
+          IMAGE_REGISTRY: ${{ vars.IMAGE_REGISTRY }}
+
+      - name: Set up Helm
+        uses: azure/setup-helm@v4
+        with:
+          version: v3.16.3
+
+      # Runs before goreleaser (and therefore before either image is built or
+      # pushed, and before the GitHub release is cut) so a chart that fails
+      # to lint, or a chart version that is already published, stops the
+      # release here instead of after the half-published state this used to
+      # risk: goreleaser had already pushed images and cut the GitHub release
+      # by the time this same check used to run, inside the "Publish the Helm
+      # chart" step below.
+      - name: Verify the Helm chart is unpublished and lints cleanly
+        env:
+          IMAGE_REGISTRY: ${{ vars.IMAGE_REGISTRY || 'ghcr.io/procoduck' }}
+          REGISTRY_HOST: ${{ steps.registry.outputs.host }}
+          REGISTRY_USER: ${{ secrets.REGISTRY_USERNAME || github.actor }}
+          REGISTRY_PASS: ${{ secrets.REGISTRY_PASSWORD || secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+          make helm-lint
+
+          chart_dir=deploy/helm/shepherd
+          tag_version="${GITHUB_REF_NAME#v}"
+
+          # awk rather than `sed | head -1`: under `set -o pipefail`, head
+          # closing the pipe early can hand sed a SIGPIPE and fail the step
+          # for no reason at all.
+          read_field() {
+            awk -v k="$1:" '$1 == k { gsub(/"/, "", $2); print $2; exit }' "$chart_dir/Chart.yaml"
+          }
+          chart_version="$(read_field version)"
+          app_version="$(read_field appVersion)"
+
+          if [ -z "$chart_version" ] || [ -z "$app_version" ]; then
+            echo "::error::could not read version/appVersion from $chart_dir/Chart.yaml" >&2
+            exit 1
+          fi
+
+          if [ "$app_version" != "$tag_version" ]; then
+            echo "::error::Chart.yaml appVersion is $app_version but the tag is $tag_version." \
+                 "The image tag falls back to appVersion, so this chart would install the wrong image." >&2
+            exit 1
+          fi
+
+          # ghcr.io/<ns> -> ghcr.io/<ns>/charts, so the chart lands at
+          # oci://ghcr.io/<ns>/charts/shepherd and does not collide with the
+          # image package of the same name.
+          chart_repo="oci://${IMAGE_REGISTRY}/charts"
+
+          echo "$REGISTRY_PASS" | helm registry login "$REGISTRY_HOST" -u "$REGISTRY_USER" --password-stdin
+
+          # Distinguish "absent" from "could not tell". A transient network or
+          # auth failure previously looked identical to "not published", and
+          # the workflow went on to push -- overwriting a released chart
+          # version, the exact thing this check exists to prevent.
+          probe_out="$(helm show chart "${chart_repo}/shepherd" --version "$chart_version" 2>&1)" && probe_rc=0 || probe_rc=$?
+          if [ "$probe_rc" -ne 0 ] && ! grep -qiE "not found|manifest unknown|no such|does not exist" <<<"$probe_out"; then
+            echo "::error::could not determine whether chart $chart_version is already published: $probe_out" >&2
+            exit 1
+          fi
+          if [ "$probe_rc" -eq 0 ]; then
+            echo "::error::chart version $chart_version is already published at $chart_repo." \
+                 "Bump the chart version in $chart_dir/Chart.yaml -- republishing a version with different contents breaks every consumer pinned to it." >&2
+            exit 1
+          fi
+
       - name: Set up syft (SBOM generation)
         uses: anchore/sbom-action/download-syft@v0
 
@@ -117,27 +196,12 @@ jobs:
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v3
 
-      # docker/login-action needs just the registry host, but IMAGE_REGISTRY
-      # (e.g. "ghcr.io/procoduck") includes the namespace path — split it.
-      - name: Resolve registry host
-        id: registry
-        run: |
-          full="${IMAGE_REGISTRY:-ghcr.io/procoduck}"
-          echo "host=${full%%/*}" >> "$GITHUB_OUTPUT"
-        env:
-          IMAGE_REGISTRY: ${{ vars.IMAGE_REGISTRY }}
-
       - name: Log in to registry
         uses: docker/login-action@v3
         with:
           registry: ${{ steps.registry.outputs.host }}
           username: ${{ secrets.REGISTRY_USERNAME || github.actor }}
           password: ${{ secrets.REGISTRY_PASSWORD || secrets.GITHUB_TOKEN }}
-
-      - name: Set up Helm
-        uses: azure/setup-helm@v4
-        with:
-          version: v3.16.3
 
       - name: goreleaser release
         uses: goreleaser/goreleaser-action@v6
@@ -169,16 +233,18 @@ jobs:
       #      underneath it is the one failure a chart consumer cannot defend
       #      against. Bump Chart.yaml's `version` for every release that
       #      changes the chart.
+      #
+      # Both checks above, the strict lint, and the registry login already
+      # ran in "Verify the Helm chart is unpublished and lints cleanly" —
+      # before goreleaser, not after. The registry login persists on disk for
+      # the rest of the job (same runner, same $HOME), so this step only
+      # packages and pushes.
       - name: Publish the Helm chart to GHCR (OCI)
         env:
           IMAGE_REGISTRY: ${{ vars.IMAGE_REGISTRY || 'ghcr.io/procoduck' }}
-          REGISTRY_HOST: ${{ steps.registry.outputs.host }}
-          REGISTRY_USER: ${{ secrets.REGISTRY_USERNAME || github.actor }}
-          REGISTRY_PASS: ${{ secrets.REGISTRY_PASSWORD || secrets.GITHUB_TOKEN }}
         run: |
           set -euo pipefail
           chart_dir=deploy/helm/shepherd
-          tag_version="${GITHUB_REF_NAME#v}"
 
           # awk rather than `sed | head -1`: under `set -o pipefail`, head
           # closing the pipe early can hand sed a SIGPIPE and fail the step for
@@ -189,40 +255,11 @@ jobs:
           chart_version="$(read_field version)"
           app_version="$(read_field appVersion)"
 
-          if [ -z "$chart_version" ] || [ -z "$app_version" ]; then
-            echo "::error::could not read version/appVersion from $chart_dir/Chart.yaml" >&2
-            exit 1
-          fi
-
-          if [ "$app_version" != "$tag_version" ]; then
-            echo "::error::Chart.yaml appVersion is $app_version but the tag is $tag_version." \
-                 "The image tag falls back to appVersion, so this chart would install the wrong image." >&2
-            exit 1
-          fi
-
           # ghcr.io/<ns> -> ghcr.io/<ns>/charts, so the chart lands at
           # oci://ghcr.io/<ns>/charts/shepherd and does not collide with the
           # image package of the same name.
           chart_repo="oci://${IMAGE_REGISTRY}/charts"
 
-          echo "$REGISTRY_PASS" | helm registry login "$REGISTRY_HOST" -u "$REGISTRY_USER" --password-stdin
-
-          # Distinguish "absent" from "could not tell". A transient network or
-          # auth failure previously looked identical to "not published", and the
-          # workflow went on to push -- overwriting a released chart version,
-          # the exact thing this check exists to prevent.
-          probe_out="$(helm show chart "${chart_repo}/shepherd" --version "$chart_version" 2>&1)" && probe_rc=0 || probe_rc=$?
-          if [ "$probe_rc" -ne 0 ] && ! grep -qiE "not found|manifest unknown|no such|does not exist" <<<"$probe_out"; then
-            echo "::error::could not determine whether chart $chart_version is already published: $probe_out" >&2
-            exit 1
-          fi
-          if [ "$probe_rc" -eq 0 ]; then
-            echo "::error::chart version $chart_version is already published at $chart_repo." \
-                 "Bump the chart version in $chart_dir/Chart.yaml -- republishing a version with different contents breaks every consumer pinned to it." >&2
-            exit 1
-          fi
-
-          helm lint "$chart_dir"
           helm package "$chart_dir" --destination dist-chart
           helm push "dist-chart/shepherd-${chart_version}.tgz" "$chart_repo"
 
