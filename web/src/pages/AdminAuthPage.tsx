@@ -1,9 +1,22 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
-import { AlertTriangle, CheckCircle2, Info, Loader2, Plug, Trash2 } from 'lucide-react';
+import { Loader2, Plug, Trash2 } from 'lucide-react';
 import { useEffect, useState } from 'react';
 import { toast } from 'sonner';
 import { clients, toApiError } from '@/api/transport';
 import { AdminConfirmDialog } from '@/components/admin/AdminConfirmDialog';
+import { SsoBanner } from '@/components/admin/SsoBanner';
+import { SsoClaimsSection } from '@/components/admin/SsoClaimsSection';
+import { SsoGroupsSection } from '@/components/admin/SsoGroupsSection';
+import { SsoProviderSection } from '@/components/admin/SsoProviderSection';
+import { SsoTestReport } from '@/components/admin/SsoTestReport';
+import {
+  EMPTY_SSO_FORM,
+  fromLines,
+  SSO_CALLBACK_PATH,
+  type SsoFormState,
+  toLines,
+} from '@/components/admin/ssoForm';
+import { QueryError } from '@/components/QueryError';
 import type { OidcProviderPreset, TestOidcSettingsResponse } from '@/gen/shepherd/mgmt/v1/admin_pb';
 import { useMe } from '@/hooks/useMe';
 
@@ -17,60 +30,12 @@ import { useMe } from '@/hooks/useMe';
  * configuration they cannot change from here.
  */
 
-/** Local form state. Mirrors UpdateOidcSettingsRequest, with the list fields
- *  held as the newline-separated text the textareas actually edit. */
-interface FormState {
-  enabled: boolean;
-  provider: string;
-  displayName: string;
-  issuer: string;
-  clientId: string;
-  clientSecret: string;
-  redirectUrl: string;
-  scopes: string;
-  subjectClaim: string;
-  emailClaim: string;
-  nameClaim: string;
-  groupsClaim: string;
-  appAdminGroups: string;
-  useGraphGroups: boolean;
-  graphBaseUrl: string;
-}
-
-const EMPTY_FORM: FormState = {
-  enabled: false,
-  provider: 'generic',
-  displayName: '',
-  issuer: '',
-  clientId: '',
-  clientSecret: '',
-  redirectUrl: '',
-  scopes: '',
-  subjectClaim: '',
-  emailClaim: '',
-  nameClaim: '',
-  groupsClaim: '',
-  appAdminGroups: '',
-  useGraphGroups: false,
-  graphBaseUrl: '',
-};
-
-const toLines = (values: string[]) => values.join('\n');
-const fromLines = (text: string) =>
-  text
-    .split(/[\n,]/)
-    .map((value) => value.trim())
-    .filter(Boolean);
-
-/** The only callback path the server serves (internal/auth.CallbackPath). */
-const CALLBACK_PATH = '/auth/callback';
-
 export function AdminAuthPage() {
   const { data: me } = useMe();
   const isAppAdmin = !!me?.isAppAdmin;
   const qc = useQueryClient();
 
-  const [form, setForm] = useState<FormState>(EMPTY_FORM);
+  const [form, setForm] = useState<SsoFormState>(EMPTY_SSO_FORM);
   const [testResult, setTestResult] = useState<TestOidcSettingsResponse | null>(null);
   const [confirmRemove, setConfirmRemove] = useState(false);
 
@@ -104,7 +69,7 @@ export function AdminAuthPage() {
       // Never seeded: the server does not return the secret. Blank means
       // "keep the stored one" on save.
       clientSecret: '',
-      redirectUrl: settings.redirectUrl || `${window.location.origin}${CALLBACK_PATH}`,
+      redirectUrl: settings.redirectUrl || `${window.location.origin}${SSO_CALLBACK_PATH}`,
       scopes: toLines(settings.scopes),
       subjectClaim: settings.subjectClaim,
       emailClaim: settings.emailClaim,
@@ -186,7 +151,7 @@ export function AdminAuthPage() {
     onSuccess: () => {
       setConfirmRemove(false);
       setTestResult(null);
-      setForm(EMPTY_FORM);
+      setForm(EMPTY_SSO_FORM);
       qc.invalidateQueries({ queryKey: ['oidc-settings'] });
       toast.success('Single sign-on configuration removed');
     },
@@ -203,32 +168,22 @@ export function AdminAuthPage() {
   const loadError = settingsQuery.isError ? toApiError(settingsQuery.error) : null;
   if (!isAppAdmin || loadError?.code === 'permission_denied') {
     return (
-      <Banner tone='warn' testId='sso-forbidden'>
+      <SsoBanner tone='warn' testId='sso-forbidden'>
         Single sign-on configuration is restricted to app admins.
-      </Banner>
+      </SsoBanner>
     );
   }
   if (loadError) {
     return (
-      <Banner tone='error' testId='sso-load-error'>
-        {loadError.message || 'Single sign-on settings are unavailable on this deployment.'}
-      </Banner>
+      <QueryError
+        error={settingsQuery.error}
+        noun='single sign-on settings'
+        testId='sso-load-error'
+      />
     );
   }
 
   const disabled = readOnly || saveMut.isPending;
-
-  // Advisory only. The server deliberately does not constrain the redirect
-  // host — it cannot reliably know its own external hostname — so this is the
-  // place a typo gets caught, as a warning rather than a refusal.
-  const redirectHostMismatch = (() => {
-    if (!form.redirectUrl.trim()) return false;
-    try {
-      return new URL(form.redirectUrl).host !== window.location.host;
-    } catch {
-      return false;
-    }
-  })();
 
   return (
     <div className='space-y-5 max-w-3xl'>
@@ -241,233 +196,40 @@ export function AdminAuthPage() {
       </div>
 
       {settings?.statusMessage && (
-        <Banner
+        <SsoBanner
           tone={settings.enabled && !settings.active ? 'error' : readOnly ? 'info' : 'warn'}
           testId='sso-status'
         >
           {settings.statusMessage}
-        </Banner>
+        </SsoBanner>
       )}
       {settings?.active && (
-        <Banner tone='ok' testId='sso-active'>
+        <SsoBanner tone='ok' testId='sso-active'>
           Sign-in through {settings.displayName || 'this provider'} is live.
-        </Banner>
+        </SsoBanner>
       )}
 
-      <Section title='Provider'>
-        <Field label='Identity provider' hint={preset?.issuerHint}>
-          <select
-            data-testid='sso-provider'
-            disabled={disabled}
-            value={form.provider}
-            onChange={(e) => {
-              const next = presets.find((p) => p.key === e.target.value);
-              if (next) applyPreset(next);
-            }}
-            className={inputClass}
-          >
-            {presets.map((p) => (
-              <option key={p.key} value={p.key}>
-                {p.displayName}
-              </option>
-            ))}
-          </select>
-        </Field>
+      <SsoProviderSection
+        form={form}
+        onChange={setForm}
+        presets={presets}
+        preset={preset}
+        disabled={disabled}
+        onSelectProvider={applyPreset}
+        clientSecretSet={!!settings?.clientSecretSet}
+      />
 
-        <Field label='Sign-in button label'>
-          <input
-            data-testid='sso-display-name'
-            disabled={disabled}
-            value={form.displayName}
-            onChange={(e) => setForm({ ...form, displayName: e.target.value })}
-            placeholder={preset?.displayName}
-            className={inputClass}
-          />
-        </Field>
+      <SsoGroupsSection
+        form={form}
+        onChange={setForm}
+        preset={preset}
+        disabled={disabled}
+        readOnly={readOnly}
+      />
 
-        <Field label='Issuer URL' hint={preset ? `Example: ${preset.issuerTemplate}` : undefined}>
-          <input
-            data-testid='sso-issuer'
-            disabled={disabled}
-            value={form.issuer}
-            onChange={(e) => setForm({ ...form, issuer: e.target.value })}
-            placeholder={preset?.issuerTemplate}
-            className={inputClass}
-          />
-        </Field>
+      <SsoClaimsSection form={form} onChange={setForm} disabled={disabled} />
 
-        <Field label='Client ID'>
-          <input
-            data-testid='sso-client-id'
-            disabled={disabled}
-            value={form.clientId}
-            onChange={(e) => setForm({ ...form, clientId: e.target.value })}
-            className={inputClass}
-          />
-        </Field>
-
-        <Field
-          label='Client secret'
-          hint={
-            settings?.clientSecretSet
-              ? 'A secret is stored. Leave blank to keep it; enter a value to replace it.'
-              : 'Stored encrypted. It is never shown again after saving.'
-          }
-        >
-          <input
-            data-testid='sso-client-secret'
-            type='password'
-            autoComplete='new-password'
-            disabled={disabled}
-            value={form.clientSecret}
-            onChange={(e) => setForm({ ...form, clientSecret: e.target.value })}
-            placeholder={settings?.clientSecretSet ? '••••••••  (unchanged)' : ''}
-            className={inputClass}
-          />
-        </Field>
-
-        <Field
-          label='Redirect URL'
-          hint={`Register this exact URL with your provider. Its path must be exactly ${CALLBACK_PATH}.`}
-        >
-          <input
-            data-testid='sso-redirect-url'
-            disabled={disabled}
-            value={form.redirectUrl}
-            onChange={(e) => setForm({ ...form, redirectUrl: e.target.value })}
-            placeholder={`${window.location.origin}${CALLBACK_PATH}`}
-            className={inputClass}
-          />
-          {redirectHostMismatch && (
-            <p data-testid='sso-redirect-host-warning' className='text-xs text-amber-400'>
-              This points at a different host than the one you are using now ({window.location.host}
-              ). That is legitimate behind a proxy or a different external hostname — but if it is a
-              typo, sign-in will fail after the provider redirects.
-            </p>
-          )}
-        </Field>
-
-        <Field label='Scopes' hint='One per line. "openid" is required and added automatically.'>
-          <textarea
-            data-testid='sso-scopes'
-            disabled={disabled}
-            rows={3}
-            value={form.scopes}
-            onChange={(e) => setForm({ ...form, scopes: e.target.value })}
-            className={inputClass}
-          />
-        </Field>
-      </Section>
-
-      <Section title='Groups and administrators'>
-        {preset?.groupsNote && (
-          <Banner tone='info' testId='sso-groups-note'>
-            {preset.groupsNote}
-          </Banner>
-        )}
-
-        <Field
-          label='Groups claim'
-          hint='The ID token claim carrying group membership. Its values are what you enter below and in each organisation&apos;s admin/reader group.'
-        >
-          <input
-            data-testid='sso-groups-claim'
-            disabled={disabled}
-            value={form.groupsClaim}
-            onChange={(e) => setForm({ ...form, groupsClaim: e.target.value })}
-            className={inputClass}
-          />
-        </Field>
-
-        <Field
-          label='App admin groups'
-          hint='One per line. A user in any of these gets full app-admin access. Leave empty and nobody can administer Shepherd through single sign-on.'
-        >
-          <textarea
-            data-testid='sso-app-admin-groups'
-            disabled={disabled}
-            rows={3}
-            value={form.appAdminGroups}
-            onChange={(e) => setForm({ ...form, appAdminGroups: e.target.value })}
-            className={inputClass}
-          />
-        </Field>
-
-        {form.appAdminGroups.trim() === '' && !readOnly && (
-          <Banner tone='warn' testId='sso-no-admin-groups'>
-            No app admin groups are set. Keep your local admin account enabled, or you will have no
-            way to administer Shepherd after signing in through this provider.
-          </Banner>
-        )}
-
-        {preset?.supportsGraphGroups && (
-          <>
-            <label className='flex items-start gap-2 text-sm'>
-              <input
-                data-testid='sso-use-graph'
-                type='checkbox'
-                disabled={disabled}
-                checked={form.useGraphGroups}
-                onChange={(e) => setForm({ ...form, useGraphGroups: e.target.checked })}
-                className='mt-0.5'
-              />
-              <span>
-                Resolve groups through Microsoft Graph
-                <span className='block text-xs text-muted-2'>
-                  Recommended. Entra omits the groups claim entirely once a user is in more than
-                  ~200 groups; Graph keeps working. Needs the GroupMember.Read.All delegated scope.
-                </span>
-              </span>
-            </label>
-            {form.useGraphGroups && (
-              <Field label='Microsoft Graph base URL'>
-                <input
-                  data-testid='sso-graph-base-url'
-                  disabled={disabled}
-                  value={form.graphBaseUrl}
-                  onChange={(e) => setForm({ ...form, graphBaseUrl: e.target.value })}
-                  placeholder='https://graph.microsoft.com'
-                  className={inputClass}
-                />
-              </Field>
-            )}
-          </>
-        )}
-      </Section>
-
-      <Section title='Claim mapping'>
-        <div className='grid gap-3 sm:grid-cols-3'>
-          <Field label='Subject claim'>
-            <input
-              data-testid='sso-subject-claim'
-              disabled={disabled}
-              value={form.subjectClaim}
-              onChange={(e) => setForm({ ...form, subjectClaim: e.target.value })}
-              className={inputClass}
-            />
-          </Field>
-          <Field label='Email claim'>
-            <input
-              data-testid='sso-email-claim'
-              disabled={disabled}
-              value={form.emailClaim}
-              onChange={(e) => setForm({ ...form, emailClaim: e.target.value })}
-              className={inputClass}
-            />
-          </Field>
-          <Field label='Name claim'>
-            <input
-              data-testid='sso-name-claim'
-              disabled={disabled}
-              value={form.nameClaim}
-              onChange={(e) => setForm({ ...form, nameClaim: e.target.value })}
-              className={inputClass}
-            />
-          </Field>
-        </div>
-      </Section>
-
-      {testResult && <TestReport result={testResult} requested={fromLines(form.scopes)} />}
+      {testResult && <SsoTestReport result={testResult} requested={fromLines(form.scopes)} />}
 
       <div className='flex flex-wrap items-center gap-3 border-t border-border pt-4'>
         <label className='flex items-center gap-2 text-sm'>
@@ -534,121 +296,6 @@ export function AdminAuthPage() {
           onConfirm={() => removeMut.mutate()}
         />
       )}
-    </div>
-  );
-}
-
-function TestReport({
-  result,
-  requested,
-}: {
-  result: TestOidcSettingsResponse;
-  requested: string[];
-}) {
-  if (!result.ok) {
-    return (
-      <Banner tone='error' testId='sso-test-result'>
-        {result.message}
-      </Banner>
-    );
-  }
-  return (
-    <div
-      data-testid='sso-test-result'
-      className='rounded-md border border-emerald-500/30 bg-emerald-500/10 p-3 text-sm space-y-1'
-    >
-      <p className='flex items-center gap-1.5 font-medium text-emerald-400'>
-        <CheckCircle2 size={14} /> Discovery succeeded
-      </p>
-      <p className='text-xs text-muted-2'>
-        This checks the issuer only. The client ID, secret, and redirect URL are not exercised until
-        someone actually signs in.
-      </p>
-      <dl className='grid grid-cols-[max-content_1fr] gap-x-3 gap-y-0.5 text-xs text-muted'>
-        <dt>Issuer</dt>
-        <dd className='break-all'>{result.issuer}</dd>
-        <dt>Authorize</dt>
-        <dd className='break-all'>{result.authorizationEndpoint}</dd>
-        <dt>Token</dt>
-        <dd className='break-all'>{result.tokenEndpoint}</dd>
-        <dt>JWKS</dt>
-        <dd className='break-all'>{result.jwksUri}</dd>
-      </dl>
-      {result.issuerMismatch && <p className='text-xs text-amber-400'>{result.issuerMismatch}</p>}
-      {!result.supportsPkce && (
-        <p className='text-xs text-amber-400'>
-          This provider does not advertise PKCE (S256). Shepherd always sends a PKCE challenge, so
-          sign-in may fail.
-        </p>
-      )}
-      {result.missingScopes.length > 0 && (
-        <p className='text-xs text-amber-400'>
-          Not advertised as supported: {result.missingScopes.join(', ')}. Many providers
-          under-report this, so it is worth checking rather than trusting.
-        </p>
-      )}
-      {requested.length > 0 && result.supportedScopes.length === 0 && (
-        <p className='text-xs text-muted-2'>
-          This provider does not publish a scope list, so the requested scopes could not be checked.
-        </p>
-      )}
-    </div>
-  );
-}
-
-const inputClass =
-  'w-full rounded-md border border-border-strong bg-border px-3 py-2 text-sm text-zinc-100 disabled:opacity-60';
-
-function Section({ title, children }: { title: string; children: React.ReactNode }) {
-  return (
-    <section className='space-y-3 rounded-lg border border-border bg-card/40 p-4'>
-      <h2 className='text-sm font-semibold text-zinc-200'>{title}</h2>
-      {children}
-    </section>
-  );
-}
-
-function Field({
-  label,
-  hint,
-  children,
-}: {
-  label: string;
-  hint?: string;
-  children: React.ReactNode;
-}) {
-  return (
-    <div className='space-y-1'>
-      <div className='text-xs font-medium text-muted'>{label}</div>
-      {children}
-      {hint && <p className='text-xs text-muted-2'>{hint}</p>}
-    </div>
-  );
-}
-
-function Banner({
-  tone,
-  testId,
-  children,
-}: {
-  tone: 'ok' | 'info' | 'warn' | 'error';
-  testId: string;
-  children: React.ReactNode;
-}) {
-  const tones = {
-    ok: 'border-emerald-500/30 bg-emerald-500/10 text-emerald-300',
-    info: 'border-indigo-500/30 bg-indigo-500/10 text-indigo-300',
-    warn: 'border-amber-500/30 bg-amber-500/10 text-amber-300',
-    error: 'border-red-500/30 bg-red-500/10 text-red-400',
-  } as const;
-  const Icon = tone === 'ok' ? CheckCircle2 : tone === 'error' ? AlertTriangle : Info;
-  return (
-    <div
-      data-testid={testId}
-      className={`flex items-start gap-2 rounded-md border p-3 text-sm ${tones[tone]}`}
-    >
-      <Icon size={15} className='mt-0.5 shrink-0' />
-      <span>{children}</span>
     </div>
   );
 }

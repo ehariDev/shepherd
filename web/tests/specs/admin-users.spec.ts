@@ -8,6 +8,17 @@
 import { appAdmin, orgAdmin } from '../fixtures/personas';
 import { expect, test } from '../fixtures/test';
 
+test('shows an alert, not an empty state, when the user list fails to load', async ({
+  page,
+  api,
+}) => {
+  await api.loginAs(appAdmin);
+  api.failNext('POST', '/shepherd.mgmt.v1.UserService/ListUsers', 503, 'unavailable');
+  await page.goto('/admin/users');
+
+  await expect(page.getByTestId('users-error')).toBeVisible({ timeout: 5000 });
+});
+
 test('lists local accounts with their status and org roles', async ({ page, api }) => {
   await api.loginAs(appAdmin);
   await page.goto('/admin/users');
