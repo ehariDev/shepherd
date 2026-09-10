@@ -84,13 +84,23 @@ jobs:
       - name: Set up Docker buildx
         uses: docker/setup-buildx-action@v3
 
+      # Keyed per workflow+job+run: actions/cache never overwrites an
+      # existing key, so a key shared across ci.yml/e2e.yml/e2e-k8s.yml (or
+      # across this workflow's own e2e and e2e-egress jobs) meant only the
+      # first save ever "won" it -- every later save was skipped, and each
+      # job's own "Rotate Docker layer cache" step found no
+      # /tmp/.buildx-cache-new and silently did nothing. The unique run_id
+      # guarantees this step always has something new to save; restore-keys
+      # stays scoped to this workflow+job (no run_id) so a later run still
+      # gets a warm prefix match against the most recent save for the SAME
+      # job.
       - name: Cache Docker layers
         uses: actions/cache@v4
         with:
           path: /tmp/.buildx-cache
-          key: buildx-${{ runner.os }}-${{ hashFiles('go.sum', 'web/pnpm-lock.yaml', 'deploy/versions.env', 'deploy/Dockerfile.local', 'deploy/Dockerfile.init', 'deploy/Dockerfile.simulator') }}
+          key: buildx-${{ runner.os }}-${{ github.workflow }}-${{ github.job }}-${{ hashFiles('go.sum', 'web/pnpm-lock.yaml', 'deploy/versions.env', 'deploy/Dockerfile.local', 'deploy/Dockerfile.init', 'deploy/Dockerfile.simulator') }}-${{ github.run_id }}
           restore-keys: |
-            buildx-${{ runner.os }}-
+            buildx-${{ runner.os }}-${{ github.workflow }}-${{ github.job }}-
 
       - name: make e2e
         env:
@@ -162,13 +172,23 @@ jobs:
       - name: Set up Docker buildx
         uses: docker/setup-buildx-action@v3
 
+      # Keyed per workflow+job+run: actions/cache never overwrites an
+      # existing key, so a key shared across ci.yml/e2e.yml/e2e-k8s.yml (or
+      # across this workflow's own e2e and e2e-egress jobs) meant only the
+      # first save ever "won" it -- every later save was skipped, and each
+      # job's own "Rotate Docker layer cache" step found no
+      # /tmp/.buildx-cache-new and silently did nothing. The unique run_id
+      # guarantees this step always has something new to save; restore-keys
+      # stays scoped to this workflow+job (no run_id) so a later run still
+      # gets a warm prefix match against the most recent save for the SAME
+      # job.
       - name: Cache Docker layers
         uses: actions/cache@v4
         with:
           path: /tmp/.buildx-cache
-          key: buildx-${{ runner.os }}-${{ hashFiles('go.sum', 'web/pnpm-lock.yaml', 'deploy/versions.env', 'deploy/Dockerfile.local', 'deploy/Dockerfile.init', 'deploy/Dockerfile.simulator') }}
+          key: buildx-${{ runner.os }}-${{ github.workflow }}-${{ github.job }}-${{ hashFiles('go.sum', 'web/pnpm-lock.yaml', 'deploy/versions.env', 'deploy/Dockerfile.local', 'deploy/Dockerfile.init', 'deploy/Dockerfile.simulator') }}-${{ github.run_id }}
           restore-keys: |
-            buildx-${{ runner.os }}-
+            buildx-${{ runner.os }}-${{ github.workflow }}-${{ github.job }}-
 
       # `make e2e-sim`, whose first ginkgo pass is exactly the egress-probe
       # filter with --fail-on-empty (this job's whole reason to exist) and
