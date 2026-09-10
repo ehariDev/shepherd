@@ -145,22 +145,30 @@ const SPEC_TO_PROCEDURE: Record<string, string> = {
   'DELETE /api/orgs/{org}/destinations/{id}':
     '/shepherd.mgmt.v1.DestinationService/DeleteDestination',
 
-  'LIST /api/orgs/{org}/ado-credentials': '/shepherd.mgmt.v1.GitOpsService/ListCredentials',
-  'CREATE /api/orgs/{org}/ado-credentials': '/shepherd.mgmt.v1.GitOpsService/CreateCredential',
-  'DELETE /api/orgs/{org}/ado-credentials/{id}': '/shepherd.mgmt.v1.GitOpsService/DeleteCredential',
-  'POST /api/orgs/{org}/ado-credentials/{id}/test':
+  'LIST /api/orgs/{org}/git-credentials': '/shepherd.mgmt.v1.GitOpsService/ListCredentials',
+  'CREATE /api/orgs/{org}/git-credentials': '/shepherd.mgmt.v1.GitOpsService/CreateCredential',
+  'DELETE /api/orgs/{org}/git-credentials/{id}': '/shepherd.mgmt.v1.GitOpsService/DeleteCredential',
+  'POST /api/orgs/{org}/git-credentials/{id}/test':
     '/shepherd.mgmt.v1.GitOpsService/TestCredential',
 
   'LIST /api/orgs/{org}/repo-links': '/shepherd.mgmt.v1.GitOpsService/ListRepoLinks',
   'CREATE /api/orgs/{org}/repo-links': '/shepherd.mgmt.v1.GitOpsService/CreateRepoLink',
   'DELETE /api/orgs/{org}/repo-links/{id}': '/shepherd.mgmt.v1.GitOpsService/DeleteRepoLink',
 
-  'GET /api/orgs/{org}/wizards/application-observability/schema':
-    '/shepherd.mgmt.v1.WizardService/GetWizardSchema',
-  'POST /api/orgs/{org}/wizards/application-observability/render':
-    '/shepherd.mgmt.v1.WizardService/RenderWizard',
-  'POST /api/orgs/{org}/wizards/application-observability/commit':
-    '/shepherd.mgmt.v1.WizardService/CommitWizard',
+  'GET /api/orgs/{org}/wizards': '/shepherd.mgmt.v1.WizardService/ListWizards',
+  'GET /api/orgs/{org}/wizards/{kind}': '/shepherd.mgmt.v1.WizardService/GetWizardSchema',
+  'POST /api/orgs/{org}/wizards/render': '/shepherd.mgmt.v1.WizardService/RenderWizard',
+  'POST /api/orgs/{org}/wizards/commit': '/shepherd.mgmt.v1.WizardService/CommitWizard',
+
+  'POST /api/orgs/{org}/visual/render': '/shepherd.mgmt.v1.VisualService/Render',
+  'POST /api/orgs/{org}/visual/validate': '/shepherd.mgmt.v1.VisualService/Validate',
+  'POST /api/orgs/{org}/visual/upgrade-check': '/shepherd.mgmt.v1.VisualService/UpgradeCheck',
+  'GET /api/orgs/{org}/pipelines/{id}/graph': '/shepherd.mgmt.v1.VisualService/GraphView',
+
+  'POST /api/orgs/{org}/simulate/relabel': '/shepherd.mgmt.v1.SimulateService/SimulateRelabel',
+  'POST /api/orgs/{org}/simulate/logs': '/shepherd.mgmt.v1.SimulateService/SimulateLogs',
+  'POST /api/orgs/{org}/simulate/runs': '/shepherd.mgmt.v1.SimulateService/CreateRun',
+  'GET /api/orgs/{org}/simulate/runs/{id}': '/shepherd.mgmt.v1.SimulateService/GetRun',
 
   'GET /api/orgs/{org}/audit': '/shepherd.mgmt.v1.AuditService/ListAudit',
 };
@@ -171,13 +179,11 @@ const SPEC_TO_PROCEDURE: Record<string, string> = {
 // docs/project-status.md ledger item that owns closing it. Delete an entry the same
 // change that gives it a real handler, so this list can't quietly go stale.
 const KNOWN_GAPS: Record<string, string> = {
-  'GET /api/orgs/{org}/ado-credentials/{id}':
+  'GET /api/orgs/{org}/git-credentials/{id}':
     'F4 -- no single-credential read procedure exists yet',
-  'UPDATE /api/orgs/{org}/ado-credentials/{id}': 'F4 -- "update a credential" is an open item',
+  'UPDATE /api/orgs/{org}/git-credentials/{id}': 'F4 -- "update a credential" is an open item',
   'GET /api/orgs/{org}/repo-links/{id}': 'F4 -- no single-repo-link read procedure exists yet',
   'UPDATE /api/orgs/{org}/repo-links/{id}': 'F4 -- repo-link update is an open item',
-  'POST /api/orgs/{org}/repo-links/{id}/sync':
-    'F4 -- "force immediate sync" endpoint is an open item',
 };
 
 // Endpoints spec §12 documents that never got a Connect procedure by design --
