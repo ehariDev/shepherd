@@ -1,5 +1,5 @@
 import { collector, org } from '../fixtures/factories';
-import { appAdmin, reader } from '../fixtures/personas';
+import { appAdmin, orgAdmin, orgEditor, reader } from '../fixtures/personas';
 import { expect, test } from '../fixtures/test';
 
 // B5: CollectorDetailPage's Access tab — list/add/remove group assignments.
@@ -76,8 +76,13 @@ test('group search debounce suppresses calls within the typing window', async ({
   // Type rapidly — the 300ms debounce should suppress calls fired mid-burst.
   await input.pressSequentially('test', { delay: 50 });
   expect(api.calls('/shepherd.mgmt.v1.AdminService/SearchGroups').length).toBeLessThanOrEqual(1);
-  await page.waitForTimeout(400);
-  expect(api.calls('/shepherd.mgmt.v1.AdminService/SearchGroups').length).toBeGreaterThanOrEqual(1);
+  // Poll instead of a blind sleep: waits exactly as long as the debounce
+  // (CollectorDetailPage.tsx) actually takes, not a fixed guess. (A faked
+  // page.clock was tried here first and does not work: it stalls the React
+  // Query refetch this debounce triggers, not just the setTimeout itself.)
+  await expect
+    .poll(() => api.calls('/shepherd.mgmt.v1.AdminService/SearchGroups').length, { timeout: 2000 })
+    .toBeGreaterThanOrEqual(1);
 });
 
 test('search result click adds the group directly', async ({ page, api }) => {
@@ -111,4 +116,28 @@ test('Access tab is hidden for a non-admin org role', async ({ page, api }) => {
   await page.goto(`/collectors/${c.id}`);
   await expect(page.getByRole('button', { name: 'Served Config' })).toBeVisible();
   await expect(page.getByRole('button', { name: 'Access' })).toHaveCount(0);
+});
+
+test('Access tab is also hidden for an org editor', async ({ page, api }) => {
+  // The tab's gate (CollectorDetailPage's isOrgAdmin) is org role "admin"
+  // alone — editor authors what the org runs, not who can see it.
+  await api.loginAs(orgEditor);
+  const o = org({ id: 'org-0001' });
+  const c = collector({ id: 'col-0001' });
+  api.seed({ orgs: [o], collectors: [c] });
+
+  await page.goto(`/collectors/${c.id}`);
+  await expect(page.getByRole('button', { name: 'Served Config' })).toBeVisible();
+  await expect(page.getByRole('button', { name: 'Access' })).toHaveCount(0);
+});
+
+test('Access tab is available to an org admin, not just an app admin', async ({ page, api }) => {
+  await api.loginAs(orgAdmin);
+  const o = org({ id: 'org-0001' });
+  const c = collector({ id: 'col-0001' });
+  api.seed({ orgs: [o], collectors: [c] });
+
+  await page.goto(`/collectors/${c.id}`);
+  await page.getByRole('button', { name: 'Access' }).click();
+  await expect(page.getByText('No groups have access to this collector yet.')).toBeVisible();
 });

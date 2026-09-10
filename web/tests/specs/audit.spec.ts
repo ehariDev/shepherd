@@ -1,5 +1,5 @@
 import { org } from '../fixtures/factories';
-import { appAdmin } from '../fixtures/personas';
+import { appAdmin, orgAdmin } from '../fixtures/personas';
 import { expect, test } from '../fixtures/test';
 
 function auditRow(o: Partial<Record<string, unknown>> = {}) {
@@ -86,4 +86,14 @@ test('audit page pages through results with limit/offset', async ({ page, api })
 
   await page.getByRole('button', { name: 'Previous page' }).click();
   await expect(page.getByText('1–25 of 30')).toBeVisible();
+});
+
+test('an org admin, not just an app admin, can view the audit log', async ({ page, api }) => {
+  await api.loginAs(orgAdmin);
+  api.seed({
+    orgs: [org({ id: 'org-0001' })],
+    auditRows: [auditRow({ id: 1, actor: 'alice@example.com' })],
+  });
+  await page.goto('/audit');
+  await expect(page.locator('tbody tr')).toHaveCount(1);
 });
