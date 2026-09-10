@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import {
   stampSchemaVersion,
   type UpgradeCheckResult,
@@ -7,6 +7,7 @@ import {
 } from '../../api/client';
 import { useMe } from '../../hooks/useMe';
 import { useVisualStore } from '../store';
+import { hasBlockingItems, pruneRemovedAttrs } from '../upgradeOps';
 
 interface UpgradeReviewProps {
   open: boolean;
@@ -48,14 +49,26 @@ export function UpgradeReview({ open, onClose, onAccept }: UpgradeReviewProps) {
   const [result, setResult] = useState<UpgradeCheckResult | null>(null);
   const [error, setError] = useState<string | null>(null);
 
+  // Read the freshest doc at request time without making it an effect
+  // dependency — see the effect below.
+  const docRef = useRef(doc);
+  docRef.current = doc;
+
   useEffect(() => {
     if (!open || !me?.orgs[0]?.id) return;
     setResult(null);
     setError(null);
-    upgradeCheck(me.orgs[0].id, doc)
+    upgradeCheck(me.orgs[0].id, docRef.current)
       .then(setResult)
       .catch((e: unknown) => setError(e instanceof Error ? e.message : 'Failed to check upgrade'));
-  }, [doc, me, open]);
+    // Deliberately NOT `doc`: the review is checked against whichever
+    // schema_version the graph is stamped with, not against every keystroke
+    // in the inspector. Depending on the whole doc re-fired UpgradeCheck on
+    // every mutation made while the review panel happened to be open.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [doc.schema_version, me, open]);
+
+  const blocked = result ? hasBlockingItems(result.items) : false;
 
   if (!open) return null;
   return (
@@ -88,11 +101,19 @@ export function UpgradeReview({ open, onClose, onAccept }: UpgradeReviewProps) {
                 Accept stamps the new schema version in your local draft. Save the pipeline to
                 persist the upgrade.
               </p>
+              {blocked && (
+                <p data-testid='upgrade-blocked' className='text-xs text-red-500'>
+                  Resolve every removed component above before accepting this upgrade.
+                </p>
+              )}
               <div className='flex gap-2'>
                 <button
                   data-testid='upgrade-accept'
+                  disabled={blocked}
+                  title={blocked ? 'Resolve removed components before accepting' : undefined}
                   onClick={() => {
-                    importGraph(stampSchemaVersion(doc, result.new_version));
+                    const pruned = pruneRemovedAttrs(doc, result.items);
+                    importGraph(stampSchemaVersion(pruned, result.new_version));
                     onAccept(result.new_version);
                   }}
                 >
