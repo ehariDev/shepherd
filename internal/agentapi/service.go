@@ -19,6 +19,7 @@ import (
 	"shepherd/internal/merge"
 	"shepherd/internal/metrics"
 	"shepherd/internal/schema"
+	"shepherd/internal/serve"
 	"shepherd/internal/store"
 	"shepherd/internal/store/sqlc"
 	"shepherd/internal/validate"
@@ -375,50 +376,33 @@ func (s *Service) recomputeServeCache(ctx context.Context, coll sqlc.Collector, 
 		clusterName = cluster.Name
 	}
 
-	cl := merge.CollectorLabels{
-		CollectorID: coll.ID.String(),
-		Labels:      map[string]string{"role": coll.Role, "cluster": clusterName},
+	if s.validator == nil {
+		// Stage 1 is enforced unconditionally by serve.ComputeServed below
+		// regardless of whether a validator is wired — this used to gate
+		// whether Stage 1 ran at all (see git history), which meant a merged
+		// config that failed to even parse still reached serve_cache with
+		// no validator configured. This line exists only so a misconfigured
+		// deployment is discoverable in logs, not to change behavior.
+		s.logger.Debug("recomputeServeCache: no validator configured; merged output is still Stage-1 validated", "collector_id", coll.ID.String())
 	}
 
-	var opts []merge.AssembleOption
-	if s.schema != nil {
-		opts = append(opts, merge.WithRoleEnforcement(s.schema))
-	}
-	result, err := merge.Assemble(coll.ID.String(), clusterName+"/"+coll.Role, cl, mergePipelines, "prod", "", opts...)
+	// internal/serve.ComputeServed is the single merge -> append-baseline ->
+	// hash -> Stage-1-validate implementation this lazy path shares with
+	// internal/mgmtapi's eager recompute (docs/gateway-tier-plan.md §10).
+	result, err := serve.ComputeServed(ctx,
+		serve.Deps{Schema: s.schema, BeaconBaseline: s.beaconBaseline},
+		serve.Collector{ID: coll.ID.String(), Cluster: clusterName, Role: coll.Role},
+		mergePipelines,
+	)
 	if err != nil {
-		return "", "", fmt.Errorf("assembling config: %w", err)
+		return "", "", err
 	}
-
-	// D6: every claimed collector gets the baseline pipeline, independent of
-	// role/matchers — see beacon.AppendBaseline's doc comment for why this is
-	// a plain append rather than another entry in mergePipelines (role
-	// enforcement above would reject it for role=logs collectors, and D6
-	// says "not opt-in", not "opt-in for roles that happen to allow Metrics").
-	// A no-op when WithBeaconRemoteWrite was never applied (RemoteWriteURL
-	// == "").
-	content, err := beacon.AppendBaseline(result.Content, s.beaconBaseline)
-	if err != nil {
+	if result.BaselineErr != nil {
 		// Render failure is a static-config bug (bad Label, e.g.), not a
-		// per-collector condition — degrade to serving without the baseline
-		// rather than taking every collector's config offline over it, and
-		// say so loudly.
-		s.logger.Error("appending beacon baseline pipeline failed; serving without it", "collector_id", coll.ID.String(), "err", err)
-		content = result.Content
-	}
-	hash := result.Hash
-	if content != result.Content {
-		hash = merge.HashContent(content)
+		// per-collector condition — serve.ComputeServed already degraded to
+		// serving without the baseline; say so loudly.
+		s.logger.Error("appending beacon baseline pipeline failed; serving without it", "collector_id", coll.ID.String(), "err", result.BaselineErr)
 	}
 
-	// Stage 1 validation on the FINAL served output, baseline included — a
-	// broken baseline render must fail the same way a broken user pipeline
-	// would, not slip through because it was appended after this check.
-	if s.validator != nil {
-		r1 := validate.Stage1(content)
-		if !r1.Valid {
-			return "", "", fmt.Errorf("merged config failed stage-1 validation")
-		}
-	}
-
-	return content, hash, nil
+	return result.Content, result.Hash, nil
 }

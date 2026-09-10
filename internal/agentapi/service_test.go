@@ -320,6 +320,102 @@ var _ = Describe("CollectorService", Label("integration"), func() {
 			Expect(second.Msg.Hash).To(Equal(first.Msg.Hash))
 		})
 
+		// W2-S3: this suite's own Service (BeforeEach above) always wires a
+		// real schema registry, under which merge.enforceRoles' fail-safe
+		// excludes ANY pipeline whose content fails to even parse
+		// (signals.Derive errors) BEFORE Stage 1 ever sees it — that check
+		// runs regardless of role, "singleton"/Unrestricted included. So
+		// exercising the specific gap this step closes — ComputeServed's
+		// Stage 1 running unconditionally, with nothing able to skip it —
+		// needs its own Service wired the way agentapi.New's doc comment
+		// says is supported: both validator and schema registry nil, the
+		// exact configuration under which recomputeServeCache used to skip
+		// Stage 1 entirely (gated on "if s.validator != nil").
+		It("never serves merged output that fails stage 1, even with no validator or schema registry wired", func() {
+			dbURL := sharedPG.IsolatedDB(ctx, GinkgoTB())
+			st2, err := store.New(ctx, &config.DatabaseConfig{URL: dbURL, MaxConns: 5})
+			Expect(err).NotTo(HaveOccurred())
+			defer st2.Close() //nolint:errcheck // test cleanup
+
+			raw := make([]byte, 32)
+			_, _ = rand.Read(raw)
+			secret := base64.URLEncoding.EncodeToString(raw)
+			hash := sha256.Sum256([]byte(secret))
+			tok, err := st2.Queries.CreateAgentToken(ctx, sqlc.CreateAgentTokenParams{
+				Name: "stage1-token", TokenHash: hash[:], CreatedBy: "test",
+			})
+			Expect(err).NotTo(HaveOccurred())
+			hdr := "Basic " + base64.StdEncoding.EncodeToString([]byte(tok.ID.String()+":"+secret))
+
+			svc2 := agentapi.New(st2, nil, slog.Default(), nil)
+			authInterceptor2 := agentapi.NewAuthInterceptor(st2)
+			path2, handler2 := collectorv1connect.NewCollectorServiceHandler(svc2, connect.WithInterceptors(authInterceptor2))
+			mux2 := http.NewServeMux()
+			mux2.Handle(path2, handler2)
+			server2 := httptest.NewUnstartedServer(h2c.NewHandler(mux2, &http2.Server{}))
+			server2.Start()
+			defer server2.Close()
+
+			client2 := collectorv1connect.NewCollectorServiceClient(
+				server2.Client(), server2.URL, connect.WithGRPC(),
+				connect.WithInterceptors(connect.UnaryInterceptorFunc(func(next connect.UnaryFunc) connect.UnaryFunc {
+					return func(c context.Context, req connect.AnyRequest) (connect.AnyResponse, error) {
+						req.Header().Set("Authorization", hdr)
+						return next(c, req)
+					}
+				})),
+			)
+
+			org, err := st2.Queries.CreateOrg(ctx, sqlc.CreateOrgParams{Name: "stage1-org", DisplayName: "Stage1 org", AdminGroupID: "admins"})
+			Expect(err).NotTo(HaveOccurred())
+			_, err = client2.RegisterCollector(ctx, connect.NewRequest(&collectorv1.RegisterCollectorRequest{
+				Id: "stage1-instance", Name: "stage1-instance",
+				LocalAttributes: map[string]string{"cluster": "stage1-cluster", "role": "metrics"},
+			}))
+			Expect(err).NotTo(HaveOccurred())
+			cluster, err := st2.Queries.GetClusterByName(ctx, "stage1-cluster")
+			Expect(err).NotTo(HaveOccurred())
+			Expect(st2.Queries.ClaimCluster(ctx, sqlc.ClaimClusterParams{ID: cluster.ID, OrgID: org.ID})).To(Succeed())
+			collector, err := st2.Queries.GetCollectorByClusterAndRole(ctx, sqlc.GetCollectorByClusterAndRoleParams{Name: "stage1-cluster", Role: "metrics"})
+			Expect(err).NotTo(HaveOccurred())
+
+			_, err = st2.Queries.CreatePipeline(ctx, sqlc.CreatePipelineParams{
+				OrgID: org.ID, Name: "good", Contents: "// good",
+				Matchers: json.RawMessage(`["cluster=\"stage1-cluster\""]`),
+				Enabled:  true, Source: "ui",
+				WizardState: json.RawMessage(`{}`), CreatedBy: "test", UpdatedBy: "test",
+			})
+			Expect(err).NotTo(HaveOccurred())
+
+			first, err := client2.GetConfig(ctx, connect.NewRequest(&collectorv1.GetConfigRequest{
+				Id: "stage1-instance", LocalAttributes: map[string]string{"cluster": "stage1-cluster", "role": "metrics"},
+			}))
+			Expect(err).NotTo(HaveOccurred())
+			Expect(first.Msg.Content).To(ContainSubstring("good"))
+
+			// Inserted directly via the store, bypassing ValidatePipeline's
+			// own Stage-1 check at authoring time. Unbalanced braces: parses
+			// as neither valid syntax nor a merge failure, only a Stage-1
+			// diagnostic on the assembled content.
+			_, err = st2.Queries.CreatePipeline(ctx, sqlc.CreatePipelineParams{
+				OrgID: org.ID, Name: "unbalanced", Contents: `prometheus.scrape "a" {`,
+				Matchers: json.RawMessage(`["cluster=\"stage1-cluster\""]`),
+				Enabled:  true, Source: "ui",
+				WizardState: json.RawMessage(`{}`), CreatedBy: "test", UpdatedBy: "test",
+			})
+			Expect(err).NotTo(HaveOccurred())
+			Expect(st2.Queries.MarkServeCacheDirty(ctx, collector.ID)).To(Succeed())
+
+			second, err := client2.GetConfig(ctx, connect.NewRequest(&collectorv1.GetConfigRequest{
+				Id: "stage1-instance", LocalAttributes: map[string]string{"cluster": "stage1-cluster", "role": "metrics"},
+			}))
+			Expect(err).NotTo(HaveOccurred())
+			Expect(second.Msg.Content).To(Equal(first.Msg.Content),
+				"a merged config that fails Stage 1 must never reach serve_cache, even with no validator or schema "+
+					"registry wired — the previous content must still be served")
+			Expect(second.Msg.Hash).To(Equal(first.Msg.Hash))
+		})
+
 		// G6 (docs/gateway-tier-plan.md): the gate W1 could not close from
 		// internal/merge's own suite. Enforcement is only real if it holds on
 		// the path a live agent actually drives — GetConfig's lazy
