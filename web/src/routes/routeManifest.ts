@@ -23,73 +23,115 @@ export interface RouteEntry {
   /** A locator string that should be unique to this page when authenticated */
   distinctLocator?: string;
   requiredRole?: RequiredRole;
+  /** Human breadcrumb label for this route's own segment (breadcrumb.ts).
+   *  A route with no label falls back to a title-cased raw path segment. */
+  label?: string;
 }
 
 export const routeManifest: RouteEntry[] = [
   { path: '/login', tag: 'public' },
-  { path: '/', tag: 'protected', distinctLocator: 'text=Overview' },
-  { path: '/collectors', tag: 'protected', distinctLocator: 'text=Collectors' },
-  { path: '/collectors/$id', tag: 'protected', distinctLocator: 'text=Collector' },
-  { path: '/pipelines', tag: 'protected', distinctLocator: 'text=Pipelines' },
-  { path: '/pipelines/new', tag: 'protected', requiredRole: 'org-editor' },
-  { path: '/pipelines/$id', tag: 'protected' },
-  { path: '/destinations', tag: 'protected', distinctLocator: 'text=Destinations' },
+  { path: '/', tag: 'protected', distinctLocator: 'text=Overview', label: 'Overview' },
+  {
+    path: '/collectors',
+    tag: 'protected',
+    distinctLocator: 'text=Collectors',
+    label: 'Collectors',
+  },
+  {
+    path: '/collectors/$id',
+    tag: 'protected',
+    distinctLocator: 'text=Collector',
+    label: 'Collector',
+  },
+  { path: '/pipelines', tag: 'protected', distinctLocator: 'text=Pipelines', label: 'Pipelines' },
+  {
+    path: '/pipelines/new',
+    tag: 'protected',
+    requiredRole: 'org-editor',
+    label: 'New pipeline',
+  },
+  { path: '/pipelines/$id', tag: 'protected', label: 'Pipeline' },
+  {
+    path: '/destinations',
+    tag: 'protected',
+    distinctLocator: 'text=Destinations',
+    label: 'Destinations',
+  },
   {
     path: '/teams',
     tag: 'protected',
     distinctLocator: 'text=Teams',
     requiredRole: 'org-reader',
+    label: 'Teams',
   },
-  { path: '/git', tag: 'protected', distinctLocator: 'text=Git sync', requiredRole: 'org-admin' },
+  {
+    path: '/git',
+    tag: 'protected',
+    distinctLocator: 'text=Git sync',
+    requiredRole: 'org-admin',
+    label: 'Git sync',
+  },
   // Full-bleed canvas routes. They bypass contentRoute (see router.tsx) but are
   // still protected, and were missing here entirely -- which the completeness
   // guard could not notice, because it only checked that listed routes had a
   // tag rather than that every real route was listed.
-  { path: '/pipelines/visual/new', tag: 'protected' },
-  { path: '/pipelines/$id/visual', tag: 'protected' },
-  { path: '/pipelines/$id/graph', tag: 'protected' },
+  { path: '/pipelines/visual/new', tag: 'protected', label: 'Visual builder' },
+  { path: '/pipelines/$id/visual', tag: 'protected', label: 'Visual builder' },
+  { path: '/pipelines/$id/graph', tag: 'protected', label: 'Graph view' },
   {
     path: '/wizards',
     tag: 'protected',
     distinctLocator: 'text=Wizards',
     requiredRole: 'org-editor',
+    label: 'Wizards',
   },
-  { path: '/wizards/$kind', tag: 'protected', requiredRole: 'org-editor' },
+  {
+    path: '/wizards/$kind',
+    tag: 'protected',
+    requiredRole: 'org-editor',
+    label: 'Wizard',
+  },
   {
     path: '/admin/orgs',
     tag: 'protected',
     distinctLocator: 'text=Organisations',
     requiredRole: 'app-admin',
+    label: 'Organisations',
   },
   {
     path: '/admin/clusters',
     tag: 'protected',
     distinctLocator: 'text=Clusters',
     requiredRole: 'app-admin',
+    label: 'Clusters',
   },
   {
     path: '/admin/tokens',
     tag: 'protected',
     distinctLocator: 'text=Agent Tokens',
     requiredRole: 'app-admin',
+    label: 'Agent Tokens',
   },
   {
     path: '/admin/users',
     tag: 'protected',
     distinctLocator: 'text=Users',
     requiredRole: 'app-admin',
+    label: 'Users',
   },
   {
     path: '/admin/auth',
     tag: 'protected',
     distinctLocator: 'text=Single sign-on',
     requiredRole: 'app-admin',
+    label: 'Single sign-on',
   },
   {
     path: '/audit',
     tag: 'protected',
     distinctLocator: 'text=Audit log',
     requiredRole: 'org-admin',
+    label: 'Audit log',
   },
 ];
 
