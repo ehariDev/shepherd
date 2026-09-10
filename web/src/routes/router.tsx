@@ -1,5 +1,6 @@
 import { createRootRoute, createRoute, createRouter, Outlet } from '@tanstack/react-router';
 import { lazy, Suspense } from 'react';
+import { RouteErrorFallback } from '@/components/RouteErrorFallback';
 import { Shell } from '@/components/Shell';
 import { AdminAuthPage } from '@/pages/AdminAuthPage';
 import { AdminClustersPage } from '@/pages/AdminClustersPage';
@@ -21,11 +22,12 @@ import { WizardRunnerPage } from '@/wizard/WizardRunnerPage';
 
 const rootRoute = createRootRoute({
   component: Outlet,
-  errorComponent: ({ error }) => (
-    <div style={{ padding: 16, color: 'red' }}>
-      <strong>Router Error:</strong> {String(error)}
-    </div>
-  ),
+  // No errorComponent here: TanStack Router resolves error boundaries per
+  // LEAF match, so a rootRoute errorComponent never actually sees a page
+  // crash — the nearest matched route below it always catches first.
+  // RouteErrorFallback is wired as the router-wide defaultErrorComponent
+  // below instead, which every leaf without its own errorComponent falls
+  // back to.
 });
 
 const loginRoute = createRoute({
@@ -228,7 +230,7 @@ const routeTree = rootRoute.addChildren([
   ]),
 ]);
 
-export const router = createRouter({ routeTree });
+export const router = createRouter({ routeTree, defaultErrorComponent: RouteErrorFallback });
 
 declare module '@tanstack/react-router' {
   interface Register {
