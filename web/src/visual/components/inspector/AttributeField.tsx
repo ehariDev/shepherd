@@ -1,6 +1,15 @@
 import type { ReactNode } from 'react';
+import { useState } from 'react';
+import {
+  buildBindingExpr,
+  exprOf,
+  SECRET_EXPORT_FIELD,
+  type SecretSourceNode,
+  secretSourceNodes,
+} from '../../bindings';
 import type { ResolvedPort } from '../../l1';
-import type { GraphBinding } from '../../types';
+import { useVisualStore } from '../../store';
+import type { GraphBinding, GraphEdge } from '../../types';
 import {
   addListItem,
   addMapRow,
@@ -30,6 +39,18 @@ export interface AttributeFieldProps {
   port?: ResolvedPort;
   wireCount: number;
   binding?: GraphBinding;
+  /** This node's id and this attribute's own instance path (a numeric segment
+   *  per repeatable-block ancestor — `L1DiagnosticEx.path`'s shape), needed
+   *  only by the secret binding picker (W5-01's `setBinding`/`removeBinding`
+   *  key on it). Every other widget ignores both. */
+  nodeId?: string;
+  instancePath?: string[];
+  /** This port's own incoming edges, in their current fan-in order (W5-08) —
+   *  `WiredRow`'s minimal reorder control. Only meaningful (and only ever
+   *  >1) for a `cardinality: list` port; a scalar or cardinality-less one
+   *  never renders the control regardless (nothing to reorder). */
+  wireEdges?: GraphEdge[];
+  onMoveEdge?: (edgeId: string, direction: 'up' | 'down') => void;
   /** Validation message from the node's L1 diagnostics whose path matches this
    *  field exactly (task item 4 — inline feedback tied to diagnostics). */
   error?: string;
@@ -82,7 +103,21 @@ function ErrorText({ message, name }: { message?: string; name: string }) {
  * review walked into. `renderTS.ts` already prefers the wire over a stray
  * literal, so this is a UX guardrail, not a correctness requirement.
  */
-function WiredRow({ attr, wireCount }: { attr: AttrLike; wireCount: number }) {
+function WiredRow({
+  attr,
+  wireCount,
+  wireEdges,
+  onMoveEdge,
+}: {
+  attr: AttrLike;
+  wireCount: number;
+  wireEdges?: GraphEdge[];
+  onMoveEdge?: (edgeId: string, direction: 'up' | 'down') => void;
+}) {
+  // The minimal fan-in reorder control (W5-08): one row per incoming wire,
+  // in its current order, each with up/down buttons that swap it with the
+  // neighboring wire. Only shown once there is more than one wire to order.
+  const showReorder = onMoveEdge && wireEdges && wireEdges.length > 1;
   return (
     <div>
       <FieldLabel attr={attr} htmlFor={fieldId([attr.name])} />
@@ -96,49 +131,188 @@ function WiredRow({ attr, wireCount }: { attr: AttrLike; wireCount: number }) {
           Wired on the canvas ({wireCount} connection{wireCount === 1 ? '' : 's'})
         </span>
       </div>
+      {showReorder && (
+        <div className='mt-1 space-y-0.5' data-testid={`attr-wire-order-${attr.name}`}>
+          {wireEdges.map((e, i) => (
+            <div key={e.id} className='flex items-center gap-1 text-[11px] text-muted'>
+              <span className='w-3 text-right'>{i + 1}.</span>
+              <button
+                type='button'
+                aria-label={`move wire ${i + 1} up`}
+                data-testid={`attr-wire-up-${attr.name}-${i}`}
+                className='disabled:opacity-30'
+                disabled={i === 0}
+                onClick={() => onMoveEdge(e.id, 'up')}
+              >
+                ▲
+              </button>
+              <button
+                type='button'
+                aria-label={`move wire ${i + 1} down`}
+                data-testid={`attr-wire-down-${attr.name}-${i}`}
+                className='disabled:opacity-30'
+                disabled={i === wireEdges.length - 1}
+                onClick={() => onMoveEdge(e.id, 'down')}
+              >
+                ▼
+              </button>
+            </div>
+          ))}
+        </div>
+      )}
     </div>
   );
 }
 
-/** Secrets never store a literal (task item 3): the field is disabled with an
- *  explanation, and shows the binding it is already bound to, when one
- *  exists — there is no picker in the canvas yet to create one, so this is
- *  honest about the current capability rather than pointing at a control
- *  that isn't there (unlike the placeholder text this replaces). A literal
- *  already present in `props` (e.g. from hand-authored graph JSON) is
- *  surfaced with a one-click way to clear it, rather than silently kept. */
+/** The picker itself (W5-02): existing secret-source nodes in the graph, plus
+ *  an option to place a fresh `remote.kubernetes.secret` and bind straight to
+ *  it. A map-shaped source (`data`) needs a key ("which entry"); a
+ *  scalar-shaped one (`content`) binds as-is. Store-aware — unlike every
+ *  other widget here — because it genuinely needs graph-wide knowledge (every
+ *  secret-source node, not just this field's own value) and the ability to
+ *  place a new node, not merely this field's `onChange`. */
+function BindingPicker({
+  attr,
+  nodeId,
+  instancePath,
+}: {
+  attr: AttrLike;
+  nodeId: string;
+  instancePath: string[];
+}) {
+  const doc = useVisualStore((s) => s.doc);
+  const schema = useVisualStore((s) => s.schema);
+  const addNode = useVisualStore((s) => s.addNode);
+  const setBinding = useVisualStore((s) => s.setBinding);
+  const getPlacement = useVisualStore((s) => s.getPlacement);
+  const [sourceId, setSourceId] = useState('');
+  const [key, setKey] = useState('');
+
+  const sources = secretSourceNodes(doc, schema);
+  const selected = sources.find((s) => s.id === sourceId);
+  const needsKey = selected ? (SECRET_EXPORT_FIELD[selected.component]?.map ?? false) : false;
+
+  const selectSource = (value: string) => {
+    if (value === '__add__') {
+      const pos = getPlacement ? getPlacement(doc.nodes.length) : { x: 0, y: 0 };
+      addNode('remote.kubernetes.secret', pos);
+      const created = useVisualStore.getState().doc.nodes.at(-1);
+      setSourceId(created?.id ?? '');
+    } else {
+      setSourceId(value);
+    }
+    setKey('');
+  };
+
+  const bind = () => {
+    if (!selected) return;
+    const expr = buildBindingExpr(selected as SecretSourceNode, key);
+    if (expr) setBinding(nodeId, instancePath, expr);
+  };
+
+  return (
+    <div className='space-y-1'>
+      <select
+        data-testid={`attr-binding-source-${attr.name}`}
+        className={inputClass}
+        value={sourceId}
+        onChange={(e) => selectSource(e.target.value)}
+      >
+        <option value=''>— select a binding source —</option>
+        {sources.map((s) => (
+          <option key={s.id} value={s.id}>
+            {s.label} ({s.component})
+          </option>
+        ))}
+        <option value='__add__'>Add remote.kubernetes.secret…</option>
+      </select>
+      {needsKey && (
+        <input
+          data-testid={`attr-binding-key-${attr.name}`}
+          className={inputClass}
+          placeholder='key, e.g. password'
+          value={key}
+          onChange={(e) => setKey(e.target.value)}
+        />
+      )}
+      <button
+        type='button'
+        data-testid={`attr-binding-bind-${attr.name}`}
+        className='text-[11px] underline text-muted disabled:opacity-50 disabled:no-underline'
+        disabled={!selected || (needsKey && key.trim() === '')}
+        onClick={bind}
+      >
+        Bind
+      </button>
+    </div>
+  );
+}
+
+/**
+ * Secrets never store a literal (task item 3): the field offers a picker
+ * (W5-02) instead of a text box, and shows a unified "Bound: <expr>" display
+ * whichever of the two binding channels the value actually came from — a
+ * `{"$expr": ...}` written directly into this prop by `setBinding` (W5-01,
+ * any depth), or a legacy top-level `doc.bindings[]` entry (see
+ * `bindings.ts`'s module doc for why the two channels exist). Only the
+ * former can be unbound here: it is the one this module's own
+ * `removeBinding` actually manages. A literal already present in `props`
+ * (e.g. from hand-authored graph JSON) is surfaced with a one-click way to
+ * clear it, rather than silently kept.
+ */
 function SecretField({
   attr,
   schemaPath,
   value,
   onChange,
   binding,
+  nodeId,
+  instancePath,
 }: {
   attr: AttrLike;
   schemaPath: string[];
   value: unknown;
   onChange: (next: unknown) => void;
   binding?: GraphBinding;
+  nodeId?: string;
+  instancePath?: string[];
 }) {
+  const removeBinding = useVisualStore((s) => s.removeBinding);
   const literal = typeof value === 'string' && value.trim() !== '';
+  const propExpr = exprOf(value);
+  const boundExpr = propExpr ?? binding?.ref.expr;
   return (
     <div>
       <FieldLabel attr={attr} htmlFor={fieldId(schemaPath)} />
-      {binding ? (
+      {boundExpr ? (
         <div
           id={fieldId(schemaPath)}
           data-testid={`attr-secret-${attr.name}`}
-          className='w-full border rounded px-2 py-1 border-border-strong text-muted'
+          className='w-full border rounded px-2 py-1 border-border-strong text-muted flex items-center gap-2'
         >
-          Bound: <span className='font-mono'>{binding.ref.expr}</span>
+          <span>
+            Bound: <span className='font-mono'>{boundExpr}</span>
+          </span>
+          {propExpr && nodeId && instancePath && (
+            <button
+              type='button'
+              data-testid={`attr-binding-unbind-${attr.name}`}
+              className='text-[11px] underline text-muted shrink-0'
+              onClick={() => removeBinding(nodeId, instancePath)}
+            >
+              Unbind
+            </button>
+          )}
         </div>
       ) : (
-        <div
-          id={fieldId(schemaPath)}
-          data-testid={`attr-secret-${attr.name}`}
-          className='w-full border rounded px-2 py-1 border-border-strong text-muted italic'
-        >
-          Secret — needs a config-node binding (no binding picker yet; set it in the text editor)
+        <div id={fieldId(schemaPath)} data-testid={`attr-secret-${attr.name}`}>
+          {nodeId && instancePath ? (
+            <BindingPicker attr={attr} nodeId={nodeId} instancePath={instancePath} />
+          ) : (
+            <div className='w-full border rounded px-2 py-1 border-border-strong text-muted italic'>
+              Secret — needs a config-node binding
+            </div>
+          )}
         </div>
       )}
       {literal && (
@@ -424,9 +598,16 @@ export function AttributeField({
   port,
   wireCount,
   binding,
+  nodeId,
+  instancePath,
+  wireEdges,
+  onMoveEdge,
   error,
 }: AttributeFieldProps) {
-  if (port && wireCount > 0) return <WiredRow attr={attr} wireCount={wireCount} />;
+  if (port && wireCount > 0)
+    return (
+      <WiredRow attr={attr} wireCount={wireCount} wireEdges={wireEdges} onMoveEdge={onMoveEdge} />
+    );
 
   const widget = widgetFor(attr);
   const hasError = Boolean(error);
@@ -439,6 +620,8 @@ export function AttributeField({
         value={value}
         onChange={onChange}
         binding={binding}
+        nodeId={nodeId}
+        instancePath={instancePath}
       />
     );
 

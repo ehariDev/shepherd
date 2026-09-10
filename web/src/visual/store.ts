@@ -2,6 +2,7 @@ import deepEqual from 'fast-deep-equal';
 import { nanoid } from 'nanoid';
 import { temporal } from 'zundo';
 import { create } from 'zustand';
+import { deleteAtPath, EXPR_KEY, setAtPath } from './bindings';
 import { portsCompatible, validateGraph } from './l1';
 import { portHandleId } from './schemaAdapter';
 import type {
@@ -12,6 +13,7 @@ import type {
   L1Diagnostic,
   SchemaPayload,
 } from './types';
+import { scalarConflicts } from './wireOrient';
 
 /** Info about the in-flight connection drag (A3). Lives in the store — not in
  * PipelineNodeData / rfNodes — so starting/ending a drag doesn't force the
@@ -133,8 +135,31 @@ interface VisualStore {
     label: string,
   ) => void;
   updateNode: (id: string, patch: Partial<GraphNode>) => void;
+  /** Writes `{"$expr": expr}` at `path` inside node `id`'s props (W5-01) — the
+   *  prop's own instance path, with a numeric segment per repeatable-block
+   *  index (matches `L1DiagnosticEx.path`, e.g.
+   *  `["endpoint", "0", "basic_auth", "password"]`). One undo step, like every
+   *  other mutation here. See bindings.ts's module doc for why this writes
+   *  into `props` rather than `doc.bindings[]`. */
+  setBinding: (nodeId: string, path: string[], expr: string) => void;
+  /** The inverse of `setBinding`: deletes the value at `path`, restoring the
+   *  unset state a literal or a wire could then fill. */
+  removeBinding: (nodeId: string, path: string[]) => void;
   removeNode: (id: string) => void;
-  addEdge: (from: { node: string; port: string }, to: { node: string; port: string }) => void;
+  /** Adds a wire, or — when `to`'s port is `cardinality: scalar` (W5-03,
+   *  design §3.2) — REPLACES whatever wire already lands there, as one undo
+   *  step. `added` is false for a self-connection, an exact duplicate, or a
+   *  cycle (the pre-existing checks); `replaced` lists the edge(s) removed to
+   *  make room, `[]` otherwise — CanvasPane's onConnect uses it to show an
+   *  Undo toast only when something was actually replaced. */
+  addEdge: (
+    from: { node: string; port: string },
+    to: { node: string; port: string },
+  ) => { added: boolean; replaced: GraphEdge[] };
+  /** Swaps `edgeId`'s `order` with its previous/next sibling among the SAME
+   *  (to.node, to.port)'s wires (W5-08's minimal fan-in reorder control) —
+   *  one undo step. A no-op at either end of the list. */
+  moveEdge: (edgeId: string, direction: 'up' | 'down') => void;
   /** Deletes every currently-selected node and edge (selected ids may name either)
    * plus every edge attached to a deleted node, as ONE atomic history entry — so a
    * single undo restores the whole selection, node(s), cascaded wires and all. */
@@ -186,6 +211,23 @@ function makeDefaultDoc(schemaVersion = 'alloy-v1.18.1'): GraphDocument {
     viewport: { x: 0, y: 0, zoom: 1 },
     meta: { created_with: 'shepherd-vb/1.0' },
   };
+}
+
+/**
+ * Exactly-one-selected-node projection (W5-10). Reference-stable across an
+ * UNRELATED mutation: every store action that touches `doc.nodes` does so
+ * with `.map((n) => (n.id === id ? { ...n, ...patch } : n))` (or an
+ * equivalent), so every node OTHER than the one just changed keeps its exact
+ * object reference — meaning this function returns the SAME object across
+ * two calls that bracket an unrelated update, and zustand's default
+ * `Object.is` output comparison (`useVisualStore(selectSelectedNode)`) skips
+ * the re-render. `InspectorPanel` subscribes with it instead of the whole
+ * `doc`, which changes reference on every single mutation.
+ */
+export function selectSelectedNode(
+  s: Pick<VisualStore, 'selected' | 'doc'>,
+): GraphNode | undefined {
+  return s.selected.length === 1 ? s.doc.nodes.find((n) => n.id === s.selected[0]) : undefined;
 }
 
 function revalidate(
@@ -269,6 +311,30 @@ export const useVisualStore = create<VisualStore>()(
           return { doc, diagnostics: revalidate({ ...state, doc }) };
         }),
 
+      setBinding: (nodeId, path, expr) =>
+        set((state) => {
+          const doc = {
+            ...state.doc,
+            nodes: state.doc.nodes.map((n) =>
+              n.id === nodeId
+                ? { ...n, props: setAtPath(n.props ?? {}, path, { [EXPR_KEY]: expr }) }
+                : n,
+            ),
+          };
+          return { doc, diagnostics: revalidate({ ...state, doc }) };
+        }),
+
+      removeBinding: (nodeId, path) =>
+        set((state) => {
+          const doc = {
+            ...state.doc,
+            nodes: state.doc.nodes.map((n) =>
+              n.id === nodeId ? { ...n, props: deleteAtPath(n.props ?? {}, path) } : n,
+            ),
+          };
+          return { doc, diagnostics: revalidate({ ...state, doc }) };
+        }),
+
       removeNode: (id) =>
         set((state) => {
           const doc = {
@@ -283,7 +349,8 @@ export const useVisualStore = create<VisualStore>()(
           };
         }),
 
-      addEdge: (from, to) =>
+      addEdge: (from, to) => {
+        let result: { added: boolean; replaced: GraphEdge[] } = { added: false, replaced: [] };
         set((state) => {
           if (
             from.node === to.node ||
@@ -306,9 +373,47 @@ export const useVisualStore = create<VisualStore>()(
             )
           )
             return state;
+          const replaced = scalarConflicts(state.schema, state.doc, { from, to });
+          const replacedIds = new Set(replaced.map((e) => e.id));
+          // W5-08: `order` is scoped per (to.node, to.port) — insertion order
+          // among that port's OTHER wires, matching what renderTS.ts already
+          // falls back to (its `seq` tiebreak) for a document saved before
+          // this field was stamped.
+          const siblingOrders = state.doc.edges
+            .filter((e) => !replacedIds.has(e.id) && e.to.node === to.node && e.to.port === to.port)
+            .map((e) => e.order ?? -1);
+          const order = 1 + Math.max(-1, ...siblingOrders);
           const doc = {
             ...state.doc,
-            edges: [...state.doc.edges, { id: `e_${nanoid(8)}`, from, to }],
+            edges: [
+              ...state.doc.edges.filter((e) => !replacedIds.has(e.id)),
+              { id: `e_${nanoid(8)}`, from, to, order },
+            ],
+          };
+          result = { added: true, replaced };
+          return { doc, diagnostics: revalidate({ ...state, doc }) };
+        });
+        return result;
+      },
+
+      moveEdge: (edgeId, direction) =>
+        set((state) => {
+          const edge = state.doc.edges.find((e) => e.id === edgeId);
+          if (!edge) return state;
+          const siblings = [...state.doc.edges]
+            .filter((e) => e.to.node === edge.to.node && e.to.port === edge.to.port)
+            .sort((a, b) => (a.order ?? 0) - (b.order ?? 0));
+          const idx = siblings.findIndex((e) => e.id === edgeId);
+          const swapWith = siblings[direction === 'up' ? idx - 1 : idx + 1];
+          if (!swapWith) return state;
+          const [orderA, orderB] = [edge.order ?? 0, swapWith.order ?? 0];
+          const doc = {
+            ...state.doc,
+            edges: state.doc.edges.map((e) => {
+              if (e.id === edge.id) return { ...e, order: orderB };
+              if (e.id === swapWith.id) return { ...e, order: orderA };
+              return e;
+            }),
           };
           return { doc, diagnostics: revalidate({ ...state, doc }) };
         }),

@@ -10,6 +10,7 @@ import {
 import { useMe } from '../../hooks/useMe';
 import { renderTS } from '../renderTS';
 import { useVisualStore } from '../store';
+import { useDebouncedValue } from '../useDebouncedValue';
 export function BottomDrawer() {
   const [open, setOpen] = useState(false);
   const [tab, setTab] = useState<'problems' | 'code' | 'simulate'>('problems');
@@ -23,7 +24,15 @@ export function BottomDrawer() {
   const [relabelResult, setRelabelResult] = useState<{ traces: TargetTrace[] }>();
   const [logsResult, setLogsResult] = useState<{ traces: LineTrace[] }>();
   const [serverMismatch, setServerMismatch] = useState(false);
-  const rendered = schema ? renderTS(doc, schema) : null;
+  // W5-10: `renderTS` re-walks the whole graph, and `doc` changes on every
+  // store mutation — including one per keystroke anywhere in the inspector,
+  // whether or not the Code tab is even the one showing. Rendering from a
+  // 300ms-trailing-debounced view of `doc` instead keeps that off the hot
+  // path while the user is still typing, without changing what eventually
+  // renders (nor `verify`, below, which deliberately renders the LIVE `doc`
+  // — it's a one-off click, not a per-keystroke recompute).
+  const debouncedDoc = useDebouncedValue(doc, 300);
+  const rendered = schema ? renderTS(debouncedDoc, schema) : null;
   // The collapsed bar's three labels double as tab affordances: clicking one
   // both selects that tab and expands the drawer to show it.
   const selectTab = (t: 'problems' | 'code' | 'simulate') => {

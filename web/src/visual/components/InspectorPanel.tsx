@@ -1,13 +1,13 @@
 import { SlidersHorizontal } from 'lucide-react';
 import { useMemo, useState } from 'react';
 import type { L1DiagnosticEx } from '../l1';
-import { useVisualStore } from '../store';
+import { selectSelectedNode, useVisualStore } from '../store';
 import type { ComponentDef } from '../types';
 import { CollapsiblePanel } from './CollapsiblePanel';
 import { AttributeField } from './inspector/AttributeField';
 import { BlockGroup } from './inspector/BlockGroup';
 import { nextBlockOrder, withAttr } from './inspector/blockOps';
-import { buildPortWireIndex, wireCountsFor } from './inspector/portWiring';
+import { buildPortWireIndex, wireCountsFor, wireEdgesFor } from './inspector/portWiring';
 import type { AttrLike, BlockLike } from './inspector/schemaShapes';
 import { UpgradeReview } from './UpgradeReview';
 
@@ -43,16 +43,28 @@ function InspectorShell({ children }: { children: React.ReactNode }) {
 }
 
 export function InspectorPanel() {
-  const selected = useVisualStore((s) => s.selected);
-  const doc = useVisualStore((s) => s.doc);
+  // Narrow, per-concern subscriptions (W5-10) instead of the whole `doc` —
+  // `doc` gets a brand-new object reference on EVERY store mutation (every
+  // node/edge/binding change, `nodes`/`edges`/`bindings` spread alongside
+  // whichever one key actually changed), so subscribing to it re-rendered
+  // this panel on every keystroke anywhere in the graph, selected node or
+  // not. `selectSelectedNode` is reference-stable across an unrelated node's
+  // update (see store.ts); `edges`/`bindings` keep their own array reference
+  // whenever a mutation left them untouched (store.ts spreads `state.doc`
+  // and overwrites only the key that changed).
+  const node = useVisualStore(selectSelectedNode);
+  const edges = useVisualStore((s) => s.doc.edges);
+  const bindings = useVisualStore((s) => s.doc.bindings);
+  const nodesCount = useVisualStore((s) => s.doc.nodes.length);
+  const docSchemaVersion = useVisualStore((s) => s.doc.schema_version);
   const schema = useVisualStore((s) => s.schema);
   const rawDiagnostics = useVisualStore((s) => s.diagnostics);
   const setDisabled = useVisualStore((s) => s.setDisabled);
   const updateNode = useVisualStore((s) => s.updateNode);
   const importGraph = useVisualStore((s) => s.importGraph);
+  const moveEdge = useVisualStore((s) => s.moveEdge);
   const [reviewOpen, setReviewOpen] = useState(false);
   const [showOptional, setShowOptional] = useState(false);
-  const node = selected.length === 1 ? doc.nodes.find((n) => n.id === selected[0]) : undefined;
   const def: ComponentDef | undefined = node && schema?.components[node.component];
   const schemaVersion = schema?._meta.alloy_version;
   const currentVersion = schemaVersion
@@ -60,7 +72,7 @@ export function InspectorPanel() {
       ? schemaVersion
       : `alloy-${schemaVersion.startsWith('v') ? '' : 'v'}${schemaVersion}`
     : null;
-  const upgradeNeeded = currentVersion != null && doc.schema_version !== currentVersion;
+  const upgradeNeeded = currentVersion != null && docSchemaVersion !== currentVersion;
 
   const diagnostics = rawDiagnostics as L1DiagnosticEx[];
   const nodeDiagnostics = useMemo(
@@ -69,8 +81,8 @@ export function InspectorPanel() {
   );
   const portIndex = useMemo(() => buildPortWireIndex(def), [def]);
   const wireCounts = useMemo(
-    () => (node ? wireCountsFor(doc.edges, node.id) : new Map<string, number>()),
-    [doc.edges, node],
+    () => (node ? wireCountsFor(edges, node.id) : new Map<string, number>()),
+    [edges, node],
   );
 
   if (!node || !def)
@@ -79,9 +91,9 @@ export function InspectorPanel() {
         <div className='p-4 text-sm text-muted'>
           <p>Select a node to inspect.</p>
           <div className='mt-4 text-xs'>
-            Nodes: {doc.nodes.length}
+            Nodes: {nodesCount}
             <br />
-            Edges: {doc.edges.length}
+            Edges: {edges.length}
           </div>
           {upgradeNeeded && (
             <div
@@ -89,7 +101,7 @@ export function InspectorPanel() {
               className='mt-3 p-2 bg-yellow-50 border border-yellow-300 rounded text-xs'
             >
               <span>
-                Authored against {doc.schema_version}; current is {currentVersion} —{' '}
+                Authored against {docSchemaVersion}; current is {currentVersion} —{' '}
               </span>
               <button
                 data-testid='upgrade-review-open'
@@ -105,7 +117,10 @@ export function InspectorPanel() {
               open={reviewOpen}
               onClose={() => setReviewOpen(false)}
               onAccept={(newVersion) => {
-                importGraph({ ...doc, schema_version: newVersion });
+                // A one-off read at click time rather than a standing
+                // subscription — the whole document is only needed here, to
+                // spread it back with the version bumped.
+                importGraph({ ...useVisualStore.getState().doc, schema_version: newVersion });
                 setReviewOpen(false);
               }}
             />
@@ -141,7 +156,11 @@ export function InspectorPanel() {
         onChange={(v) => setProp(attr.name, v)}
         port={port}
         wireCount={port ? (wireCounts.get(port.id) ?? 0) : 0}
-        binding={doc.bindings.find((b) => b.node === node.id && b.prop === attr.name)}
+        binding={bindings.find((b) => b.node === node.id && b.prop === attr.name)}
+        nodeId={node.id}
+        instancePath={[attr.name]}
+        wireEdges={port ? wireEdgesFor(edges, node.id, port.id) : undefined}
+        onMoveEdge={moveEdge}
         error={diagAt(nodeDiagnostics, [attr.name])}
       />
     );
@@ -211,9 +230,11 @@ export function InspectorPanel() {
                   instancePath={[block.name]}
                   nodeId={node.id}
                   diagnostics={nodeDiagnostics}
-                  bindings={doc.bindings}
+                  bindings={bindings}
                   portByPath={portIndex.byPath}
                   wireCounts={wireCounts}
+                  edges={edges}
+                  onMoveEdge={moveEdge}
                   depth={0}
                 />
               ))}

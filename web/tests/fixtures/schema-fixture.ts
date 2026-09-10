@@ -60,6 +60,11 @@ export const shippedSchema = deepMerge(
  * `loki.secretfilter` is the experimental entry: the palette's stability gate and
  * L1's `experimental_gated` rule need one, and it must be a component that really
  * carries `stability: "experimental"` in the artifact.
+ *
+ * `remote.kubernetes.secret` (W5-02) is the config-category secret source the
+ * binding-picker specs wire into `prometheus.remote_write`'s
+ * `endpoint.basic_auth.password` — it must carry the overlay's
+ * `sim_secret_source` for `bindings.ts`'s `secretSourceNodes` to find it.
  */
 export const FIXTURE_COMPONENTS = [
   'discovery.kubernetes',
@@ -71,6 +76,7 @@ export const FIXTURE_COMPONENTS = [
   'loki.process',
   'loki.write',
   'loki.secretfilter',
+  'remote.kubernetes.secret',
 ] as const;
 
 const components: Record<string, ComponentDef> = {};

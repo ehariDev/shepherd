@@ -666,7 +666,16 @@ export function CanvasPane() {
         toast.error('Alloy graphs are acyclic — this connection would create a cycle');
         return;
       }
-      addEdge(from, to);
+      // W5-03: a `cardinality: scalar` port accepts one wire, so addEdge just
+      // replaced whatever was already there instead of fanning in — as ONE
+      // undo step (the add and the removal happened in the same store `set`
+      // call), so a single Undo restores the wire this replaced.
+      const { replaced } = addEdge(from, to);
+      if (replaced.length > 0) {
+        toast('Replaced the existing wire on this port', {
+          action: { label: 'Undo', onClick: () => useVisualStore.getState().undo() },
+        });
+      }
     },
     [addEdge],
   );
