@@ -25,3 +25,32 @@ var _ = Describe("the Makefile", func() {
 		Expect(makeRecipe("docs")).To(ContainSubstring("build-docs.py"))
 	})
 })
+
+// Red run, 2026-09-10: `shepherd hash-password` is not a registered CLI
+// subcommand (internal/cli/*.go registers serve, migrate, validate,
+// healthcheck, version, dev, token only) and SHEPHERD_AUTH_LOCAL_ADMIN_ENABLED
+// / _PASSWORD_HASH are read nowhere in the binary. The real bootstrap path
+// (internal/auth/localusers.go BootstrapAdmin, called from server.go at
+// startup) reads SHEPHERD_BOOTSTRAP_ADMIN_LOGIN / SHEPHERD_BOOTSTRAP_ADMIN_PASSWORD
+// instead, so `make smoke` was invoking a CLI subcommand and env vars that no
+// longer exist and its local-admin-login step could never have passed.
+var _ = Describe("the smoke target", func() {
+	It("uses the bootstrap admin env vars, not the removed hash-password CLI", func() {
+		recipe := makeRecipe("smoke")
+		Expect(recipe).NotTo(ContainSubstring("hash-password"))
+		Expect(recipe).NotTo(ContainSubstring("SHEPHERD_AUTH_LOCAL_ADMIN"))
+		Expect(recipe).To(ContainSubstring("SHEPHERD_BOOTSTRAP_ADMIN_PASSWORD"))
+		Expect(recipe).To(ContainSubstring("SHEPHERD_BOOTSTRAP_ADMIN_LOGIN"))
+	})
+
+	It("reuses the local and init images instead of building shepherd:smoke tags", func() {
+		recipe := makeRecipe("smoke")
+		Expect(recipe).NotTo(ContainSubstring("shepherd:smoke"))
+		Expect(recipe).To(ContainSubstring("shepherd:local"))
+		Expect(recipe).To(ContainSubstring("shepherd:local-init"))
+		Expect(mkTargetLine("smoke")).To(SatisfyAll(
+			ContainSubstring("docker-build-local"),
+			ContainSubstring("docker-build-init"),
+		), "smoke should depend on the docker-build-local/docker-build-init targets to build its images")
+	})
+})

@@ -174,16 +174,20 @@ e2e-egress: preflight-ginkgo docker-build-local docker-build-init docker-build-s
 
 # Container smoke test — runs without the full e2e stack, < 60s.
 # Verifies: image builds, migrate up runs, serve starts and /healthz+/readyz return 200,
-# SIGTERM triggers clean shutdown, invalid SHEPHERD_LOG_LEVEL fails fast.
+# the bootstrap admin can log in locally, SIGTERM triggers clean shutdown, and
+# invalid SHEPHERD_LOG_LEVEL fails fast.
 # Prerequisite: Docker daemon running (OrbStack / Docker Desktop).
+# Reuses shepherd:local / shepherd:local-init (docker-build-local /
+# docker-build-init) instead of building separate shepherd:smoke tags, so the
+# images this exercises are the ones every other Docker-backed target builds.
+# The bootstrap admin comes from SHEPHERD_BOOTSTRAP_ADMIN_LOGIN /
+# SHEPHERD_BOOTSTRAP_ADMIN_PASSWORD (internal/auth/localusers.go BootstrapAdmin,
+# invoked by `serve` on an empty users table) — there is no separate
+# hash-password CLI subcommand or SHEPHERD_AUTH_LOCAL_ADMIN_* env var.
 # Containers are named shepherd-smoke-* and removed up front, so a SIGKILLed
-# run cannot leave anonymous containers squatting on ports 18080/18081.
-smoke: ## Container smoke test (< 60s, Docker only)
-	@docker rm -f shepherd-smoke-pg shepherd-smoke-srv shepherd-smoke-la >/dev/null 2>&1 || true
-	@echo "==> Building production image for smoke test..."
-	docker build $(DOCKER_BUILD_ARGS) -f deploy/Dockerfile.local -t shepherd:smoke .
-	@echo "==> Building init image for migrate..."
-	docker build $(DOCKER_BUILD_ARGS) -f deploy/Dockerfile.init -t shepherd:smoke-init .
+# run cannot leave anonymous containers squatting on port 18080.
+smoke: docker-build-local docker-build-init ## Container smoke test (< 60s, Docker only)
+	@docker rm -f shepherd-smoke-pg shepherd-smoke-srv >/dev/null 2>&1 || true
 	@echo "==> Starting postgres..."
 	@SMOKE_PG=$$(docker run -d --name shepherd-smoke-pg \
 		-e POSTGRES_DB=shepherd_smoke \
@@ -200,14 +204,16 @@ smoke: ## Container smoke test (< 60s, Docker only)
 	docker run --rm \
 		-e SHEPHERD_DATABASE_URL="$$SMOKE_DB" \
 		-e SHEPHERD_SECURITY_ENCRYPTION_KEY="AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=" \
-		shepherd:smoke-init migrate up && \
+		shepherd:local-init migrate up && \
 	echo "==> Starting shepherd serve (background)..." && \
 	SMOKE_SRV=$$(docker run -d --name shepherd-smoke-srv \
 		-e SHEPHERD_DATABASE_URL="$$SMOKE_DB" \
 		-e SHEPHERD_SECURITY_ENCRYPTION_KEY="AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=" \
 		-e SHEPHERD_LOG_LEVEL=debug \
+		-e SHEPHERD_BOOTSTRAP_ADMIN_LOGIN=admin \
+		-e SHEPHERD_BOOTSTRAP_ADMIN_PASSWORD=smoke-test-pass \
 		-p 18080:8080 \
-		shepherd:smoke serve) && \
+		shepherd:local serve) && \
 	echo "Shepherd container: $$SMOKE_SRV" && \
 	trap "docker rm -f $$SMOKE_SRV $$SMOKE_PG 2>/dev/null" EXIT INT TERM && \
 	echo "==> Waiting for /healthz and /readyz..." && \
@@ -220,41 +226,8 @@ smoke: ## Container smoke test (< 60s, Docker only)
 	echo "==> Testing healthcheck subcommand from inside container..." && \
 	docker exec $$SMOKE_SRV /usr/local/bin/shepherd healthcheck --addr localhost:8080 && \
 	echo "[healthcheck subcommand OK]" && \
-	echo "==> Sending SIGTERM and asserting clean shutdown..." && \
-	docker stop $$SMOKE_SRV && \
-	EXIT_CODE=$$(docker inspect $$SMOKE_SRV --format='{{.State.ExitCode}}') && \
-	if [ "$$EXIT_CODE" != "0" ]; then echo "ERROR: shepherd exited with $$EXIT_CODE"; exit 1; fi && \
-	echo "[clean shutdown OK exit=$$EXIT_CODE]" && \
-	echo "==> Testing invalid SHEPHERD_LOG_LEVEL fails fast (P1-L.1 red run until P1-L.1 lands)..." && \
-	if docker run --rm \
-		-e SHEPHERD_DATABASE_URL="$$SMOKE_DB" \
-		-e SHEPHERD_SECURITY_ENCRYPTION_KEY="AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=" \
-		-e SHEPHERD_LOG_LEVEL=verbose \
-		shepherd:smoke serve 2>&1 | grep -qi "invalid\|unknown\|verbose"; then \
-		echo "[invalid log level rejected OK]"; \
-	else \
-		echo "WARN: invalid SHEPHERD_LOG_LEVEL=verbose did not fail fast (P1-L.1 not yet implemented)"; \
-	fi && \
-	echo "==> Testing OIDC-free local admin login (LA-1 smoke step)..." && \
-	SMOKE_HASH=$$(docker run --rm \
-		-e SHEPHERD_DATABASE_URL="$$SMOKE_DB" \
-		-e SHEPHERD_SECURITY_ENCRYPTION_KEY="AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=" \
-		shepherd:smoke-init hash-password --password-stdin <<< "smoke-test-pass") && \
-	SMOKE_LA=$$(docker run -d --name shepherd-smoke-la \
-		-e SHEPHERD_DATABASE_URL="$$SMOKE_DB" \
-		-e SHEPHERD_SECURITY_ENCRYPTION_KEY="AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=" \
-		-e SHEPHERD_AUTH_LOCAL_ADMIN_ENABLED=true \
-		-e "SHEPHERD_AUTH_LOCAL_ADMIN_PASSWORD_HASH=$$SMOKE_HASH" \
-		-e SHEPHERD_LOG_LEVEL=debug \
-		-p 18081:8080 \
-		shepherd:smoke serve) && \
-	echo "Local admin shepherd container: $$SMOKE_LA" && \
-	trap "docker rm -f $$SMOKE_LA $$SMOKE_SRV $$SMOKE_PG 2>/dev/null" EXIT INT TERM && \
-	for i in $$(seq 1 30); do \
-		if curl -sf http://localhost:18081/healthz > /dev/null 2>&1; then break; fi; \
-		sleep 1; \
-	done && \
-	SMOKE_COOKIE=$$(curl -sf -X POST http://localhost:18081/api/auth/local/login \
+	echo "==> Testing OIDC-free local admin login (bootstrap admin)..." && \
+	SMOKE_COOKIE=$$(curl -sf -X POST http://localhost:18080/api/auth/local/login \
 		-H 'Content-Type: application/json' \
 		-H 'X-Requested-With: XMLHttpRequest' \
 		-d '{"username":"admin","password":"smoke-test-pass"}' \
@@ -262,12 +235,26 @@ smoke: ## Container smoke test (< 60s, Docker only)
 		-w '%{http_code}' -o /dev/null) && \
 	if [ "$$SMOKE_COOKIE" != "200" ]; then echo "ERROR: local login returned $$SMOKE_COOKIE"; exit 1; fi && \
 	echo "[local admin login OK]" && \
-	SMOKE_ME=$$(curl -sf http://localhost:18081/api/me \
+	SMOKE_ME=$$(curl -sf http://localhost:18080/api/me \
 		-H 'X-Requested-With: XMLHttpRequest' \
 		-b /tmp/shepherd-smoke-cookie.txt) && \
 	echo "$$SMOKE_ME" | grep -q '"auth_method":"local"' || { echo "ERROR: /api/me did not return auth_method:local; got: $$SMOKE_ME"; exit 1; } && \
 	echo "[/api/me auth_method:local OK]" && \
-	docker rm -f $$SMOKE_LA >/dev/null && \
+	echo "==> Sending SIGTERM and asserting clean shutdown..." && \
+	docker stop $$SMOKE_SRV && \
+	EXIT_CODE=$$(docker inspect $$SMOKE_SRV --format='{{.State.ExitCode}}') && \
+	if [ "$$EXIT_CODE" != "0" ]; then echo "ERROR: shepherd exited with $$EXIT_CODE"; exit 1; fi && \
+	echo "[clean shutdown OK exit=$$EXIT_CODE]" && \
+	echo "==> Testing invalid SHEPHERD_LOG_LEVEL fails fast..." && \
+	if docker run --rm \
+		-e SHEPHERD_DATABASE_URL="$$SMOKE_DB" \
+		-e SHEPHERD_SECURITY_ENCRYPTION_KEY="AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=" \
+		-e SHEPHERD_LOG_LEVEL=verbose \
+		shepherd:local serve 2>&1 | grep -qi "invalid\|unknown\|verbose"; then \
+		echo "[invalid log level rejected OK]"; \
+	else \
+		echo "WARN: invalid SHEPHERD_LOG_LEVEL=verbose did not fail fast"; \
+	fi && \
 	echo "==> Smoke test PASSED."
 
 # Reproduces CI's `web` job exactly (typecheck, unit tests, biome CHECK — lint
