@@ -156,6 +156,10 @@ interface VisualStore {
     from: { node: string; port: string },
     to: { node: string; port: string },
   ) => { added: boolean; replaced: GraphEdge[] };
+  /** Swaps `edgeId`'s `order` with its previous/next sibling among the SAME
+   *  (to.node, to.port)'s wires (W5-08's minimal fan-in reorder control) —
+   *  one undo step. A no-op at either end of the list. */
+  moveEdge: (edgeId: string, direction: 'up' | 'down') => void;
   /** Deletes every currently-selected node and edge (selected ids may name either)
    * plus every edge attached to a deleted node, as ONE atomic history entry — so a
    * single undo restores the whole selection, node(s), cascaded wires and all. */
@@ -354,11 +358,19 @@ export const useVisualStore = create<VisualStore>()(
             return state;
           const replaced = scalarConflicts(state.schema, state.doc, { from, to });
           const replacedIds = new Set(replaced.map((e) => e.id));
+          // W5-08: `order` is scoped per (to.node, to.port) — insertion order
+          // among that port's OTHER wires, matching what renderTS.ts already
+          // falls back to (its `seq` tiebreak) for a document saved before
+          // this field was stamped.
+          const siblingOrders = state.doc.edges
+            .filter((e) => !replacedIds.has(e.id) && e.to.node === to.node && e.to.port === to.port)
+            .map((e) => e.order ?? -1);
+          const order = 1 + Math.max(-1, ...siblingOrders);
           const doc = {
             ...state.doc,
             edges: [
               ...state.doc.edges.filter((e) => !replacedIds.has(e.id)),
-              { id: `e_${nanoid(8)}`, from, to },
+              { id: `e_${nanoid(8)}`, from, to, order },
             ],
           };
           result = { added: true, replaced };
@@ -366,6 +378,28 @@ export const useVisualStore = create<VisualStore>()(
         });
         return result;
       },
+
+      moveEdge: (edgeId, direction) =>
+        set((state) => {
+          const edge = state.doc.edges.find((e) => e.id === edgeId);
+          if (!edge) return state;
+          const siblings = [...state.doc.edges]
+            .filter((e) => e.to.node === edge.to.node && e.to.port === edge.to.port)
+            .sort((a, b) => (a.order ?? 0) - (b.order ?? 0));
+          const idx = siblings.findIndex((e) => e.id === edgeId);
+          const swapWith = siblings[direction === 'up' ? idx - 1 : idx + 1];
+          if (!swapWith) return state;
+          const [orderA, orderB] = [edge.order ?? 0, swapWith.order ?? 0];
+          const doc = {
+            ...state.doc,
+            edges: state.doc.edges.map((e) => {
+              if (e.id === edge.id) return { ...e, order: orderB };
+              if (e.id === swapWith.id) return { ...e, order: orderA };
+              return e;
+            }),
+          };
+          return { doc, diagnostics: revalidate({ ...state, doc }) };
+        }),
 
       pasteNodesAndEdges: (nodes, edges) =>
         set((state) => {

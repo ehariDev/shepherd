@@ -7,7 +7,7 @@ import { CollapsiblePanel } from './CollapsiblePanel';
 import { AttributeField } from './inspector/AttributeField';
 import { BlockGroup } from './inspector/BlockGroup';
 import { nextBlockOrder, withAttr } from './inspector/blockOps';
-import { buildPortWireIndex, wireCountsFor } from './inspector/portWiring';
+import { buildPortWireIndex, wireCountsFor, wireEdgesFor } from './inspector/portWiring';
 import type { AttrLike, BlockLike } from './inspector/schemaShapes';
 import { UpgradeReview } from './UpgradeReview';
 
@@ -50,6 +50,7 @@ export function InspectorPanel() {
   const setDisabled = useVisualStore((s) => s.setDisabled);
   const updateNode = useVisualStore((s) => s.updateNode);
   const importGraph = useVisualStore((s) => s.importGraph);
+  const moveEdge = useVisualStore((s) => s.moveEdge);
   const [reviewOpen, setReviewOpen] = useState(false);
   const [showOptional, setShowOptional] = useState(false);
   const node = selected.length === 1 ? doc.nodes.find((n) => n.id === selected[0]) : undefined;
@@ -144,6 +145,8 @@ export function InspectorPanel() {
         binding={doc.bindings.find((b) => b.node === node.id && b.prop === attr.name)}
         nodeId={node.id}
         instancePath={[attr.name]}
+        wireEdges={port ? wireEdgesFor(doc.edges, node.id, port.id) : undefined}
+        onMoveEdge={moveEdge}
         error={diagAt(nodeDiagnostics, [attr.name])}
       />
     );
@@ -216,6 +219,8 @@ export function InspectorPanel() {
                   bindings={doc.bindings}
                   portByPath={portIndex.byPath}
                   wireCounts={wireCounts}
+                  edges={doc.edges}
+                  onMoveEdge={moveEdge}
                   depth={0}
                 />
               ))}

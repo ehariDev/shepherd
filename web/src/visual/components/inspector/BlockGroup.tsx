@@ -1,6 +1,6 @@
 import type { ReactNode } from 'react';
 import type { L1DiagnosticEx, ResolvedPort } from '../../l1';
-import type { GraphBinding } from '../../types';
+import type { GraphBinding, GraphEdge } from '../../types';
 import { AttributeField } from './AttributeField';
 import {
   appendItem,
@@ -11,6 +11,7 @@ import {
   replaceAt,
   withAttr,
 } from './blockOps';
+import { wireEdgesFor } from './portWiring';
 import type { AttrLike, BlockLike } from './schemaShapes';
 
 export interface BlockGroupProps {
@@ -29,6 +30,11 @@ export interface BlockGroupProps {
   bindings: GraphBinding[];
   portByPath: Map<string, ResolvedPort>;
   wireCounts: Map<string, number>;
+  /** The node's full edge list, and the store's `moveEdge` — passed through
+   *  to `AttributeField` so a wired list-cardinality port can show W5-08's
+   *  fan-in reorder control. */
+  edges: GraphEdge[];
+  onMoveEdge: (edgeId: string, direction: 'up' | 'down') => void;
   depth: number;
 }
 
@@ -60,6 +66,8 @@ function InstanceFields({
   bindings,
   portByPath,
   wireCounts,
+  edges,
+  onMoveEdge,
   depth,
 }: {
   attrs: AttrLike[];
@@ -73,6 +81,8 @@ function InstanceFields({
   bindings: GraphBinding[];
   portByPath: Map<string, ResolvedPort>;
   wireCounts: Map<string, number>;
+  edges: GraphEdge[];
+  onMoveEdge: (edgeId: string, direction: 'up' | 'down') => void;
   depth: number;
 }) {
   return (
@@ -92,6 +102,8 @@ function InstanceFields({
             binding={bindingAt(bindings, nodeId, attrSchemaPath)}
             nodeId={nodeId}
             instancePath={[...instancePath, attr.name]}
+            wireEdges={port ? wireEdgesFor(edges, nodeId, port.id) : undefined}
+            onMoveEdge={onMoveEdge}
             error={diagAt(diagnostics, [...instancePath, attr.name])}
           />
         );
@@ -109,6 +121,8 @@ function InstanceFields({
           bindings={bindings}
           portByPath={portByPath}
           wireCounts={wireCounts}
+          edges={edges}
+          onMoveEdge={onMoveEdge}
           depth={depth + 1}
         />
       ))}
@@ -127,6 +141,8 @@ export function BlockGroup({
   bindings,
   portByPath,
   wireCounts,
+  edges,
+  onMoveEdge,
   depth,
 }: BlockGroupProps) {
   const instances = blockInstances(value);
@@ -192,6 +208,8 @@ export function BlockGroup({
                 bindings={bindings}
                 portByPath={portByPath}
                 wireCounts={wireCounts}
+                edges={edges}
+                onMoveEdge={onMoveEdge}
                 depth={depth}
               />
             </div>
@@ -241,6 +259,8 @@ export function BlockGroup({
           bindings={bindings}
           portByPath={portByPath}
           wireCounts={wireCounts}
+          edges={edges}
+          onMoveEdge={onMoveEdge}
           depth={depth}
         />
       </div>

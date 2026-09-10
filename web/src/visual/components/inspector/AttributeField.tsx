@@ -9,7 +9,7 @@ import {
 } from '../../bindings';
 import type { ResolvedPort } from '../../l1';
 import { useVisualStore } from '../../store';
-import type { GraphBinding } from '../../types';
+import type { GraphBinding, GraphEdge } from '../../types';
 import {
   addListItem,
   addMapRow,
@@ -45,6 +45,12 @@ export interface AttributeFieldProps {
    *  key on it). Every other widget ignores both. */
   nodeId?: string;
   instancePath?: string[];
+  /** This port's own incoming edges, in their current fan-in order (W5-08) —
+   *  `WiredRow`'s minimal reorder control. Only meaningful (and only ever
+   *  >1) for a `cardinality: list` port; a scalar or cardinality-less one
+   *  never renders the control regardless (nothing to reorder). */
+  wireEdges?: GraphEdge[];
+  onMoveEdge?: (edgeId: string, direction: 'up' | 'down') => void;
   /** Validation message from the node's L1 diagnostics whose path matches this
    *  field exactly (task item 4 — inline feedback tied to diagnostics). */
   error?: string;
@@ -97,7 +103,21 @@ function ErrorText({ message, name }: { message?: string; name: string }) {
  * review walked into. `renderTS.ts` already prefers the wire over a stray
  * literal, so this is a UX guardrail, not a correctness requirement.
  */
-function WiredRow({ attr, wireCount }: { attr: AttrLike; wireCount: number }) {
+function WiredRow({
+  attr,
+  wireCount,
+  wireEdges,
+  onMoveEdge,
+}: {
+  attr: AttrLike;
+  wireCount: number;
+  wireEdges?: GraphEdge[];
+  onMoveEdge?: (edgeId: string, direction: 'up' | 'down') => void;
+}) {
+  // The minimal fan-in reorder control (W5-08): one row per incoming wire,
+  // in its current order, each with up/down buttons that swap it with the
+  // neighboring wire. Only shown once there is more than one wire to order.
+  const showReorder = onMoveEdge && wireEdges && wireEdges.length > 1;
   return (
     <div>
       <FieldLabel attr={attr} htmlFor={fieldId([attr.name])} />
@@ -111,6 +131,35 @@ function WiredRow({ attr, wireCount }: { attr: AttrLike; wireCount: number }) {
           Wired on the canvas ({wireCount} connection{wireCount === 1 ? '' : 's'})
         </span>
       </div>
+      {showReorder && (
+        <div className='mt-1 space-y-0.5' data-testid={`attr-wire-order-${attr.name}`}>
+          {wireEdges.map((e, i) => (
+            <div key={e.id} className='flex items-center gap-1 text-[11px] text-muted'>
+              <span className='w-3 text-right'>{i + 1}.</span>
+              <button
+                type='button'
+                aria-label={`move wire ${i + 1} up`}
+                data-testid={`attr-wire-up-${attr.name}-${i}`}
+                className='disabled:opacity-30'
+                disabled={i === 0}
+                onClick={() => onMoveEdge(e.id, 'up')}
+              >
+                ▲
+              </button>
+              <button
+                type='button'
+                aria-label={`move wire ${i + 1} down`}
+                data-testid={`attr-wire-down-${attr.name}-${i}`}
+                className='disabled:opacity-30'
+                disabled={i === wireEdges.length - 1}
+                onClick={() => onMoveEdge(e.id, 'down')}
+              >
+                ▼
+              </button>
+            </div>
+          ))}
+        </div>
+      )}
     </div>
   );
 }
@@ -551,9 +600,14 @@ export function AttributeField({
   binding,
   nodeId,
   instancePath,
+  wireEdges,
+  onMoveEdge,
   error,
 }: AttributeFieldProps) {
-  if (port && wireCount > 0) return <WiredRow attr={attr} wireCount={wireCount} />;
+  if (port && wireCount > 0)
+    return (
+      <WiredRow attr={attr} wireCount={wireCount} wireEdges={wireEdges} onMoveEdge={onMoveEdge} />
+    );
 
   const widget = widgetFor(attr);
   const hasError = Boolean(error);

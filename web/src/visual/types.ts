@@ -36,6 +36,17 @@ export interface GraphEdge {
   id: string;
   from: { node: string; port: string };
   to: { node: string; port: string };
+  /**
+   * Fan-in order among every OTHER edge landing on the same (to.node,
+   * to.port) — what decides `forward_to = [a.receiver, b.receiver]`'s
+   * sequence when a list-cardinality accepts port has more than one wire.
+   * store.ts's `addEdge` stamps it (insertion order, so a freshly authored
+   * graph renders identically to before this field existed) and `moveEdge`
+   * is the inspector's reorder control (W5-08). Both renderers already sort
+   * by it, falling back to array/insertion order when absent — a document
+   * saved before this field was stamped, or one hand-authored without it,
+   * still renders exactly as it always did.
+   */
   order?: number;
 }
 

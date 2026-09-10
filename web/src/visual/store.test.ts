@@ -404,6 +404,118 @@ describe('addEdge scalar fan-in (W5-03)', () => {
   });
 });
 
+describe('edge order (W5-08)', () => {
+  // A plain list-cardinality accepts port — no scalar-replace involved, so
+  // every addEdge call here actually adds.
+  const schema = {
+    _meta: { alloy_version: 'x' },
+    components: {
+      source: {
+        stability: 'ga',
+        attributes: [],
+        blocks: [],
+        inputs: [],
+        outputs: [{ export: 'out', path: ['out'], type: 'x', role: 'produces' }],
+      },
+      list_sink: {
+        stability: 'ga',
+        attributes: [],
+        blocks: [],
+        inputs: [{ prop: 'in', path: ['in'], type: 'x', role: 'accepts', cardinality: 'list' }],
+        outputs: [],
+      },
+    },
+  } as unknown as SchemaPayload;
+
+  beforeEach(() => {
+    useVisualStore.setState({
+      doc: {
+        kind: 'alloy-graph/v1',
+        schema_version: 'alloy-v1.18.1',
+        nodes: [],
+        edges: [],
+        bindings: [],
+        viewport: { x: 0, y: 0, zoom: 1 },
+        meta: { created_with: 'test' },
+      },
+      selected: [],
+      diagnostics: [],
+      schema,
+      allowExperimental: false,
+      connectingFrom: null,
+    });
+    useVisualStore.temporal.getState().clear();
+  });
+
+  it('addEdge stamps order per accepts port, starting at 0 and counting up', () => {
+    const store = useVisualStore;
+    store.getState().addNode('source', { x: 0, y: 0 });
+    store.getState().addNode('source', { x: 0, y: 100 });
+    store.getState().addNode('list_sink', { x: 200, y: 50 });
+    const [a, b, c] = store.getState().doc.nodes.map((n) => n.id);
+
+    store.getState().addEdge({ node: a, port: 'out' }, { node: c, port: 'in' });
+    store.getState().addEdge({ node: b, port: 'out' }, { node: c, port: 'in' });
+
+    const edges = store.getState().doc.edges;
+    expect(edges.map((e) => e.order)).toEqual([0, 1]);
+  });
+
+  it('order is scoped per (node, port) — a second port starts at 0 again', () => {
+    const store = useVisualStore;
+    store.getState().addNode('source', { x: 0, y: 0 });
+    store.getState().addNode('list_sink', { x: 200, y: 0 });
+    store.getState().addNode('list_sink', { x: 200, y: 100 });
+    const [a, c1, c2] = store.getState().doc.nodes.map((n) => n.id);
+
+    store.getState().addEdge({ node: a, port: 'out' }, { node: c1, port: 'in' });
+    store.getState().addEdge({ node: a, port: 'out' }, { node: c2, port: 'in' });
+
+    expect(store.getState().doc.edges.map((e) => e.order)).toEqual([0, 0]);
+  });
+
+  it('moveEdge swaps order with the previous/next sibling in one undo step', () => {
+    const store = useVisualStore;
+    store.getState().addNode('source', { x: 0, y: 0 });
+    store.getState().addNode('source', { x: 0, y: 100 });
+    store.getState().addNode('list_sink', { x: 200, y: 50 });
+    const [a, b, c] = store.getState().doc.nodes.map((n) => n.id);
+    store.getState().addEdge({ node: a, port: 'out' }, { node: c, port: 'in' });
+    store.getState().addEdge({ node: b, port: 'out' }, { node: c, port: 'in' });
+    const [e0, e1] = store.getState().doc.edges;
+    expect([e0.order, e1.order]).toEqual([0, 1]);
+
+    const before = store.temporal.getState().pastStates.length;
+    store.getState().moveEdge(e1.id, 'up');
+
+    const after = store.getState().doc.edges;
+    expect(after.find((e) => e.id === e0.id)?.order).toBe(1);
+    expect(after.find((e) => e.id === e1.id)?.order).toBe(0);
+    expect(store.temporal.getState().pastStates.length).toBe(before + 1);
+
+    store.temporal.getState().undo();
+    const restored = store.getState().doc.edges;
+    expect(restored.find((e) => e.id === e0.id)?.order).toBe(0);
+    expect(restored.find((e) => e.id === e1.id)?.order).toBe(1);
+  });
+
+  it('moveEdge is a no-op at either boundary', () => {
+    const store = useVisualStore;
+    store.getState().addNode('source', { x: 0, y: 0 });
+    store.getState().addNode('list_sink', { x: 200, y: 0 });
+    const [a, c] = store.getState().doc.nodes.map((n) => n.id);
+    store.getState().addEdge({ node: a, port: 'out' }, { node: c, port: 'in' });
+    const [only] = store.getState().doc.edges;
+    const before = store.temporal.getState().pastStates.length;
+
+    store.getState().moveEdge(only.id, 'up');
+    store.getState().moveEdge(only.id, 'down');
+
+    expect(store.getState().doc.edges[0].order).toBe(0);
+    expect(store.temporal.getState().pastStates.length).toBe(before);
+  });
+});
+
 describe('setBinding / removeBinding (W5-01)', () => {
   // A minimal hand-built schema (store.test.ts's established pattern —
   // selectConnectionState's `scalarSink` above, and the undo/redo describe
