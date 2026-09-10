@@ -378,6 +378,51 @@ var _ = Describe("Overlay guards", func() {
 		}
 	})
 
+	// D8 (light mode, W6-S1): the canvas draws wires and category dots against
+	// a background that now flips between a dark and a light palette. The
+	// dark hex values above were picked for contrast against the dark
+	// background only — several fall under the WCAG 1.4.11 3:1 floor for
+	// non-text (graphical) contrast against a light background (measured:
+	// loki.logs 2.18:1, otel.* 2.66:1, prom.metrics 2.69:1, config 2.46:1,
+	// destinations 2.43:1 against #fafafa). Every color needs a light-safe
+	// sibling the frontend can pick by theme (schemaAdapter.getWireColor /
+	// getCategoryColor, additive — wave 2 wires them into CanvasPane).
+	It("every wire type also carries a hex color_light", func() {
+		merged, _, err := reg.Get(currentVersion)
+		Expect(err).NotTo(HaveOccurred())
+
+		wireTypes, ok := merged["wire_types"].(map[string]any)
+		Expect(ok).To(BeTrue(), "merged schema must contain wire_types")
+		Expect(wireTypes).NotTo(BeEmpty())
+
+		for id, wtRaw := range wireTypes {
+			wt, ok := wtRaw.(map[string]any)
+			Expect(ok).To(BeTrue(), "wire_type %q must be a map", id)
+			colorLight, ok := wt["color_light"].(string)
+			Expect(ok).To(BeTrue(), "wire_type %q must have a string color_light", id)
+			Expect(colorLight).To(MatchRegexp(`^#[0-9a-fA-F]{6}$`),
+				"wire_type %q color_light %q must be a hex color", id, colorLight)
+		}
+	})
+
+	It("every category also carries a hex color_light", func() {
+		merged, _, err := reg.Get(currentVersion)
+		Expect(err).NotTo(HaveOccurred())
+
+		categories, ok := merged["categories"].(map[string]any)
+		Expect(ok).To(BeTrue(), "merged schema must contain categories")
+		Expect(categories).NotTo(BeEmpty())
+
+		for id, catRaw := range categories {
+			cat, ok := catRaw.(map[string]any)
+			Expect(ok).To(BeTrue(), "category %q must be a map", id)
+			colorLight, ok := cat["color_light"].(string)
+			Expect(ok).To(BeTrue(), "category %q must have a string color_light", id)
+			Expect(colorLight).To(MatchRegexp(`^#[0-9a-fA-F]{6}$`),
+				"category %q color_light %q must be a hex color", id, colorLight)
+		}
+	})
+
 	It("merged result contains both artifact and overlay fields", func() {
 		merged, _, err := reg.Get(currentVersion)
 		Expect(err).NotTo(HaveOccurred())

@@ -1,11 +1,29 @@
 <!doctype html>
-<html lang='en' class='dark'>
+<html lang='en'>
   <head>
     <meta charset='UTF-8' />
     <meta name='viewport' content='width=device-width, initial-scale=1.0' />
     <title>Shepherd</title>
+    <!--
+      D8 (light mode, W6-S1). No stored theme class here on purpose: with
+      nothing explicit chosen yet, index.css's `@media (prefers-color-scheme:
+      light)` rule (guarded by :not(.dark)) picks the palette on its own —
+      this script only needs to run when there IS a stored override, so a
+      returning user with an explicit choice doesn't see a flash of the
+      other theme before Shell.tsx (src/theme.ts's applyTheme) mounts.
+    -->
+    <script>
+      (function () {
+        try {
+          var stored = localStorage.getItem('theme');
+          if (stored === 'light' || stored === 'dark') {
+            document.documentElement.classList.add(stored);
+          }
+        } catch (e) {}
+      })();
+    </script>
   </head>
-  <body class='bg-zinc-950 text-zinc-100'>
+  <body class='bg-background text-zinc-100'>
     <div id='root'></div>
     <script type='module' src='/src/main.tsx'></script>
   </body>

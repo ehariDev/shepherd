@@ -28,6 +28,57 @@
   --color-accent: #6366f1;
 }
 
+/*
+ * Light palette (D8, light mode — W6-S1). The block above is the DARK
+ * default; these two rules redefine the same token names for light. Because
+ * `@theme`'s custom properties are ordinary CSS custom properties under the
+ * hood, redefining them on a more specific/later-matching selector is enough
+ * for every `bg-background`/`text-muted`/etc. utility to pick the new value —
+ * no second @theme block or Tailwind config needed.
+ *
+ * Two rules exist because there are two ways to end up light:
+ *   1. `html.light` — an EXPLICIT choice, written by the toggle
+ *      (Shell.tsx / src/theme.ts's applyTheme). Wins regardless of the OS
+ *      setting.
+ *   2. the media-query rule below — the SYSTEM default when nothing has
+ *      been explicitly chosen yet.
+ *      The `:not(.dark)` guard matters: without it, a user who explicitly
+ *      picked dark while their OS prefers light would see the media query
+ *      re-override the class back to light.
+ *
+ * Values are not a literal hue-preserving invert of the dark table — they
+ * mirror its TOKEN SEMANTICS instead (background is the extreme/least
+ * emphasized shade, card the most-raised surface) and are contrast-checked
+ * (WCAG relative-luminance) against both background and card: every
+ * muted/muted-2/muted-3 pairing clears 4.5:1. See theme.test.ts for the
+ * checked value table.
+ */
+@media (prefers-color-scheme: light) {
+  :root:not(.dark) {
+    --color-background: #fafafa;
+    --color-panel: #f4f4f5;
+    --color-card: #ffffff;
+    --color-border: #e4e4e7;
+    --color-border-strong: #d4d4d8;
+    --color-muted: #3f3f46;
+    --color-muted-2: #52525b;
+    --color-muted-3: #71717a;
+    --color-accent: #4f46e5;
+  }
+}
+
+html.light {
+  --color-background: #fafafa;
+  --color-panel: #f4f4f5;
+  --color-card: #ffffff;
+  --color-border: #e4e4e7;
+  --color-border-strong: #d4d4d8;
+  --color-muted: #3f3f46;
+  --color-muted-2: #52525b;
+  --color-muted-3: #71717a;
+  --color-accent: #4f46e5;
+}
+
 :root {
   font-family: "Inter Variable", system-ui, sans-serif;
 }
