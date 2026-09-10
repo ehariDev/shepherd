@@ -166,6 +166,57 @@ var _ = Describe("Org role ladder", Label("integration"), func() {
 		})
 	})
 
+	// W3-7: the OIDC path grants the reader floor to anyone on a team in the
+	// org (authz.go's team fallback, ListTeamsByOrgAndGroups) even with no
+	// admin/editor/reader group match. The local path did not have the same
+	// fallback -- a local user with no org_members row was refused
+	// outright, even when a team_members row said otherwise. This unifies
+	// the two: local team membership clears the reader floor the same way
+	// group-backed team membership does.
+	It("a local user who is only a team member clears the viewer floor", func() {
+		var oid pgtype.UUID
+		Expect(oid.Scan(orgID)).To(Succeed())
+		team, err := st.Queries.CreateTeam(ctx, sqlc.CreateTeamParams{
+			OrgID: oid, Name: "local-only-team",
+		})
+		Expect(err).NotTo(HaveOccurred())
+
+		sess := newLocalUser("l-team-only", "") // no org_members row
+		Expect(st.Queries.AddTeamMember(ctx, sqlc.AddTeamMemberParams{
+			TeamID: team.ID, UserID: sess.UserID,
+		})).To(Succeed())
+
+		assertLadder(sess, expectation{admin: false, editor: false, reader: true})
+	})
+
+	// A local user on no team at all, still with no org_members row, must
+	// stay refused -- the fallback grants exactly what team membership
+	// earns, not a blanket floor for every local user.
+	It("a local user on no team and no org_members row clears nothing", func() {
+		sess := newLocalUser("l-no-team", "")
+		assertLadder(sess, expectation{})
+	})
+
+	// A team in ANOTHER org must not leak the reader floor here, mirroring
+	// the cross-org guard AuthorizeOwnership already enforces for writes.
+	It("membership in a team from another org does not clear the viewer floor here", func() {
+		other, err := st.Queries.CreateOrg(ctx, sqlc.CreateOrgParams{
+			Name: "authz-w37-other", DisplayName: "Other", AdminGroupID: "authz-w37-other-admin",
+		})
+		Expect(err).NotTo(HaveOccurred())
+		foreignTeam, err := st.Queries.CreateTeam(ctx, sqlc.CreateTeamParams{
+			OrgID: other.ID, Name: "foreign-team",
+		})
+		Expect(err).NotTo(HaveOccurred())
+
+		sess := newLocalUser("l-foreign-team", "")
+		Expect(st.Queries.AddTeamMember(ctx, sqlc.AddTeamMemberParams{
+			TeamID: foreignTeam.ID, UserID: sess.UserID,
+		})).To(Succeed())
+
+		assertLadder(sess, expectation{})
+	})
+
 	It("an app admin clears every requirement regardless of path", func() {
 		assertLadder(&auth.Session{IsAppAdmin: true, Source: auth.SourceOIDC},
 			expectation{admin: true, editor: true, reader: true})

@@ -1274,10 +1274,13 @@ What carried over unchanged:
 - **Sessions** still carry `source = "local"`, and now also `user_id`
   referencing the `users` row (0015) — which is what authorization branches on.
 - **Actor wiring** and the `/api/me` `auth_method` field are unchanged.
-- **Security:** still no rate limiter — argon2id cost, constant-time compare,
-  constant-shaped failure. `Authenticate` additionally verifies a dummy hash
-  when no user matches, so a missing account and a wrong password take the
-  same time.
+- **Security:** argon2id cost, constant-time compare, constant-shaped
+  failure. `Authenticate` additionally verifies a dummy hash when no user
+  matches, so a missing account and a wrong password take the same time.
+  `POST /api/auth/local/login` is additionally rate-limited (W3-2, D4):
+  two in-process `golang.org/x/time/rate` buckets, one per submitted login
+  and one per source IP, each with idle eviction; a throttled request gets
+  `429` with `Retry-After`.
 
 ### §D.9 v1.3 — Sessions schema (amended)
 Sessions table gains `source text NOT NULL DEFAULT 'oidc'`. `id_token_expires` is now nullable (local sessions have no ID token). Migration 0003. Both `GetSessionByID` and `CreateSession` include the `source` column.

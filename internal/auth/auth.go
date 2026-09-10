@@ -9,6 +9,7 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"net"
 	"net/http"
 	"slices"
 	"strconv"
@@ -143,6 +144,11 @@ type Handler struct {
 	// /auth/methods call wait out a discovery timeout.
 	reloadMu   sync.Mutex
 	lastReload time.Time
+
+	// loginThrottle rate-limits LocalLoginHandler (D4, W3-2). Its zero value
+	// is ready to use, so every construction path (including the test
+	// helpers in export_test.go) gets a working throttle for free.
+	loginThrottle loginThrottle
 }
 
 // New creates an auth Handler and resolves the initial OIDC configuration.
@@ -360,16 +366,22 @@ func (h *Handler) LoginHandler(w http.ResponseWriter, r *http.Request) {
 	state := randomState()
 	// Generate PKCE S256 verifier and challenge.
 	verifierStr := oauth2.GenerateVerifier()
+	// W3-6: bind the ID token to THIS login with a nonce, independent of
+	// state (CSRF on the redirect) and the PKCE verifier (binds the token
+	// exchange to this client). A stolen or replayed ID token minted for a
+	// different login attempt carries a different nonce and CallbackHandler
+	// refuses it.
+	nonce := randomState()
 	http.SetCookie(w, &http.Cookie{ //nolint:gosec // G124: Secure/HttpOnly/SameSite all set
 		Name:     "oidc_state",
-		Value:    state + "|" + verifierStr,
+		Value:    state + "|" + verifierStr + "|" + nonce,
 		MaxAge:   300,
 		HttpOnly: true,
 		SameSite: http.SameSiteLaxMode,
 		Path:     "/",
 		Secure:   !h.cfg.Auth.InsecureCookies,
 	})
-	http.Redirect(w, r, rt.oauth2.AuthCodeURL(state, oauth2.S256ChallengeOption(verifierStr)), http.StatusFound)
+	http.Redirect(w, r, rt.oauth2.AuthCodeURL(state, oauth2.S256ChallengeOption(verifierStr), oidc.Nonce(nonce)), http.StatusFound)
 }
 
 // CallbackHandler handles the OIDC callback, creates a session, and redirects to /.
@@ -389,13 +401,14 @@ func (h *Handler) CallbackHandler(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Split state and PKCE verifier stored in the cookie.
-	parts := strings.SplitN(stateCookie.Value, "|", 2)
-	if len(parts) != 2 || parts[0] != r.URL.Query().Get("state") {
+	// Split state, PKCE verifier and nonce stored in the cookie.
+	parts := strings.SplitN(stateCookie.Value, "|", 3)
+	if len(parts) != 3 || parts[0] != r.URL.Query().Get("state") {
 		http.Error(w, "invalid state", http.StatusBadRequest)
 		return
 	}
 	verifierStr := parts[1]
+	nonce := parts[2]
 
 	http.SetCookie(w, &http.Cookie{Name: "oidc_state", MaxAge: -1, Path: "/", HttpOnly: true, SameSite: http.SameSiteLaxMode, Secure: !h.cfg.Auth.InsecureCookies}) //nolint:gosec // G124: all attributes set
 
@@ -416,6 +429,16 @@ func (h *Handler) CallbackHandler(w http.ResponseWriter, r *http.Request) {
 	idToken, err := verifier.Verify(r.Context(), rawIDToken)
 	if err != nil {
 		h.logger.Error("OIDC ID token verify", "err", err)
+		http.Redirect(w, r, "/?auth_error=1", http.StatusFound)
+		return
+	}
+	// Verify does not check the nonce itself (go-oidc leaves that to the
+	// caller): confirm the ID token was minted for THIS login, not replayed
+	// from one the provider issued for a different authorize request. state
+	// already defends the redirect itself against CSRF; this defends the
+	// token inside it.
+	if idToken.Nonce != nonce {
+		h.logger.Error("OIDC ID token nonce mismatch")
 		http.Redirect(w, r, "/?auth_error=1", http.StatusFound)
 		return
 	}
@@ -641,6 +664,21 @@ func (h *Handler) LocalLoginHandler(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// Two independent buckets: a targeted guess against one login must not
+	// hide behind a generous per-IP allowance, and a distributed guess spread
+	// across logins from one address must not hide behind a generous
+	// per-login allowance. Both are checked unconditionally (not
+	// short-circuited) so each bucket's state reflects every attempt that
+	// reached this point, matching what it would show under sustained load.
+	ipAllowed := h.loginThrottle.allow("ip:"+clientIP(r), loginPerIPRate, loginPerIPBurst, loginThrottleIdleEvict)
+	loginAllowed := h.loginThrottle.allow("login:"+strings.ToLower(req.Username), loginPerLoginRate, loginPerLoginBurst, loginThrottleIdleEvict)
+	if !ipAllowed || !loginAllowed {
+		h.logger.Warn("local sign-in throttled", "login", req.Username)
+		w.Header().Set("Retry-After", strconv.Itoa(loginThrottleRetryAfterSeconds))
+		writeAuthError(w, http.StatusTooManyRequests, "rate_limited", "too many sign-in attempts, try again later")
+		return
+	}
+
 	user, err := h.users.Authenticate(r.Context(), req.Username, req.Password)
 	if err != nil {
 		// One response for every failure mode. The server log distinguishes
@@ -707,7 +745,30 @@ func (h *Handler) SessionMiddleware(next http.Handler) http.Handler {
 		c, err := r.Cookie("shepherd_session")
 		if err == nil && c.Value != "" {
 			row, err := h.store.Queries.GetSessionByID(r.Context(), c.Value)
-			if err == nil {
+			switch {
+			case err != nil:
+				// No such row (never existed, already logged out, or its own
+				// expires_at filter excluded it) — the existing "no session"
+				// fallthrough below handles this; nothing to do here.
+			case row.IDTokenExpires.Valid && !time.Now().Before(row.IDTokenExpires.Time):
+				// D7: an OIDC session must not outlive the ID token that
+				// created it, even though expires_at (the session row's own,
+				// sliding TTL) has not run out — Entra/Okta typically mint a
+				// ~1h token and this deployment stores no refresh token to
+				// silently renew it. A local session's IDTokenExpires is
+				// never set (createSessionAndSetCookie only fills it for the
+				// OIDC path), so .Valid is false and this branch never fires
+				// for one.
+				//
+				// Deleted rather than merely skipped, matching LogoutHandler:
+				// once past its ID token's expiry the row is dead weight, and
+				// leaving it would let the SAME expired cookie keep tripping
+				// this check (and this delete) on every subsequent request
+				// instead of failing once and staying failed.
+				if delErr := h.store.Queries.DeleteSession(r.Context(), row.ID); delErr != nil {
+					h.logger.Warn("deleting session past id_token_expires", "err", delErr)
+				}
+			default:
 				var groups []string
 				if err := json.Unmarshal(row.GroupIds, &groups); err != nil {
 					h.logger.Debug("unmarshal group ids", "err", err)
@@ -834,6 +895,20 @@ func randomState() string {
 	b := make([]byte, 24)
 	_, _ = rand.Read(b)
 	return base64.URLEncoding.EncodeToString(b)
+}
+
+// clientIP returns the request's source address without its port, for use
+// as a loginThrottle key. It reads r.RemoteAddr only — no
+// X-Forwarded-For/X-Real-IP parsing — so behind the Helm ingress every
+// client resolves to the same address; the per-IP bucket is sized generous
+// enough (loginPerIPBurst) to absorb that (see the login_throttle.go
+// comment) rather than trust a header a client can set itself.
+func clientIP(r *http.Request) string {
+	host, _, err := net.SplitHostPort(r.RemoteAddr)
+	if err != nil {
+		return r.RemoteAddr
+	}
+	return host
 }
 
 // writeAuthError writes a JSON error response to w. It is safe to call after WriteHeader.

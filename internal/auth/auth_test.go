@@ -156,7 +156,7 @@ var _ = Describe("PKCE in LoginHandler", func() {
 	// Full PKCE round-trip (challenge → callback → token exchange) is e2e
 	// §18.4 territory; this spec drives the real LoginHandler against a
 	// static oauth2 config, which needs no live provider.
-	It("authorize URL contains code_challenge + method S256 and the cookie carries state|verifier", func() {
+	It("authorize URL contains code_challenge + method S256 and the cookie carries state|verifier|nonce", func() {
 		cfg := &config.Config{Auth: config.AuthConfig{InsecureCookies: true}}
 		h := auth.NewOIDCTestHandler(cfg, &oauth2.Config{
 			ClientID:    "client-id",
@@ -176,6 +176,7 @@ var _ = Describe("PKCE in LoginHandler", func() {
 		Expect(q.Get("code_challenge_method")).To(Equal("S256"))
 		Expect(q.Get("code_challenge")).NotTo(BeEmpty())
 		Expect(q.Get("state")).NotTo(BeEmpty())
+		Expect(q.Get("nonce")).NotTo(BeEmpty())
 
 		var stateCookie *http.Cookie
 		for _, c := range rr.Result().Cookies() {
@@ -184,8 +185,11 @@ var _ = Describe("PKCE in LoginHandler", func() {
 			}
 		}
 		Expect(stateCookie).NotTo(BeNil(), "LoginHandler must set the oidc_state cookie")
-		parts := strings.SplitN(stateCookie.Value, "|", 2)
-		Expect(parts).To(HaveLen(2), "cookie must carry state|verifier")
+		// state|verifier|nonce, not state|verifier: the nonce rides in the
+		// same cookie (W3-6) rather than a second one, so the callback has
+		// one place to read both PKCE and nonce state back from.
+		parts := strings.SplitN(stateCookie.Value, "|", 3)
+		Expect(parts).To(HaveLen(3), "cookie must carry state|verifier|nonce")
 		Expect(parts[0]).To(Equal(q.Get("state")), "cookie state must match the authorize URL state")
 
 		// The challenge must actually derive from the cookie's verifier:
@@ -193,5 +197,13 @@ var _ = Describe("PKCE in LoginHandler", func() {
 		// token exchange could never succeed.
 		sum := sha256.Sum256([]byte(parts[1]))
 		Expect(base64.RawURLEncoding.EncodeToString(sum[:])).To(Equal(q.Get("code_challenge")))
+
+		// The nonce the callback will check the ID token against must be the
+		// SAME value the authorize URL asked the provider to bind — not
+		// merely present in both places, or a callback that trusted its own
+		// cookie value while the provider echoed something else would still
+		// pass.
+		Expect(parts[2]).To(Equal(q.Get("nonce")), "cookie nonce must match the authorize URL nonce")
+		Expect(parts[2]).NotTo(Equal(parts[0]), "nonce must not just be the state value again")
 	})
 })

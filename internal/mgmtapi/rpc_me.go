@@ -4,7 +4,6 @@ import (
 	"context"
 	"errors"
 	"log/slog"
-	"slices"
 
 	"connectrpc.com/connect"
 
@@ -12,7 +11,6 @@ import (
 	"shepherd/gen/shepherd/mgmt/v1/mgmtv1connect"
 	"shepherd/internal/auth"
 	"shepherd/internal/store"
-	"shepherd/internal/store/sqlc"
 )
 
 // MeService implements mgmtv1connect.MeServiceHandler. Business logic moved
@@ -67,20 +65,7 @@ func (s *MeService) GetMe(ctx context.Context, _ *connect.Request[mgmtv1.GetMeRe
 		// this value drives what the UI offers. Reporting "reader" to a local
 		// editor would hide the pipeline editor from someone who can in fact
 		// use it — the server would allow the write the UI never offered.
-		role := ""
-		switch {
-		case sess.Source == auth.SourceLocal && sess.UserID.Valid:
-			stored, roleErr := s.store.Queries.GetOrgMemberRole(ctx, sqlc.GetOrgMemberRoleParams{OrgID: org.ID, UserID: sess.UserID})
-			if roleErr == nil {
-				role = stored
-			}
-		case slices.Contains(sess.GroupIDs, org.AdminGroupID):
-			role = auth.OrgRoleAdmin
-		case org.EditorGroupID.Valid && slices.Contains(sess.GroupIDs, org.EditorGroupID.String):
-			role = auth.OrgRoleEditor
-		case org.ReaderGroupID.Valid && slices.Contains(sess.GroupIDs, org.ReaderGroupID.String):
-			role = auth.OrgRoleViewer
-		}
+		role := auth.ResolveOrgRole(ctx, s.store, sess, *org)
 		if role != "" {
 			orgEntries = append(orgEntries, &mgmtv1.OrgMembership{Id: org.ID.String(), Name: org.Name, DisplayName: org.DisplayName, Role: role})
 		}

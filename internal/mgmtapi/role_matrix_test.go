@@ -146,14 +146,9 @@ var _ = Describe("Connect role matrix: org-editor rung, CSRF", Label("integratio
 		Expect(resp.StatusCode).To(Equal(http.StatusForbidden))
 	})
 
-	// W3-5 dependency: SessionMiddleware is expected to reject a session
-	// whose id_token_expires has passed even though expires_at (the
-	// session-row TTL) has not — see agent B's W3-5. On this branch
-	// SessionMiddleware (internal/auth/auth.go) does not read
-	// id_token_expires at all yet, so this case cannot go green here; it
-	// is marked Pending rather than weakened or deleted. Un-pending it is
-	// part of landing W3-5.
-	PIt("rejects a session whose ID token has expired even though expires_at has not (needs W3-5)", func() {
+	// W3-5: SessionMiddleware rejects a session whose id_token_expires has
+	// passed even though expires_at (the session-row TTL) has not (D7).
+	It("rejects a session whose ID token has expired even though expires_at has not", func() {
 		idExpired := pgtype.Timestamptz{Time: time.Now().Add(-time.Minute), Valid: true}
 		sessID := "role-matrix-id-token-expired-sess"
 		groupsJSON := []byte(`["role-matrix-editor-grp"]`)

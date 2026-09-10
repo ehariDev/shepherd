@@ -137,6 +137,32 @@ func (q *Queries) IsTeamMember(ctx context.Context, arg IsTeamMemberParams) (boo
 	return exists, err
 }
 
+const isUserMemberOfAnyTeamInOrg = `-- name: IsUserMemberOfAnyTeamInOrg :one
+SELECT EXISTS (
+    SELECT 1 FROM team_members tm
+    JOIN teams t ON t.id = tm.team_id
+    WHERE t.org_id = $1 AND tm.user_id = $2
+)
+`
+
+type IsUserMemberOfAnyTeamInOrgParams struct {
+	OrgID  pgtype.UUID `json:"org_id"`
+	UserID pgtype.UUID `json:"user_id"`
+}
+
+// Used by internal/auth.authorizeOrgAccess's LOCAL-session branch (W3-7):
+// the local-user mirror of ListTeamsByOrgAndGroups above, granting the same
+// reader-equivalent baseline to a local user who has no org_members row but
+// is an explicit member of some team in the org -- a local user has no
+// groups claim, so the OIDC path's team fallback never reaches them without
+// this.
+func (q *Queries) IsUserMemberOfAnyTeamInOrg(ctx context.Context, arg IsUserMemberOfAnyTeamInOrgParams) (bool, error) {
+	row := q.db.QueryRow(ctx, isUserMemberOfAnyTeamInOrg, arg.OrgID, arg.UserID)
+	var exists bool
+	err := row.Scan(&exists)
+	return exists, err
+}
+
 const listTeamMembers = `-- name: ListTeamMembers :many
 SELECT u.id, u.login, u.email, u.display_name, u.disabled, tm.created_at AS added_at
 FROM team_members tm
