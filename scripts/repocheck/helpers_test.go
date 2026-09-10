@@ -66,6 +66,17 @@ func makeRecipe(name string) string {
 	return m[0]
 }
 
+// mkTargetLine returns just the `name: prereq1 prereq2 ## comment` header
+// line of one Makefile target, without its recipe body.
+func mkTargetLine(name string) string {
+	GinkgoHelper()
+	mk := readRepoFile("Makefile")
+	re := regexp.MustCompile(`(?m)^` + regexp.QuoteMeta(name) + `:[^\n]*`)
+	m := re.FindString(mk)
+	Expect(m).NotTo(BeEmpty(), "target %q not found in Makefile", name)
+	return m
+}
+
 // workflow is the subset of a GitHub Actions workflow file these specs read.
 type workflow struct {
 	On          map[string]any         `yaml:"on"`

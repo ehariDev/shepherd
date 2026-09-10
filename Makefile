@@ -1,4 +1,4 @@
-.PHONY: docs check-docs-drift check-docs-version web-ci check-gateway-pin check-chartvalues-pin chart-verify preflight-docker help build build-web build-all test e2e e2e-k8s e2e-k8s-clean e2e-sim e2e-egress smoke test-ui check-single-dist check-dist-consistency check-build-script check-raw-sql check-docker check-no-route-mocks lint fmt generate gen-alloy-version generate-corpus schema schema-verify helm-lint release-snapshot docker-build docker-build-local docker-build-init docker-build-simulator dev dev-sim dev-frontend dev-restart dev-seed dev-reset test-fullstack clean clean-docker tools preflight-ginkgo preflight-k8s
+.PHONY: docs check-docs-drift check-docs-version web-ci check-gateway-pin check-chartvalues-pin chart-verify preflight-docker help build build-web build-all test e2e e2e-k8s e2e-k8s-clean e2e-sim e2e-egress smoke test-cover test-ui check-single-dist check-dist-consistency check-build-script check-raw-sql check-docker check-no-route-mocks guards vulncheck lint fmt generate gen-alloy-version generate-corpus schema schema-verify helm-lint release-snapshot docker-build docker-build-local docker-build-init docker-build-simulator dev dev-sim dev-frontend dev-restart dev-seed dev-reset test-fullstack clean clean-docker tools preflight-ginkgo preflight-k8s
 
 # Several recipes are bash-idiomatic (the smoke here-string, trap chains);
 # /bin/sh is dash on Debian/Ubuntu and rejects them.
@@ -67,13 +67,16 @@ help: ## List targets and the env knobs the test suites honor
 # job. protoc-gen-es comes from web/node_modules (buf.gen.yaml points there), so
 # `make generate` also needs a `pnpm install` in web/ — scripts/build-web.sh or
 # the web job's install both provide it.
+# No standalone gofumpt here: `make fmt` runs `golangci-lint fmt` (its
+# module-aware gofumpt formatter), never the standalone binary — see the
+# comment at the `fmt` target for why.
 tools: ## Install the Go-installable CLIs the targets here shell out to
 	go install github.com/onsi/ginkgo/v2/ginkgo@$$(go list -m -f '{{.Version}}' github.com/onsi/ginkgo/v2)
-	go install mvdan.cc/gofumpt@v0.11.0
 	go install github.com/sqlc-dev/sqlc/cmd/sqlc@v1.31.1
 	go install github.com/bufbuild/buf/cmd/buf@v1.72.0
 	go install google.golang.org/protobuf/cmd/protoc-gen-go@$$(go list -m -f '{{.Version}}' google.golang.org/protobuf)
 	go install connectrpc.com/connect/cmd/protoc-gen-connect-go@$$(go list -m -f '{{.Version}}' connectrpc.com/connect)
+	go install golang.org/x/vuln/cmd/govulncheck@v1.8.0
 
 clean: ## Remove build outputs (bin/, goreleaser dist/)
 	rm -rf bin/ dist/
@@ -94,6 +97,11 @@ build-all: build ## Alias of build
 # Requires Docker: internal/testutil spins up real Postgres via testcontainers.
 test: ## Run all Go tests (requires Docker)
 	go test ./...
+
+# coverage.out is *.out-ignored (.gitignore:4), so this never needs cleanup.
+test-cover: ## Run all Go tests with a coverage profile (requires Docker)
+	go test -coverprofile=coverage.out -covermode=atomic ./...
+	go tool cover -func=coverage.out | tail -1
 
 # E2E suite (requires Docker Compose; ~10 min)
 # Set E2E_KEEP=1 to leave the stack running after the suite (for debugging).
@@ -174,16 +182,20 @@ e2e-egress: preflight-ginkgo docker-build-local docker-build-init docker-build-s
 
 # Container smoke test — runs without the full e2e stack, < 60s.
 # Verifies: image builds, migrate up runs, serve starts and /healthz+/readyz return 200,
-# SIGTERM triggers clean shutdown, invalid SHEPHERD_LOG_LEVEL fails fast.
+# the bootstrap admin can log in locally, SIGTERM triggers clean shutdown, and
+# invalid SHEPHERD_LOG_LEVEL fails fast.
 # Prerequisite: Docker daemon running (OrbStack / Docker Desktop).
+# Reuses shepherd:local / shepherd:local-init (docker-build-local /
+# docker-build-init) instead of building separate shepherd:smoke tags, so the
+# images this exercises are the ones every other Docker-backed target builds.
+# The bootstrap admin comes from SHEPHERD_BOOTSTRAP_ADMIN_LOGIN /
+# SHEPHERD_BOOTSTRAP_ADMIN_PASSWORD (internal/auth/localusers.go BootstrapAdmin,
+# invoked by `serve` on an empty users table) — there is no separate
+# hash-password CLI subcommand or SHEPHERD_AUTH_LOCAL_ADMIN_* env var.
 # Containers are named shepherd-smoke-* and removed up front, so a SIGKILLed
-# run cannot leave anonymous containers squatting on ports 18080/18081.
-smoke: ## Container smoke test (< 60s, Docker only)
-	@docker rm -f shepherd-smoke-pg shepherd-smoke-srv shepherd-smoke-la >/dev/null 2>&1 || true
-	@echo "==> Building production image for smoke test..."
-	docker build $(DOCKER_BUILD_ARGS) -f deploy/Dockerfile.local -t shepherd:smoke .
-	@echo "==> Building init image for migrate..."
-	docker build $(DOCKER_BUILD_ARGS) -f deploy/Dockerfile.init -t shepherd:smoke-init .
+# run cannot leave anonymous containers squatting on port 18080.
+smoke: docker-build-local docker-build-init ## Container smoke test (< 60s, Docker only)
+	@docker rm -f shepherd-smoke-pg shepherd-smoke-srv >/dev/null 2>&1 || true
 	@echo "==> Starting postgres..."
 	@SMOKE_PG=$$(docker run -d --name shepherd-smoke-pg \
 		-e POSTGRES_DB=shepherd_smoke \
@@ -200,14 +212,16 @@ smoke: ## Container smoke test (< 60s, Docker only)
 	docker run --rm \
 		-e SHEPHERD_DATABASE_URL="$$SMOKE_DB" \
 		-e SHEPHERD_SECURITY_ENCRYPTION_KEY="AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=" \
-		shepherd:smoke-init migrate up && \
+		shepherd:local-init migrate up && \
 	echo "==> Starting shepherd serve (background)..." && \
 	SMOKE_SRV=$$(docker run -d --name shepherd-smoke-srv \
 		-e SHEPHERD_DATABASE_URL="$$SMOKE_DB" \
 		-e SHEPHERD_SECURITY_ENCRYPTION_KEY="AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=" \
 		-e SHEPHERD_LOG_LEVEL=debug \
+		-e SHEPHERD_BOOTSTRAP_ADMIN_LOGIN=admin \
+		-e SHEPHERD_BOOTSTRAP_ADMIN_PASSWORD=smoke-test-pass \
 		-p 18080:8080 \
-		shepherd:smoke serve) && \
+		shepherd:local serve) && \
 	echo "Shepherd container: $$SMOKE_SRV" && \
 	trap "docker rm -f $$SMOKE_SRV $$SMOKE_PG 2>/dev/null" EXIT INT TERM && \
 	echo "==> Waiting for /healthz and /readyz..." && \
@@ -220,41 +234,8 @@ smoke: ## Container smoke test (< 60s, Docker only)
 	echo "==> Testing healthcheck subcommand from inside container..." && \
 	docker exec $$SMOKE_SRV /usr/local/bin/shepherd healthcheck --addr localhost:8080 && \
 	echo "[healthcheck subcommand OK]" && \
-	echo "==> Sending SIGTERM and asserting clean shutdown..." && \
-	docker stop $$SMOKE_SRV && \
-	EXIT_CODE=$$(docker inspect $$SMOKE_SRV --format='{{.State.ExitCode}}') && \
-	if [ "$$EXIT_CODE" != "0" ]; then echo "ERROR: shepherd exited with $$EXIT_CODE"; exit 1; fi && \
-	echo "[clean shutdown OK exit=$$EXIT_CODE]" && \
-	echo "==> Testing invalid SHEPHERD_LOG_LEVEL fails fast (P1-L.1 red run until P1-L.1 lands)..." && \
-	if docker run --rm \
-		-e SHEPHERD_DATABASE_URL="$$SMOKE_DB" \
-		-e SHEPHERD_SECURITY_ENCRYPTION_KEY="AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=" \
-		-e SHEPHERD_LOG_LEVEL=verbose \
-		shepherd:smoke serve 2>&1 | grep -qi "invalid\|unknown\|verbose"; then \
-		echo "[invalid log level rejected OK]"; \
-	else \
-		echo "WARN: invalid SHEPHERD_LOG_LEVEL=verbose did not fail fast (P1-L.1 not yet implemented)"; \
-	fi && \
-	echo "==> Testing OIDC-free local admin login (LA-1 smoke step)..." && \
-	SMOKE_HASH=$$(docker run --rm \
-		-e SHEPHERD_DATABASE_URL="$$SMOKE_DB" \
-		-e SHEPHERD_SECURITY_ENCRYPTION_KEY="AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=" \
-		shepherd:smoke-init hash-password --password-stdin <<< "smoke-test-pass") && \
-	SMOKE_LA=$$(docker run -d --name shepherd-smoke-la \
-		-e SHEPHERD_DATABASE_URL="$$SMOKE_DB" \
-		-e SHEPHERD_SECURITY_ENCRYPTION_KEY="AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=" \
-		-e SHEPHERD_AUTH_LOCAL_ADMIN_ENABLED=true \
-		-e "SHEPHERD_AUTH_LOCAL_ADMIN_PASSWORD_HASH=$$SMOKE_HASH" \
-		-e SHEPHERD_LOG_LEVEL=debug \
-		-p 18081:8080 \
-		shepherd:smoke serve) && \
-	echo "Local admin shepherd container: $$SMOKE_LA" && \
-	trap "docker rm -f $$SMOKE_LA $$SMOKE_SRV $$SMOKE_PG 2>/dev/null" EXIT INT TERM && \
-	for i in $$(seq 1 30); do \
-		if curl -sf http://localhost:18081/healthz > /dev/null 2>&1; then break; fi; \
-		sleep 1; \
-	done && \
-	SMOKE_COOKIE=$$(curl -sf -X POST http://localhost:18081/api/auth/local/login \
+	echo "==> Testing OIDC-free local admin login (bootstrap admin)..." && \
+	SMOKE_COOKIE=$$(curl -sf -X POST http://localhost:18080/api/auth/local/login \
 		-H 'Content-Type: application/json' \
 		-H 'X-Requested-With: XMLHttpRequest' \
 		-d '{"username":"admin","password":"smoke-test-pass"}' \
@@ -262,12 +243,26 @@ smoke: ## Container smoke test (< 60s, Docker only)
 		-w '%{http_code}' -o /dev/null) && \
 	if [ "$$SMOKE_COOKIE" != "200" ]; then echo "ERROR: local login returned $$SMOKE_COOKIE"; exit 1; fi && \
 	echo "[local admin login OK]" && \
-	SMOKE_ME=$$(curl -sf http://localhost:18081/api/me \
+	SMOKE_ME=$$(curl -sf http://localhost:18080/api/me \
 		-H 'X-Requested-With: XMLHttpRequest' \
 		-b /tmp/shepherd-smoke-cookie.txt) && \
 	echo "$$SMOKE_ME" | grep -q '"auth_method":"local"' || { echo "ERROR: /api/me did not return auth_method:local; got: $$SMOKE_ME"; exit 1; } && \
 	echo "[/api/me auth_method:local OK]" && \
-	docker rm -f $$SMOKE_LA >/dev/null && \
+	echo "==> Sending SIGTERM and asserting clean shutdown..." && \
+	docker stop $$SMOKE_SRV && \
+	EXIT_CODE=$$(docker inspect $$SMOKE_SRV --format='{{.State.ExitCode}}') && \
+	if [ "$$EXIT_CODE" != "0" ]; then echo "ERROR: shepherd exited with $$EXIT_CODE"; exit 1; fi && \
+	echo "[clean shutdown OK exit=$$EXIT_CODE]" && \
+	echo "==> Testing invalid SHEPHERD_LOG_LEVEL fails fast..." && \
+	if docker run --rm \
+		-e SHEPHERD_DATABASE_URL="$$SMOKE_DB" \
+		-e SHEPHERD_SECURITY_ENCRYPTION_KEY="AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=" \
+		-e SHEPHERD_LOG_LEVEL=verbose \
+		shepherd:local serve 2>&1 | grep -qi "invalid\|unknown\|verbose"; then \
+		echo "[invalid log level rejected OK]"; \
+	else \
+		echo "WARN: invalid SHEPHERD_LOG_LEVEL=verbose did not fail fast"; \
+	fi && \
 	echo "==> Smoke test PASSED."
 
 # Reproduces CI's `web` job exactly (typecheck, unit tests, biome CHECK — lint
@@ -336,11 +331,21 @@ check-build-script: ## Guard: pnpm build/install only in scripts/build-web.sh
 	fi
 	@echo "check-build-script: OK"
 
+# Root the raw-SQL scan under, overridable so the guard itself can be tested
+# against a fixture tree (scripts/repocheck/makefile_test.go) without any
+# fixture files living in the real source tree.
+RAW_SQL_ROOT ?= internal/
+
 # Guard: raw SQL calls in Go source outside internal/store must carry a RAW-SQL-OK comment.
+# Matches .Exec(/.Query(/.QueryRow( on ANY receiver (conn, tx, db, Pool()...),
+# not only a direct Pool() chain -- a conn or tx handed down from Pool() is
+# just as raw. The trailing [^)] requires at least one argument character
+# right after the open paren, so a zero-arg call such as r.URL.Query() (8
+# call sites in internal/auth and internal/mgmtapi) does not false-positive.
 check-raw-sql: ## Guard: raw SQL outside internal/store carries RAW-SQL-OK
 	@UNMARKED=$$(grep -rn --include='*.go' \
-	    -E 'Pool\(\)\.(Exec|Query|QueryRow)\(' \
-	    internal/ \
+	    -E '\.(Exec|Query|QueryRow)\([^)]' \
+	    $(RAW_SQL_ROOT) \
 	    | grep -v 'internal/store/' \
 	    | grep -v '_test\.go' \
 	    | grep -v 'internal/testutil/' \
@@ -481,20 +486,16 @@ chart-verify: check-chartvalues-pin ## Verify the vendored chart schema matches 
 	@echo "chart-verify: OK (G9 golden/schema/helm-template checks passed)"
 
 docs: ## Regenerate site/docs/ from scripts/docs-content/
-	python3 scripts/build-docs.py
+	python3 -B scripts/build-docs.py
 
 check-docs-drift: ## Guard: site/docs/ matches what build-docs.py produces
 	@# site/docs/ is generated but committed, so GitHub Pages keeps serving a
 	@# plain static directory with no build step. That bargain only holds if
 	@# the committed output is actually what the generator produces -- the
 	@# same reason the repo commits protobuf and sqlc output and guards it.
-	@python3 scripts/build-docs.py >/dev/null
-	@if ! git diff --quiet -- site/docs; then \
-		echo "ERROR: site/docs/ is stale. Run 'make docs' and commit the result."; \
-		git --no-pager diff --stat -- site/docs; \
-		exit 1; \
-	fi
-	@echo "check-docs-drift: OK"
+	@# --check builds into a temp dir and diffs against site/docs, so this
+	@# guard (part of `make lint`) never writes to the tree itself.
+	@python3 -B scripts/build-docs.py --check
 
 # site/index.html is checked for the CHART version too, not just the app
 # version. It was not, and it carries the single most-read install command on
@@ -532,7 +533,12 @@ check-docs-version: ## Guard: docs quote the chart's own version and appVersion
 	[ "$$fail" = "0" ] || exit 1
 	@echo "check-docs-version: OK"
 
-lint: check-single-dist check-dist-consistency check-build-script check-raw-sql check-docker check-no-route-mocks check-gateway-pin check-chartvalues-pin check-docs-version check-docs-drift ## Repo guards + golangci-lint
+# The ten repo-shape guards, gathered in one place so CI's guards job and
+# `make lint` resolve through the same list instead of two that can drift
+# apart (CI ran only six of the ten until this target existed).
+guards: check-single-dist check-dist-consistency check-build-script check-raw-sql check-docker check-no-route-mocks check-gateway-pin check-chartvalues-pin check-docs-version check-docs-drift ## Run all ten repo-shape guards
+
+lint: guards ## Repo guards + golangci-lint
 	$(call preflight,golangci-lint,Install golangci-lint v2 (https://golangci-lint.run).)
 	@# `golangci-lint run` accepts unknown keys in .golangci.yml without
 	@# complaint, so a misplaced or misspelled setting silently does nothing
@@ -542,6 +548,12 @@ lint: check-single-dist check-dist-consistency check-build-script check-raw-sql 
 	@# accepted and ignored by `run`, and only `config verify` reported it.
 	golangci-lint config verify
 	golangci-lint run ./...
+
+# `go run pkg@version` does not touch go.mod/go.sum, so this needs no
+# ask-first dependency bump to run. SECURITY.md names govulncheck the arbiter
+# for which vulnerabilities are in scope: only ones on a reachable call path.
+vulncheck: ## Guard: no known-reachable vulnerabilities (govulncheck)
+	go run golang.org/x/vuln/cmd/govulncheck@v1.8.0 ./...
 
 # golangci-lint fmt runs BOTH formatters this repo enables (gofumpt, then gci
 # — see .golangci.yml's formatters block), so it is the whole job.

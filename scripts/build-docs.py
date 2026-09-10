@@ -17,10 +17,13 @@ components (code blocks with copy buttons, note callouts, tables) and a
 Markdown layer would only be something to fight.
 """
 
+import argparse
+import filecmp
 import html
 import os
 import re
 import sys
+import tempfile
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import values_reference  # noqa: E402  (needs the path set above)
@@ -320,13 +323,17 @@ def render_index(version):
     return "".join(parts)
 
 
-def main():
-    version = app_version()
-    pages = flat_pages()
-    os.makedirs(OUT, exist_ok=True)
+def build(out_dir, version, pages):
+    """Render every page into out_dir. Returns the set of filenames written.
+
+    Removes any stale *.html left over in out_dir from a page that dropped
+    out of NAV/REDIRECTS -- a page removed from NAV must stop being
+    published, not linger unreachable.
+    """
+    os.makedirs(out_dir, exist_ok=True)
 
     written = {"index.html"}
-    with open(os.path.join(OUT, "index.html"), "w", encoding="utf-8") as fh:
+    with open(os.path.join(out_dir, "index.html"), "w", encoding="utf-8") as fh:
         fh.write(render_index(version))
 
     for i, (category, slug, nav_title, title, desc) in enumerate(pages):
@@ -342,25 +349,73 @@ def main():
         prev_page = (pages[i - 1][1], pages[i - 1][2]) if i > 0 else None
         next_page = (pages[i + 1][1], pages[i + 1][2]) if i + 1 < len(pages) else None
         out_name = slug + ".html"
-        with open(os.path.join(OUT, out_name), "w", encoding="utf-8") as fh:
+        with open(os.path.join(out_dir, out_name), "w", encoding="utf-8") as fh:
             fh.write(render(category, slug, title, desc, fragment,
                             prev_page, next_page, version))
         written.add(out_name)
 
     for slug, (target, label) in REDIRECTS.items():
         name = slug + ".html"
-        with open(os.path.join(OUT, name), "w", encoding="utf-8") as fh:
+        with open(os.path.join(out_dir, name), "w", encoding="utf-8") as fh:
             fh.write(REDIRECT_PAGE.format(target=target, label=label))
         written.add(name)
 
-    # A page removed from NAV must stop being published, not linger unreachable.
-    stale = [f for f in os.listdir(OUT)
+    stale = [f for f in os.listdir(out_dir)
              if f.endswith(".html") and f not in written]
     for f in stale:
-        os.remove(os.path.join(OUT, f))
+        os.remove(os.path.join(out_dir, f))
         print("build-docs: removed stale page %s" % f)
 
-    print("build-docs: wrote %d pages to site/docs/" % len(written))
+    return written
+
+
+def diff_against_committed(generated_dir, written):
+    """Compare a freshly generated_dir against the committed OUT (site/docs)
+    without writing to OUT. Returns a list of human-readable diff lines,
+    empty when they match.
+    """
+    committed = set(
+        f for f in os.listdir(OUT) if f.endswith(".html")
+    ) if os.path.isdir(OUT) else set()
+
+    diffs = []
+    for f in sorted(written - committed):
+        diffs.append("missing from site/docs/: %s" % f)
+    for f in sorted(committed - written):
+        diffs.append("stale in site/docs/ (no longer generated): %s" % f)
+    for f in sorted(written & committed):
+        if not filecmp.cmp(os.path.join(generated_dir, f), os.path.join(OUT, f), shallow=False):
+            diffs.append("content differs: %s" % f)
+    return diffs
+
+
+def main():
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("--out", default=OUT,
+                         help="directory to write generated pages into (default: site/docs)")
+    parser.add_argument("--check", action="store_true",
+                         help="build into a temp directory and diff against site/docs; "
+                              "never writes to site/docs, exit 1 on drift")
+    args = parser.parse_args()
+
+    version = app_version()
+    pages = flat_pages()
+
+    if args.check:
+        with tempfile.TemporaryDirectory(prefix="shepherd-build-docs-") as tmp:
+            written = build(tmp, version, pages)
+            diffs = diff_against_committed(tmp, written)
+        if diffs:
+            print("check-docs-drift: site/docs/ is stale:")
+            for d in diffs:
+                print("  " + d)
+            print("Run 'make docs' and commit the result.")
+            return 1
+        print("check-docs-drift: OK (%d pages match)" % len(written))
+        return 0
+
+    written = build(args.out, version, pages)
+    print("build-docs: wrote %d pages to %s" % (len(written), args.out))
     return 0
 
 
