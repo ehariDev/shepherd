@@ -345,7 +345,8 @@ hash := hex(sha256(content))
 - Shepherd is a **confidential client** at a spec-compliant OIDC issuer. Entra ID is the reference deployment, but any provider that serves a discovery document works — see §7.1a for the per-provider knobs and §7.1b for where the configuration comes from.
 - Viper config: `oidc.issuer` (Entra: `https://login.microsoftonline.com/<tenant>/v2.0`), `oidc.client_id`, `oidc.client_secret`, `oidc.redirect_url`, `oidc.scopes` (default `openid profile email offline_access GroupMember.Read.All`).
 - `GET /auth/login` → generate `state` + PKCE verifier, store in a short-lived httpOnly cookie, redirect to the authorize endpoint.
-- `GET /auth/callback` → verify state, exchange code (with PKCE) for tokens, verify ID token with go-oidc. Resolve the user's groups per §7.1a. Store the session row (§5) with `group_ids`, set session cookie: httpOnly, `Secure`, `SameSite=Lax`, name `shepherd_session`. Session TTL: `auth.session_ttl` (default 8h, sliding).
+- `GET /auth/callback` → verify state, exchange code (with PKCE) for tokens, verify ID token with go-oidc. Resolve the user's groups per §7.1a. Store the session row (§5) with `group_ids`, set session cookie: httpOnly, `Secure`, `SameSite=Lax`, name `shepherd_session`. Session TTL: `auth.session_ttl` (default 8h; the row's `expires_at` is fixed at creation and does not extend on activity). An OIDC session additionally ends at the ID token's own expiry (`sessions.id_token_expires`, typically ~1h for Entra/Okta) even if the row's TTL has not elapsed yet: `SessionMiddleware` rejects it and deletes the row on the next request past that point, since there is no refresh-token flow to silently extend it.
+- Local sign-in (`POST /api/auth/local/login`, §7.2) is throttled per account and per source IP by an in-process token bucket, to blunt password guessing against the argon2id-hashed local credential store.
 - `GET /auth/me` → current user profile + computed roles. `POST /auth/logout` → delete session.
 - `GET /auth/methods` → which sign-in methods the login page should offer, plus the label for the OIDC button. It reports whether OIDC is **live** (a discovered provider is loaded), not merely whether one is configured: a saved-but-undiscoverable provider must not render a button that can only dead-end.
 - All `/api/*` routes require a valid session (middleware). CSRF: require header `X-Requested-With: XMLHttpRequest` on mutating requests (sufficient with SameSite=Lax).
@@ -414,14 +415,17 @@ The resulting roles are the same either way:
   `group_assignments` for C, or of the org's `reader_group_id`, or
   `org_members.role = 'viewer'`, or holds a higher role. Viewers create nothing.
   The column is still `reader_group_id` — renaming it would break every chart
-  and secret already deployed — but the role reports as `viewer`.
+  and secret already deployed — but the role reports as `viewer`. A local user
+  who is only a team member (no `org_members` row at all) still clears this
+  floor, the same way an OIDC team member does: membership in any team of org O
+  — local or IdP-group-backed — grants at least the viewer rank for O, on top
+  of whatever `org_members.role` (if any) separately grants.
 
 Authorization is one function, `authorizeOrgAccess(ctx, org, minRole)`, taking
 a **minimum** role rather than a boolean: ranks are admin > editor > viewer, and
 both paths above resolve into that same rank comparison. Middleware helpers
-`RequireAppAdmin`, `RequireOrgAccess(orgIDParam, minRole)` and
-`RequireCollectorRead(collectorIDParam)` wrap it; every handler declares exactly
-one.
+`RequireAppAdmin` and `RequireOrgAccess(orgIDParam, minRole)` wrap it; every
+handler declares exactly one.
 
 ### 7.3 Agent tokens (machine auth)
 
@@ -573,22 +577,30 @@ GET    /api/orgs/{org}/collectors/{id}/served-config [reader]  current cache con
 POST   /api/orgs/{org}/collectors/{id}/assignments   [orgadmin] {group_id}
 DELETE /api/orgs/{org}/collectors/{id}/assignments/{group_id} [orgadmin]
 GET    /api/orgs/{org}/pipelines                 [reader]
-POST   /api/orgs/{org}/pipelines                 [orgadmin] (validation gate)
+POST   /api/orgs/{org}/pipelines                 [orgeditor] (validation gate)
 GET    /api/orgs/{org}/pipelines/{id}            [reader]   incl. revisions
-PUT    /api/orgs/{org}/pipelines/{id}            [orgadmin] (validation gate)
-POST   /api/orgs/{org}/pipelines/{id}/enable|disable [orgadmin] (stage-3 on enable)
-DELETE /api/orgs/{org}/pipelines/{id}            [orgadmin]
-POST   /api/orgs/{org}/pipelines/validate        [orgadmin] stages 1–2, returns diagnostics
-GET    /api/orgs/{org}/pipelines/{id}/preview-matches [orgadmin] collectors a matcher set hits
-GET    /api/orgs/{org}/attributes                [orgadmin] distinct attribute keys → sorted distinct values across the org's collector instances (incl. built-ins cluster/role); feeds matcher autocomplete
+PUT    /api/orgs/{org}/pipelines/{id}            [orgeditor] (validation gate)
+POST   /api/orgs/{org}/pipelines/{id}/enable|disable [orgeditor] (stage-3 on enable)
+DELETE /api/orgs/{org}/pipelines/{id}            [orgeditor]
+POST   /api/orgs/{org}/pipelines/validate        [orgeditor] stages 1–2, returns diagnostics
+GET    /api/orgs/{org}/pipelines/{id}/preview-matches [reader] collectors a matcher set hits
+GET    /api/orgs/{org}/attributes                [reader] distinct attribute keys → sorted distinct values across the org's collector instances (incl. built-ins cluster/role); feeds matcher autocomplete
 CRUD   /api/orgs/{org}/destinations              [orgadmin write, reader read]
-CRUD   /api/orgs/{org}/ado-credentials           [orgadmin]  (secret write-only)
-POST   /api/orgs/{org}/ado-credentials/{id}/test [orgadmin]  verifies token + org access
+CRUD   /api/orgs/{org}/git-credentials           [orgadmin]  (secret write-only; the ADO-specific route name from the amendment below was renamed here, matching the Connect-side AdoCredential -> GitCredential rename)
+POST   /api/orgs/{org}/git-credentials/{id}/test [orgadmin]  verifies token + org access
 CRUD   /api/orgs/{org}/repo-links                [orgadmin]
-POST   /api/orgs/{org}/repo-links/{id}/sync      [orgadmin]  force immediate sync
-GET    /api/orgs/{org}/wizards/application-observability/schema  [orgadmin]
-POST   /api/orgs/{org}/wizards/application-observability/render  [orgadmin] input -> rendered configs + diagnostics + match preview
-POST   /api/orgs/{org}/wizards/application-observability/commit  [orgadmin] input -> creates pipelines (gate)
+GET    /api/orgs/{org}/wizards                   [orgeditor]
+GET    /api/orgs/{org}/wizards/{kind}            [orgeditor] schema for one wizard kind
+POST   /api/orgs/{org}/wizards/render            [orgeditor] input -> rendered configs + diagnostics + match preview, nothing persisted
+POST   /api/orgs/{org}/wizards/commit            [orgeditor] input -> creates pipelines (gate)
+POST   /api/orgs/{org}/visual/render             [orgeditor] graph -> { content, diagnostics[], node_map }
+POST   /api/orgs/{org}/visual/validate           [orgeditor] graph -> diagnostics[] (layers L2+L3, node-addressed)
+POST   /api/orgs/{org}/visual/upgrade-check      [orgeditor] graph -> schema-upgrade diagnostics
+GET    /api/orgs/{org}/pipelines/{id}/graph      [reader]    VisualService.GraphView
+POST   /api/orgs/{org}/simulate/relabel          [orgeditor] { rules, sample_targets } → per-target trace
+POST   /api/orgs/{org}/simulate/logs             [orgeditor] { stages, sample_lines } → per-line trace
+POST   /api/orgs/{org}/simulate/runs             [orgeditor] graph → { run_id }
+GET    /api/orgs/{org}/simulate/runs/{id}        [orgeditor] status | results
 GET    /api/orgs/{org}/audit                     [orgadmin]
 ```
 
