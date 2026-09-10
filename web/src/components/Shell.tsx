@@ -21,9 +21,11 @@ import {
   Workflow,
 } from 'lucide-react';
 import { useEffect, useRef, useState } from 'react';
+import { buildCrumbs } from '@/components/breadcrumb';
 import { useMe } from '@/hooks/useMe';
 import { useOrg } from '@/hooks/useOrg';
 import { cn } from '@/lib/utils';
+import { routeManifest } from '@/routes/routeManifest';
 import { applyTheme, resolveTheme, setStoredTheme, type Theme } from '@/theme';
 
 interface NavItem {
@@ -146,6 +148,26 @@ export function Shell() {
     navigate({ to: '/login' });
   }
 
+  // Reads whatever's already cached rather than fetching — a breadcrumb is
+  // not worth a network round trip. Only the pipeline id routes specialize
+  // today; every other dynamic segment falls back to buildCrumbs' generic
+  // route label (e.g. 'Collector').
+  function resolveCrumbName(
+    route: { path: string },
+    params: Record<string, string>,
+  ): string | undefined {
+    if (
+      route.path === '/pipelines/$id' ||
+      route.path === '/pipelines/$id/visual' ||
+      route.path === '/pipelines/$id/graph'
+    ) {
+      const pipeline = queryClient.getQueryData<{ name?: string }>(['pipeline', orgId, params.id]);
+      return pipeline?.name;
+    }
+    return undefined;
+  }
+  const crumbs = buildCrumbs(location.pathname, routeManifest, resolveCrumbName);
+
   if (isLoading) return null;
   if (!me) return null;
   return (
@@ -222,9 +244,16 @@ export function Shell() {
         <header className='flex h-14 shrink-0 items-center justify-between border-b border-border px-6'>
           <nav aria-label='breadcrumb'>
             <span className='text-sm text-muted'>
-              {location.pathname === '/'
-                ? 'Overview'
-                : location.pathname.replace(/^\//, '').replace(/\//g, ' / ')}
+              {crumbs.map((crumb, i) => (
+                // Crumbs have no stable id of their own (a label can repeat,
+                // e.g. two "Pipeline" crumbs are impossible today but not
+                // structurally ruled out) — position is the only key that
+                // survives a route change without churn.
+                <span key={i}>
+                  {i > 0 && ' / '}
+                  {crumb.label}
+                </span>
+              ))}
             </span>
           </nav>
           <div className='flex items-center gap-2'>

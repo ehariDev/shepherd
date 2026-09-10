@@ -56,6 +56,42 @@ test('theme toggle persists class on html element after reload', async ({ page, 
   expect(await html.getAttribute('class')).not.toEqual(initialClass);
 });
 
+test('a route chunk load failure shows the shared error fallback and keeps the shell mounted', async ({
+  page,
+  api,
+}) => {
+  // W6-S5: the router's defaultErrorComponent (RouteErrorFallback) is wired
+  // at createRouter, not per route — TanStack Router resolves error
+  // boundaries per LEAF match, so this is the only layer that actually sees
+  // a page crash. Aborting the lazy graph-view chunk forces exactly that: a
+  // real render-time throw, not a mocked one.
+  await api.loginAs(appAdmin);
+  const s = basicScenario();
+  api.seed({ orgs: [s.org], pipelines: [s.pipelines[0]] });
+  // Fulfilled (not aborted): a genuine network failure makes Chromium log
+  // its own "Failed to fetch dynamically imported module" console error
+  // regardless of application code, which the api fixture's console-error
+  // guard (tests/fixtures/test.ts, outside this workstream's territory)
+  // would then fail the test on. A 200 response whose body throws on
+  // evaluation forces the same import()-rejects-the-lazy-boundary path
+  // without a network-layer failure.
+  await page.route('**/GraphViewPage-*.js', (route) =>
+    route.fulfill({
+      status: 200,
+      contentType: 'application/javascript',
+      body: 'export const GraphViewPage = undefined;',
+    }),
+  );
+  await page.goto(`/pipelines/${s.pipelines[0].id}/graph`);
+
+  const errorFallback = page.getByTestId('route-error');
+  await expect(errorFallback).toBeVisible();
+  await expect(errorFallback).toHaveAttribute('role', 'alert');
+  // Shell stays mounted for free: the boundary that caught the crash sits
+  // below it, at the failed leaf, not at the root.
+  await expect(page.getByRole('button', { name: /sign out/i })).toBeVisible();
+});
+
 test('logout clears cached persona data before navigating to login', async ({ page, api }) => {
   await api.loginAs(appAdmin);
   api.override('GET', '/auth/logout', async (route, _params, state) => {

@@ -66,9 +66,21 @@ test('refuses a duplicate login and a short password', async ({ page, api }) => 
 });
 
 test('a non-app-admin is refused', async ({ page, api }) => {
+  // W6-S7: routeManifest's requiredRole ('app-admin' for admin/*) denies the
+  // direct navigation before AdminUsersPage ever mounts, so its own
+  // 'users-forbidden' banner is unreachable now — the guard redirects to '/'
+  // (and shows a route-denied element on the way) instead of letting the
+  // page render and refuse. See route-guard.spec.ts for the full matrix.
   await api.loginAs(orgAdmin);
   await page.goto('/admin/users');
-  await expect(page.getByTestId('users-forbidden')).toBeVisible();
+  await expect(async () => {
+    const onRoot = new URL(page.url()).pathname === '/';
+    const hasDeniedBanner = await page
+      .getByTestId('route-denied')
+      .isVisible()
+      .catch(() => false);
+    expect(onRoot || hasDeniedBanner).toBe(true);
+  }).toPass({ timeout: 5000 });
 });
 
 // An account with no org membership signs in and sees nothing, so assigning
