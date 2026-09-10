@@ -1,5 +1,6 @@
 import { createRootRoute, createRoute, createRouter, Outlet } from '@tanstack/react-router';
 import { lazy, Suspense } from 'react';
+import { RequireRole } from '@/components/RequireRole';
 import { RouteErrorFallback } from '@/components/RouteErrorFallback';
 import { Shell } from '@/components/Shell';
 import { AdminAuthPage } from '@/pages/AdminAuthPage';
@@ -19,6 +20,22 @@ import { PipelinesPage } from '@/pages/PipelinesPage';
 import { TeamsPage } from '@/pages/TeamsPage';
 import { WizardsPage } from '@/pages/WizardsPage';
 import { WizardRunnerPage } from '@/wizard/WizardRunnerPage';
+import { routeManifest } from './routeManifest';
+
+// Wraps a page component in RequireRole using routeManifest's requiredRole
+// for `path` as the single source of truth (W6-S7 / routeManifest.test.ts) —
+// a route with no requiredRole entry renders unguarded, same as before.
+function withRequiredRole<P extends object>(path: string, Component: (props: P) => JSX.Element) {
+  const requiredRole = routeManifest.find((r) => r.path === path)?.requiredRole;
+  if (!requiredRole) return Component;
+  return function RoleGuarded(props: P) {
+    return (
+      <RequireRole requiredRole={requiredRole}>
+        <Component {...props} />
+      </RequireRole>
+    );
+  };
+}
 
 const rootRoute = createRootRoute({
   component: Outlet,
@@ -85,7 +102,7 @@ const pipelinesRoute = createRoute({
 const pipelineNewRoute = createRoute({
   getParentRoute: () => contentRoute,
   path: '/pipelines/new',
-  component: PipelineEditorPage,
+  component: withRequiredRole('/pipelines/new', PipelineEditorPage),
 });
 
 const pipelineEditRoute = createRoute({
@@ -137,13 +154,13 @@ const destinationsRoute = createRoute({
 const gitRoute = createRoute({
   getParentRoute: () => contentRoute,
   path: '/git',
-  component: GitPage,
+  component: withRequiredRole('/git', GitPage),
 });
 
 const wizardsRoute = createRoute({
   getParentRoute: () => contentRoute,
   path: '/wizards',
-  component: WizardsPage,
+  component: withRequiredRole('/wizards', WizardsPage),
 });
 
 // One route for every wizard: the runner reads the kind from the path and
@@ -151,25 +168,25 @@ const wizardsRoute = createRoute({
 const wizardRunnerRoute = createRoute({
   getParentRoute: () => contentRoute,
   path: '/wizards/$kind',
-  component: WizardRunnerPage,
+  component: withRequiredRole('/wizards/$kind', WizardRunnerPage),
 });
 
 const adminOrgsRoute = createRoute({
   getParentRoute: () => contentRoute,
   path: '/admin/orgs',
-  component: AdminOrgsPage,
+  component: withRequiredRole('/admin/orgs', AdminOrgsPage),
 });
 
 const adminClustersRoute = createRoute({
   getParentRoute: () => contentRoute,
   path: '/admin/clusters',
-  component: AdminClustersPage,
+  component: withRequiredRole('/admin/clusters', AdminClustersPage),
 });
 
 const adminTokensRoute = createRoute({
   getParentRoute: () => contentRoute,
   path: '/admin/tokens',
-  component: AdminTokensPage,
+  component: withRequiredRole('/admin/tokens', AdminTokensPage),
 });
 
 // Admin → Single sign-on. Not org-scoped: OIDC configuration decides who can
@@ -178,19 +195,19 @@ const adminTokensRoute = createRoute({
 const adminUsersRoute = createRoute({
   getParentRoute: () => contentRoute,
   path: '/admin/users',
-  component: AdminUsersPage,
+  component: withRequiredRole('/admin/users', AdminUsersPage),
 });
 
 const adminAuthRoute = createRoute({
   getParentRoute: () => contentRoute,
   path: '/admin/auth',
-  component: AdminAuthPage,
+  component: withRequiredRole('/admin/auth', AdminAuthPage),
 });
 
 const auditRoute = createRoute({
   getParentRoute: () => contentRoute,
   path: '/audit',
-  component: AuditPage,
+  component: withRequiredRole('/audit', AuditPage),
 });
 
 // Teams are org-scoped, not app-admin: they live beside the other org
@@ -198,7 +215,7 @@ const auditRoute = createRoute({
 const teamsRoute = createRoute({
   getParentRoute: () => contentRoute,
   path: '/teams',
-  component: TeamsPage,
+  component: withRequiredRole('/teams', TeamsPage),
 });
 
 const routeTree = rootRoute.addChildren([

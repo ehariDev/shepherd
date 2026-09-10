@@ -13,7 +13,9 @@ describe('router.tsx error-boundary wiring', () => {
   });
 
   it('imports RouteErrorFallback from the shared component, not an inline element', () => {
-    expect(source).toMatch(/import\s*\{\s*RouteErrorFallback\s*\}\s*from\s*'@\/components\/RouteErrorFallback'/);
+    expect(source).toMatch(
+      /import\s*\{\s*RouteErrorFallback\s*\}\s*from\s*'@\/components\/RouteErrorFallback'/,
+    );
   });
 
   it('no longer renders the old inline red-text error div on rootRoute', () => {

@@ -11,7 +11,10 @@ describe('RouteErrorFallback', () => {
   });
 
   it('offers a retry action and a way back to the overview', () => {
-    const html = renderToString(<RouteErrorFallback error={new Error('boom')} reset={() => {}} />);
+    const noop = () => {
+      /* not exercised — renderToString doesn't click anything */
+    };
+    const html = renderToString(<RouteErrorFallback error={new Error('boom')} reset={noop} />);
     expect(html).toContain('Try again');
     expect(html).toContain('Go to overview');
   });
