@@ -1,6 +1,7 @@
 package simulate_test
 
 import (
+	"net/http"
 	"strings"
 	"unicode/utf8"
 
@@ -60,5 +61,34 @@ var _ = Describe("SanitizeStderrTail", func() {
 	It("returns short, already-clean input unchanged", func() {
 		s := "alloy: config loaded\ncomponent prometheus.scrape.app started"
 		Expect(simulate.SanitizeStderrTail(s)).To(Equal(s))
+	})
+})
+
+// W4-S5: a rejected bearer token (simulator's SIM_TOKEN and shepherd's
+// SHEPHERD_SIMULATOR_TOKEN out of sync — a deployment/config problem) must
+// not be reported to the user as error_code "internal", which reads as a
+// Shepherd bug in what it rendered. classifySimulatorError is unexported;
+// export_test.go exposes it as simulate.ClassifySimulatorError.
+var _ = Describe("classifySimulatorError", func() {
+	It("reports a rejected bearer token as simulator_unavailable, not internal, and names the cause", func() {
+		apiErr := &simulate.ClientAPIError{
+			HTTPStatus: http.StatusUnauthorized,
+			Code:       "unauthorized",
+			Message:    "invalid or missing bearer token",
+		}
+		code, message := simulate.ClassifySimulatorError(apiErr)
+		Expect(code).To(Equal(simulate.RunErrorSimulatorUnavailable))
+		Expect(message).To(ContainSubstring("token"),
+			"the message should be diagnosable — naming the mismatched-token cause, not a bare passthrough of the server's generic text")
+	})
+
+	It("still reports a Shepherd-rendered bad config as internal", func() {
+		apiErr := &simulate.ClientAPIError{
+			HTTPStatus: http.StatusBadRequest,
+			Code:       "invalid_config",
+			Message:    "component prometheus.scrape.app: unknown attribute",
+		}
+		code, _ := simulate.ClassifySimulatorError(apiErr)
+		Expect(code).To(Equal(simulate.RunErrorInternal))
 	})
 })

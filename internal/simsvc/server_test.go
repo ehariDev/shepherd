@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"net/http"
 	"net/http/httptest"
@@ -203,6 +204,42 @@ prometheus.remote_write "leak" {
 		It("accepts the configured token", func() {
 			rec := doJSON(handler, http.MethodPost, "/v1/runs", StartRequest{Config: capturingConfig()}, cfg.Token)
 			Expect(rec.Code).To(Equal(http.StatusAccepted))
+		})
+
+		It("lets the real simulate.Client authenticate against this handler with the configured token", func() {
+			// The handler-side specs above drive raw HTTP requests
+			// (doJSON); this drives the actual client the worker uses
+			// (internal/simulate.Client), against a real listening server,
+			// proving the two sides' token wiring actually interoperate.
+			srv := httptest.NewServer(handler)
+			DeferCleanup(srv.Close)
+			client := simulate.NewClient(srv.URL, cfg.Token, nil)
+
+			run, err := client.Start(context.Background(), simulate.ClientStartRequest{
+				Config: capturingConfig(), DurationSeconds: 15,
+			})
+			Expect(err).NotTo(HaveOccurred())
+			Expect(run.ID).NotTo(BeEmpty())
+		})
+
+		It("reports a rejected bearer token as a typed *ClientAPIError with HTTP 401, not a transport error", func() {
+			// One-line-revert red proof (control already holds today):
+			// commenting out the ConstantTimeCompare check at server.go:75
+			// (leaving the handler accepting any token) turns this spec's
+			// `errors.As` into false — no error at all comes back — and it
+			// was run that way to confirm, then restored.
+			srv := httptest.NewServer(handler)
+			DeferCleanup(srv.Close)
+			client := simulate.NewClient(srv.URL, "wrong-token", nil)
+
+			_, err := client.Start(context.Background(), simulate.ClientStartRequest{Config: capturingConfig()})
+			Expect(err).To(HaveOccurred())
+
+			var apiErr *simulate.ClientAPIError
+			Expect(errors.As(err, &apiErr)).To(BeTrue(),
+				"a rejected token must decode as a well-formed ClientAPIError, not fall through to ErrSimulatorUnreachable's generic 'non-2xx' message")
+			Expect(apiErr.HTTPStatus).To(Equal(http.StatusUnauthorized))
+			Expect(apiErr.Code).To(Equal("unauthorized"))
 		})
 
 		It("leaves the probes unauthenticated so a kubelet can reach them", func() {

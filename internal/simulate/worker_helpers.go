@@ -225,6 +225,17 @@ func classifySimulatorError(err error) (code, message string) {
 		switch apiErr.Code {
 		case "queue_full", "shutting_down":
 			return RunErrorSimulatorUnavailable, apiErr.Message
+		case "unauthorized":
+			// A 401 here means the bearer token Shepherd is configured with
+			// (SHEPHERD_SIMULATOR_TOKEN / config.simulator.token) doesn't
+			// match the simulator's own SIM_TOKEN — a deployment/config
+			// problem, not something the user's pipeline caused or can fix.
+			// Reported as simulator_unavailable (retry-shaped, like the
+			// simulator being unreachable) with a message that names the
+			// actual cause instead of the bare "internal error" a user
+			// cannot act on.
+			return RunErrorSimulatorUnavailable,
+				"simulator rejected the configured bearer token — check that config.simulator.token (or SHEPHERD_SIMULATOR_TOKEN) matches the simulator's SIM_TOKEN: " + apiErr.Message
 		case "invalid_config", "endpoint_not_allowed", "config_too_large":
 			// Shepherd renders and validates the config before ever sending
 			// it; the simulator rejecting it is a Shepherd-side bug, not a
