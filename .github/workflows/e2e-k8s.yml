@@ -62,10 +62,10 @@ jobs:
           df -h /
 
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
 
       - name: Set up Go
-        uses: actions/setup-go@v5
+        uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5.6.0
         with:
           go-version-file: go.mod
           cache: true
@@ -73,12 +73,12 @@ jobs:
       # install_only: the suite creates (and destroys) its own cluster; we
       # just need the kind binary. helm and kubectl ship on ubuntu-latest.
       - name: Install kind
-        uses: helm/kind-action@v1
+        uses: helm/kind-action@06c1ae10762d3b9c1644e7fe69596ae519e015a2 # v1.15.0
         with:
           install_only: true
 
       - name: Set up Docker buildx
-        uses: docker/setup-buildx-action@v3
+        uses: docker/setup-buildx-action@8d2750c68a42422c14e847fe6c8ac0403b4cbd6f # v3.12.0
 
       # Keyed per workflow+job+run: actions/cache never overwrites an
       # existing key, so a key shared across ci.yml/e2e.yml/e2e-k8s.yml meant
@@ -89,7 +89,7 @@ jobs:
       # stays scoped to this workflow+job (no run_id) so a later run still
       # gets a warm prefix match against the most recent save.
       - name: Cache Docker layers
-        uses: actions/cache@v4
+        uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4.3.0
         with:
           path: /tmp/.buildx-cache
           key: buildx-${{ runner.os }}-${{ github.workflow }}-${{ github.job }}-${{ hashFiles('go.sum', 'web/pnpm-lock.yaml', 'deploy/versions.env', 'deploy/Dockerfile.local', 'deploy/Dockerfile.init', 'deploy/Dockerfile.simulator') }}-${{ github.run_id }}
@@ -111,7 +111,7 @@ jobs:
 
       - name: Upload cluster logs on failure
         if: failure()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
           name: e2e-k8s-cluster-logs
           path: /tmp/e2e-k8s-artifacts/
