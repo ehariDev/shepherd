@@ -9,6 +9,7 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"net"
 	"net/http"
 	"slices"
 	"strconv"
@@ -143,6 +144,11 @@ type Handler struct {
 	// /auth/methods call wait out a discovery timeout.
 	reloadMu   sync.Mutex
 	lastReload time.Time
+
+	// loginThrottle rate-limits LocalLoginHandler (D4, W3-2). Its zero value
+	// is ready to use, so every construction path (including the test
+	// helpers in export_test.go) gets a working throttle for free.
+	loginThrottle loginThrottle
 }
 
 // New creates an auth Handler and resolves the initial OIDC configuration.
@@ -641,6 +647,21 @@ func (h *Handler) LocalLoginHandler(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// Two independent buckets: a targeted guess against one login must not
+	// hide behind a generous per-IP allowance, and a distributed guess spread
+	// across logins from one address must not hide behind a generous
+	// per-login allowance. Both are checked unconditionally (not
+	// short-circuited) so each bucket's state reflects every attempt that
+	// reached this point, matching what it would show under sustained load.
+	ipAllowed := h.loginThrottle.allow("ip:"+clientIP(r), loginPerIPRate, loginPerIPBurst, loginThrottleIdleEvict)
+	loginAllowed := h.loginThrottle.allow("login:"+strings.ToLower(req.Username), loginPerLoginRate, loginPerLoginBurst, loginThrottleIdleEvict)
+	if !ipAllowed || !loginAllowed {
+		h.logger.Warn("local sign-in throttled", "login", req.Username)
+		w.Header().Set("Retry-After", strconv.Itoa(loginThrottleRetryAfterSeconds))
+		writeAuthError(w, http.StatusTooManyRequests, "rate_limited", "too many sign-in attempts, try again later")
+		return
+	}
+
 	user, err := h.users.Authenticate(r.Context(), req.Username, req.Password)
 	if err != nil {
 		// One response for every failure mode. The server log distinguishes
@@ -834,6 +855,20 @@ func randomState() string {
 	b := make([]byte, 24)
 	_, _ = rand.Read(b)
 	return base64.URLEncoding.EncodeToString(b)
+}
+
+// clientIP returns the request's source address without its port, for use
+// as a loginThrottle key. It reads r.RemoteAddr only — no
+// X-Forwarded-For/X-Real-IP parsing — so behind the Helm ingress every
+// client resolves to the same address; the per-IP bucket is sized generous
+// enough (loginPerIPBurst) to absorb that (see the login_throttle.go
+// comment) rather than trust a header a client can set itself.
+func clientIP(r *http.Request) string {
+	host, _, err := net.SplitHostPort(r.RemoteAddr)
+	if err != nil {
+		return r.RemoteAddr
+	}
+	return host
 }
 
 // writeAuthError writes a JSON error response to w. It is safe to call after WriteHeader.
