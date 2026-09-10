@@ -4,6 +4,7 @@ import { toast } from 'sonner';
 import { graphView } from '../../api/client';
 import { clients, toApiError } from '../../api/transport';
 import { useOrg } from '../../hooks/useOrg';
+import { clearDraft, loadDraft, shouldOfferRestore, subscribeDraftAutosave } from '../draft';
 import { fetchSchema } from '../schemaAdapter';
 import { useVisualStore } from '../store';
 import type { GraphDocument } from '../types';
@@ -51,13 +52,11 @@ export function VisualBuilderPage() {
   // (Zustand action references are stable but the selector creates new refs each render)
   const setSchemaRef = useRef(useVisualStore.getState().setSchema);
 
-  // Warn before the browser discards an unsaved graph.
-  //
-  // The builder holds the entire graph in memory with no persistence: a
-  // refresh, a closed tab or a crash silently loses however long you spent
-  // wiring it. draft.ts implements IndexedDB save/load for exactly this and
-  // nothing imports it -- restoring a draft well needs a restore-or-discard
-  // decision this does not attempt. Until then, at least make the browser ask.
+  // Warn before the browser discards an unsaved graph. draft.ts's
+  // subscribeDraftAutosave (wired below) means a refresh or crash loses at
+  // most a few hundred ms of edits, not the whole session — this dialog is
+  // still worth keeping as a second line of defense against an accidental
+  // close.
   useEffect(() => {
     const onBeforeUnload = (e: BeforeUnloadEvent) => {
       const { doc } = useVisualStore.getState();
@@ -72,6 +71,7 @@ export function VisualBuilderPage() {
 
   const [loadState, setLoadState] = useState<'idle' | 'loading' | 'error'>('idle');
   const [loadError, setLoadError] = useState<string | null>(null);
+  const [draftToRestore, setDraftToRestore] = useState<GraphDocument | null>(null);
 
   useEffect(() => {
     fetchSchema()
@@ -100,6 +100,34 @@ export function VisualBuilderPage() {
     }
     prevPipelineIdRef.current = pipelineId;
   }, [pipelineId]);
+
+  // Persist the in-memory graph to IndexedDB as it's edited (design §4.4) —
+  // the builder otherwise holds the whole graph in memory with no
+  // persistence, so a refresh, a closed tab or a crash loses however long
+  // was spent wiring it up. Re-subscribed whenever pipelineId changes so a
+  // save always lands under the right draft key.
+  useEffect(() => subscribeDraftAutosave(useVisualStore, pipelineId), [pipelineId]);
+
+  // Offer to restore a draft left behind by an earlier session. Checked once
+  // the doc this pipelineId should actually start from is in place: for
+  // 'new' that's immediately (a fresh mount starts from the empty default
+  // doc, and the sessionStorage import effect above — which takes priority
+  // — has already run by the time this runs, since effects commit in
+  // declaration order); for an existing pipeline it's deferred until the
+  // fetch above finishes, so the draft is compared against what was
+  // actually saved, not a transient empty doc.
+  useEffect(() => {
+    if (pipelineId !== 'new' && loadState !== 'idle') return;
+    let cancelled = false;
+    loadDraft(pipelineId).then((draft) => {
+      if (cancelled) return;
+      const current = useVisualStore.getState().doc;
+      if (shouldOfferRestore(draft, current)) setDraftToRestore(draft);
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, [pipelineId, loadState]);
 
   // Load an existing pipeline into the canvas (B4.4): seed name/matchers
   // from the Pipeline record, and the graph itself per D3 (docs/reviews:
@@ -232,6 +260,34 @@ export function VisualBuilderPage() {
 
   return (
     <div className='flex flex-col h-full' data-testid='visual-builder'>
+      {draftToRestore && (
+        <div
+          data-testid='draft-restore-banner'
+          className='shrink-0 px-4 py-2 bg-yellow-50 border-b border-yellow-300 text-xs flex items-center gap-3'
+        >
+          <span>An unsaved draft was found for this pipeline — restore it or discard it?</span>
+          <button
+            data-testid='draft-restore'
+            className='underline font-medium'
+            onClick={() => {
+              useVisualStore.getState().importGraph(draftToRestore);
+              setDraftToRestore(null);
+            }}
+          >
+            Restore draft
+          </button>
+          <button
+            data-testid='draft-discard'
+            className='underline font-medium'
+            onClick={() => {
+              void clearDraft(pipelineId);
+              setDraftToRestore(null);
+            }}
+          >
+            Discard draft
+          </button>
+        </div>
+      )}
       <Toolbar pipelineId={pipelineId} />
       <div className='flex flex-1 min-h-0 overflow-hidden'>
         <Palette />
