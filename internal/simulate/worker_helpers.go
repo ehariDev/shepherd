@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"strings"
+	"unicode/utf8"
 
 	"shepherd/internal/validate"
 	"shepherd/internal/visual"
@@ -154,10 +155,55 @@ func joinStderr(lines []string) string {
 const maxStderrTailBytes = 8 * 1024
 
 func capStderr(s string) string {
+	return SanitizeStderrTail(s)
+}
+
+// SanitizeStderrTail makes s safe to store in simulate_runs.stderr_tail, a
+// Postgres TEXT column, and safe to render as a log tail: it strips ASCII
+// control characters (other than newline and tab) and truncates to the last
+// maxStderrTailBytes bytes without splitting a UTF-8 rune.
+//
+// The input is the sandbox Alloy's raw stderr, read line-by-line via
+// bufio.Scanner.Text() (internal/simsvc/runner.go) — never validated as
+// UTF-8 at that layer. A plain byte-index cut (s[len(s)-max:]) can start
+// mid-rune, and Postgres rejects the resulting invalid UTF-8 with SQLSTATE
+// 22021; CompleteSimulateRun then fails and the run sits until the janitor
+// reaps it (worker.go:363-368).
+func SanitizeStderrTail(s string) string {
+	s = strings.ToValidUTF8(stripControlChars(s), "")
 	if len(s) <= maxStderrTailBytes {
 		return s
 	}
-	return s[len(s)-maxStderrTailBytes:]
+	cut := s[len(s)-maxStderrTailBytes:]
+	// The byte-index cut lands on a valid rune boundary already (s is valid
+	// UTF-8 throughout, courtesy of ToValidUTF8 above) UNLESS it fell inside
+	// a multi-byte rune's trailing bytes — those are UTF-8 continuation
+	// bytes (10xxxxxx), which utf8.RuneStart identifies. Skip past them
+	// rather than keep a fragment that would decode as replacement
+	// characters or, worse, as different runes than were ever written.
+	for i := 0; i < len(cut) && i < utf8.UTFMax; i++ {
+		if utf8.RuneStart(cut[i]) {
+			return cut[i:]
+		}
+	}
+	return cut
+}
+
+// stripControlChars removes ASCII control characters other than newline and
+// tab — the ones a terminal-oriented log line accumulates (NUL, ANSI escape
+// sequences, DEL) — while leaving every other rune, including non-ASCII
+// text, untouched.
+func stripControlChars(s string) string {
+	return strings.Map(func(r rune) rune {
+		switch {
+		case r == '\n' || r == '\t':
+			return r
+		case r < 0x20 || r == 0x7f:
+			return -1
+		default:
+			return r
+		}
+	}, s)
 }
 
 // marshalOrEmptyArray marshals v, falling back to an empty JSON array on
