@@ -21,7 +21,7 @@ import (
 // minimalRunGraph is a structurally valid CreateRun request body: kind ==
 // "alloy-graph/v1" and at least one node, which is all CreateRun's
 // synchronous pre-check requires (deeper validation happens in
-// internal/simulate.RunWorker, which is never started in these tests — a
+// internal/simulate/worker.RunWorker, which is never started in these tests — a
 // created run simply stays "queued", which is all GetRun needs to exercise).
 func minimalRunGraph(orgID string) map[string]any {
 	return map[string]any{

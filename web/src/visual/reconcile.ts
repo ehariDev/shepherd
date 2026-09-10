@@ -36,9 +36,10 @@
 import type { Edge, Node } from '@xyflow/react';
 import deepEqual from 'fast-deep-equal';
 import { createElement } from 'react';
+import type { Theme } from '../theme';
 import type { PipelineNodeData } from './components/PipelineNode';
 import { resolvePorts } from './l1';
-import { getWireColor } from './schemaAdapter';
+import { getThemedWireColor } from './schemaAdapter';
 import type { SimHealthEntry } from './store';
 import type { ComponentDef, GraphEdge, GraphNode, L1Diagnostic, SchemaPayload } from './types';
 import { rfEndpointsForEdge } from './wireOrient';
@@ -163,6 +164,9 @@ export type EdgeInputs = {
   animated: boolean;
   fromLabel: string;
   rf: ReturnType<typeof rfEndpointsForEdge>;
+  /** The stroke colour is theme-dependent (overlay color_light), so a theme
+   *  switch must invalidate the cached edge the same way a wire-type change does. */
+  theme: Theme;
 };
 
 export function reconcileEdges(
@@ -173,6 +177,7 @@ export function reconcileEdges(
   flowCheckActive: boolean,
   selectedIds: Set<string>,
   inputs: Map<string, EdgeInputs>,
+  theme: Theme,
 ): Edge[] {
   const reachable =
     flowCheckActive && schema
@@ -199,7 +204,7 @@ export function reconcileEdges(
     // wireOrient.ts's rfEndpointsForEdge for why handing it `from`/`to`
     // verbatim silently fails to render a receiver-kind wire.
     const rf = rfEndpointsForEdge(schema, { nodes: docNodes }, src);
-    nextInputs.set(src.id, { src, wireType, animated, fromLabel, rf });
+    nextInputs.set(src.id, { src, wireType, animated, fromLabel, rf, theme });
 
     const prev = byId.get(src.id);
     const prevIn = inputs.get(src.id);
@@ -210,6 +215,7 @@ export function reconcileEdges(
       prevIn.wireType === wireType &&
       prevIn.animated === animated &&
       prevIn.fromLabel === fromLabel &&
+      prevIn.theme === theme &&
       prev.selected === selected &&
       deepEqual(prevIn.rf, rf)
     ) {
@@ -224,7 +230,7 @@ export function reconcileEdges(
       ...rf,
       selected,
       animated,
-      style: wireType ? { stroke: getWireColor(schema, wireType) } : undefined,
+      style: wireType ? { stroke: getThemedWireColor(schema, wireType, theme) } : undefined,
       // `data` carries the wire's semantics rather than just its looks, so a
       // custom edge component (animated dataflow, live throughput from Alloy)
       // can read them without re-deriving anything from the schema.

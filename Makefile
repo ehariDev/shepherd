@@ -640,14 +640,10 @@ schema-verify: gen-alloy-version preflight-docker ## Verify the committed schema
 # fixture. Review the diff: a golden that changes without a corresponding
 # renderer or graph change is a regression, not a refresh. Both suites verify
 # the copies are byte-identical to the Go originals, so a partial run is caught.
-generate-corpus: ## Regenerate visual-builder goldens and sync to web fixtures
+generate-corpus: ## Regenerate visual-builder goldens (web tests read internal/visual/testdata/corpus directly)
 	@echo "==> Regenerating goldens from the shipped schema artifact..."
 	GEN_GOLDENS=1 go test ./internal/visual/ -run TestGenGoldens
-	@echo "==> Syncing visual builder corpus..."
-	@mkdir -p web/src/visual/__fixtures__/corpus
-	@cp internal/visual/testdata/corpus/*.graph.json web/src/visual/__fixtures__/corpus/
-	@cp internal/visual/testdata/corpus/*.golden.alloy web/src/visual/__fixtures__/corpus/
-	@echo "==> Done. $(shell ls internal/visual/testdata/corpus/*.graph.json | wc -l | tr -d ' ') corpus entries synced."
+	@echo "==> Done. $(shell ls internal/visual/testdata/corpus/*.graph.json | wc -l | tr -d ' ') corpus entries; renderTS.test.ts reads them in place."
 
 # Kubernetes e2e suite (kind). Creates its own cluster, installs Calico,
 # runs the specs, and destroys the cluster — including on failure and panic.

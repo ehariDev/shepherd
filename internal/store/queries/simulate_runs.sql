@@ -25,7 +25,7 @@ WHERE sr.status = 'queued'
 -- Claims the single oldest queued run for the caller's connection. Callers
 -- must hold a cluster-wide advisory lock (pg_try_advisory_lock) before
 -- calling this so MaxConcurrentRuns is enforced regardless of replica count
--- — see internal/simulate.RunWorker.
+-- — see internal/simulate/worker.RunWorker.
 UPDATE simulate_runs
 SET status = 'running', started_at = now()
 WHERE id = (

@@ -244,6 +244,7 @@ export function CanvasPane() {
       flowCheckActive,
       selectedIds,
       edgeInputsRef.current,
+      theme,
     ),
   );
 
@@ -273,9 +274,10 @@ export function CanvasPane() {
         flowCheckActive,
         selectedIds,
         edgeInputsRef.current,
+        theme,
       ),
     );
-  }, [doc.edges, doc.nodes, schema, flowCheckActive, selectedIds]);
+  }, [doc.edges, doc.nodes, schema, flowCheckActive, selectedIds, theme]);
 
   // A2: the in-flight connection line takes the source port's wire color
   // instead of React Flow's default gray bezier.

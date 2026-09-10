@@ -102,8 +102,8 @@ describe('reconcileEdges', () => {
     const n2 = node('n2', 'test.sink');
     const e1 = edge('e1', 'n1', 'n2');
     const inputs = new Map<string, EdgeInputs>();
-    const first = reconcileEdges([], [e1], [n1, n2], schema, false, new Set(), inputs);
-    const second = reconcileEdges(first, [e1], [n1, n2], schema, false, new Set(), inputs);
+    const first = reconcileEdges([], [e1], [n1, n2], schema, false, new Set(), inputs, 'dark');
+    const second = reconcileEdges(first, [e1], [n1, n2], schema, false, new Set(), inputs, 'dark');
     expect(second[0]).toBe(first[0]);
     expect(second).toBe(first);
   });
@@ -114,8 +114,17 @@ describe('reconcileEdges', () => {
     const e1 = edge('e1', 'n1', 'n2');
     const e1Clone: GraphEdge = JSON.parse(JSON.stringify(e1));
     const inputs = new Map<string, EdgeInputs>();
-    const first = reconcileEdges([], [e1], [n1, n2], schema, false, new Set(), inputs);
-    const second = reconcileEdges(first, [e1Clone], [n1, n2], schema, false, new Set(), inputs);
+    const first = reconcileEdges([], [e1], [n1, n2], schema, false, new Set(), inputs, 'dark');
+    const second = reconcileEdges(
+      first,
+      [e1Clone],
+      [n1, n2],
+      schema,
+      false,
+      new Set(),
+      inputs,
+      'dark',
+    );
     expect(second[0]).not.toBe(first[0]);
   });
 
@@ -124,12 +133,12 @@ describe('reconcileEdges', () => {
     const n2 = node('n2', 'test.sink');
     const e1 = edge('e1', 'n1', 'n2');
     const inputs = new Map<string, EdgeInputs>();
-    const off = reconcileEdges([], [e1], [n1, n2], schema, false, new Set(), inputs);
+    const off = reconcileEdges([], [e1], [n1, n2], schema, false, new Set(), inputs, 'dark');
     expect(off[0].animated).toBe(false);
     expect(off[0].style).toEqual({ stroke: '#123456' });
 
     const inputs2 = new Map<string, EdgeInputs>();
-    const on = reconcileEdges([], [e1], [n1, n2], schema, true, new Set(), inputs2);
+    const on = reconcileEdges([], [e1], [n1, n2], schema, true, new Set(), inputs2, 'dark');
     expect(on[0].animated).toBe(true);
     expect(on[0].label).toBeTruthy();
   });

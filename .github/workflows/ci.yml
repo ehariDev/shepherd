@@ -420,6 +420,15 @@ jobs:
       - name: go test ./... (with coverage)
         run: make test-cover
 
+      # The sandbox transform's real-binary validation spec (label
+      # needs-alloy-binary) already runs inside `go test ./...` because the
+      # Alloy image is pulled above and the spec fails rather than skips
+      # without a binary. This explicit, --fail-on-empty run makes that
+      # dependency visible in the job log so a future rename of the label or
+      # a skip-on-missing change cannot silently drop it (W4-S9).
+      - name: Sandbox transform against the real Alloy binary
+        run: go run github.com/onsi/ginkgo/v2/ginkgo --label-filter=needs-alloy-binary --fail-on-empty ./internal/simulate
+
       - name: Publish coverage summary
         if: always()
         run: |
