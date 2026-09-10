@@ -39,19 +39,20 @@ func buildxCacheSteps(file string) []workflowStep {
 // exists and the rotate is a silent no-op forever.
 var _ = Describe("buildx layer cache keys", func() {
 	for _, file := range []string{"ci.yml", "e2e.yml", "e2e-k8s.yml"} {
-		file := file
 		It(fmt.Sprintf("scopes each cache key in %s to its own workflow and run", file), func() {
 			steps := buildxCacheSteps(file)
 			Expect(steps).NotTo(BeEmpty(), "%s has no buildx cache step", file)
 
 			for i, s := range steps {
-				key, _ := s.With["key"].(string)
+				key, ok := s.With["key"].(string)
+				Expect(ok).To(BeTrue(), "%s cache step %d: with.key is not a string", file, i)
 				Expect(key).To(ContainSubstring("github.workflow"),
 					"%s cache step %d: key must include github.workflow so ci/e2e/e2e-k8s don't share one slot", file, i)
 				Expect(key).To(ContainSubstring("github.run_id"),
 					"%s cache step %d: key must include github.run_id so actions/cache always has something new to save (it never overwrites an existing key)", file, i)
 
-				restore, _ := s.With["restore-keys"].(string)
+				restore, ok := s.With["restore-keys"].(string)
+				Expect(ok).To(BeTrue(), "%s cache step %d: with.restore-keys is not a string", file, i)
 				Expect(strings.TrimSpace(restore)).To(ContainSubstring("github.workflow"),
 					"%s cache step %d: restore-keys must stay scoped per workflow so a restore can't cross-pollinate from a different workflow's cache", file, i)
 				Expect(restore).NotTo(ContainSubstring("github.run_id"),

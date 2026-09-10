@@ -8,12 +8,6 @@ import (
 	. "github.com/onsi/gomega"
 )
 
-// e2ePushTrigger is the subset of e2e.yml's on.push these specs read.
-type e2ePushTrigger struct {
-	Branches []string `yaml:"branches"`
-	Paths    []string `yaml:"paths"`
-}
-
 // Red run, 2026-09-10: e2e.yml's `on:` had no `push:` key at all --
 // workflow_dispatch, merge_group and a paths-scoped pull_request (for the
 // egress job only). Per D11 and docs/spec.md's own "CI ordering" note that
@@ -34,7 +28,9 @@ var _ = Describe("e2e.yml", func() {
 		Expect(ok).To(BeTrue(), "on.push.branches is not a list")
 		var branches []string
 		for _, b := range branchesRaw {
-			branches = append(branches, b.(string))
+			s, ok := b.(string)
+			Expect(ok).To(BeTrue(), "on.push.branches entry is not a string")
+			branches = append(branches, s)
 		}
 		Expect(branches).To(ContainElement("main"))
 
@@ -42,7 +38,9 @@ var _ = Describe("e2e.yml", func() {
 		Expect(ok).To(BeTrue(), "on.push.paths is not a list")
 		var paths []string
 		for _, p := range pathsRaw {
-			paths = append(paths, p.(string))
+			s, ok := p.(string)
+			Expect(ok).To(BeTrue(), "on.push.paths entry is not a string")
+			paths = append(paths, s)
 		}
 		// e2e/** minus e2e/k8s (the k8s suite has its own weekly/paths
 		// workflow and cannot affect this compose-based suite), plus every

@@ -58,7 +58,6 @@ func workflowFiles() []string {
 // neither can regress back to a tag.
 var _ = Describe("every workflow Action is pinned to a full commit SHA", func() {
 	for _, file := range workflowFiles() {
-		file := file
 		It(fmt.Sprintf("%s: every `uses:` is <owner>/<repo>@<40-hex-sha> # <version>", file), func() {
 			content := readRepoFile(filepath.Join(".github", "workflows", file))
 			matches := usesLineRE.FindAllStringSubmatch(content, -1)
