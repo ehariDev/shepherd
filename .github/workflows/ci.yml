@@ -67,7 +67,15 @@ on:
 
 concurrency:
   group: ci-${{ github.workflow }}-${{ github.ref }}
-  cancel-in-progress: true
+  # PR-only: a superseded PR run should be cancelled (nobody needs the stale
+  # push's results once a newer one is on the way), but two quick pushes to
+  # main must both finish. The header comment above ("NOT done, deliberately
+  # ... that duplication is the safety net for semantic conflicts between PRs
+  # that merged close together") only holds if that second push's run is
+  # never cancelled -- unconditional cancel-in-progress: true silently
+  # discarded exactly the signal that comment says this workflow keeps on
+  # purpose.
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 permissions:
   contents: read
@@ -152,8 +160,11 @@ jobs:
           # entirely inside web/ (typecheck, vitest, biome, vite build, and
           # Playwright against `vite preview` with mocked APIs), so nothing
           # outside web/ can change their result — except proto/, which
-          # regenerates web/src/gen.
-          if echo "$files" | grep -qE '(^web/|^proto/|^buf\.(gen\.)?yaml$|^Makefile$|^\.github/workflows/ci\.yml$)'; then
+          # regenerates web/src/gen, and scripts/build-web.sh, which both
+          # jobs' builds run through (the canonical `pnpm install`/`pnpm
+          # build` path per the check-build-script guard) but which lives
+          # outside web/ and so was previously invisible to this gate.
+          if echo "$files" | grep -qE '(^web/|^proto/|^scripts/build-web\.sh$|^buf\.(gen\.)?yaml$|^Makefile$|^\.github/workflows/ci\.yml$)'; then
             echo "frontend=true" >> "$GITHUB_OUTPUT"
           else
             echo "frontend=false" >> "$GITHUB_OUTPUT"

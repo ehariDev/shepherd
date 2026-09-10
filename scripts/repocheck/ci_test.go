@@ -5,6 +5,7 @@ package repocheck_test
 
 import (
 	"regexp"
+	"strings"
 
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
@@ -90,5 +91,39 @@ var _ = Describe("govulncheck", func() {
 			joined += joinedRuns(j.Steps)
 		}
 		Expect(joined).To(ContainSubstring("make vulncheck"), "govulncheck.yml must run `make vulncheck`")
+	})
+})
+
+// Red run, 2026-09-10: (1) the `changes` job's frontend-gate grep pattern was
+// `(^web/|^proto/|^buf\.(gen\.)?yaml$|^Makefile$|^\.github/workflows/ci\.yml$)`
+// -- it has no scripts/build-web.sh entry, even though both gated jobs
+// (`web` and `test-ui`) run entirely through that script (see ci.yml's own
+// comments on each). A change confined to scripts/build-web.sh could not
+// reach either job that exists to test it. (2) top-level
+// `cancel-in-progress: true` cancels a still-running push-to-main run the
+// moment a second push lands, even though the header comment at lines 50-54
+// calls the main re-run "the safety net" for semantic conflicts between PRs
+// that merged close together -- a cancelled run provides none of that
+// signal.
+var _ = Describe("ci.yml housekeeping", func() {
+	It("routes a scripts/build-web.sh change to the frontend gate", func() {
+		ci := readRepoFile(".github/workflows/ci.yml")
+		re := regexp.MustCompile(`(?m)^\s*if echo "\$files" \| grep -qE '([^']+)'; then\n\s*echo "frontend=true"`)
+		m := re.FindStringSubmatch(ci)
+		Expect(m).NotTo(BeNil(), "could not find the frontend gate's grep pattern in ci.yml")
+		pattern := regexp.MustCompile(m[1])
+		Expect(pattern.MatchString("scripts/build-web.sh")).To(BeTrue(),
+			"frontend gate pattern %q must match scripts/build-web.sh", m[1])
+	})
+
+	It("does not cancel an in-progress run of a push to main", func() {
+		ci := readRepoFile(".github/workflows/ci.yml")
+		re := regexp.MustCompile(`(?m)^\s*cancel-in-progress:\s*(.+)$`)
+		m := re.FindStringSubmatch(ci)
+		Expect(m).NotTo(BeNil(), "no top-level cancel-in-progress found in ci.yml")
+		expr := strings.TrimSpace(m[1])
+		Expect(expr).NotTo(Equal("true"),
+			"cancel-in-progress: true cancels a still-running push-to-main run; it must be scoped to pull_request")
+		Expect(expr).To(ContainSubstring("pull_request"))
 	})
 })
