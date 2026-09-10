@@ -22,8 +22,14 @@ simulator       Up 5 minutes (healthy)
 
 Brought up with `SHEPHERD_SIM_ENABLED=true docker compose -f e2e/docker-compose.e2e.yaml
 --profile sim up -d --wait`. `SHEPHERD_SIM_ENABLED` is set on the command line for the run only —
-the committed default in `e2e/docker-compose.e2e.yaml` is still `false`, and the feature remains
-disabled by default in every committed file.
+the committed default in `e2e/docker-compose.e2e.yaml` is still `false`, and the `sim` profile
+itself is not started unless asked for (`--profile sim`). The real posture differs by artifact:
+opt-in in both compose stacks (`SHEPHERD_SIM_ENABLED` defaults `false`, pinned by
+`internal/simsvc/compose_containment_test.go`), but on by default in the Helm chart
+(`simulator.enabled: true` in `deploy/helm/shepherd/values.yaml`, asserted by
+`deploy/helm/chart_test.go` and `e2e/k8s/helm_install_test.go`). This document's own stack is a
+compose one, so "opt-in, and explicitly opted in here" is what its transcript demonstrates — it
+says nothing about the chart's default.
 
 Runs were driven through the same REST surface the UI uses: local-admin login →
 `POST /api/admin/orgs` → `POST /api/orgs/{org}/simulate/runs` → poll

@@ -20,7 +20,13 @@ the live counts are the Go test, not this file.
 This document used to be titled "no authored address reaches the sandbox" and claimed the
 transform closed the reachability half of §6.4's containment claim. That claim was wrong, an
 independent attack panel proved it wrong against real Alloy v1.18.1, and the correction is the
-whole point of this revision. The feature remains **disabled by default**.
+whole point of this revision. The feature's default posture differs by artifact: **opt-in** in
+both compose stacks (`SHEPHERD_SIM_ENABLED` defaults `false`, pinned by
+`internal/simsvc/compose_containment_test.go`) but **on by default** in the Helm chart
+(`simulator.enabled: true`, asserted by `deploy/helm/chart_test.go` and
+`e2e/k8s/helm_install_test.go`) — so a Kubernetes install gets this containment posture without an
+operator opting in, and the correction above applies there from the first install, not only after
+someone flips a flag.
 
 ## The correction, stated first
 

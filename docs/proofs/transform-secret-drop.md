@@ -761,4 +761,9 @@ build-time guard cannot read.
   ordinary `address` key (`prometheus.exporter.blackbox`, `prometheus.exporter.snmp`) are
   `sim_unsupported` and fail the run closed.
 
-The feature stays **disabled by default** until the Kubernetes and egress items above are closed.
+The feature's default posture differs by artifact: **opt-in** in both compose stacks
+(`SHEPHERD_SIM_ENABLED` defaults `false`, pinned by `internal/simsvc/compose_containment_test.go`)
+but **on by default** in the Helm chart (`simulator.enabled: true`, asserted by
+`deploy/helm/chart_test.go` and `e2e/k8s/helm_install_test.go`). See "What this proof does NOT
+cover" above, and `docs/proofs/simulator-containment.md`'s own "does NOT cover" section, for what a
+live Kubernetes install's containment currently has — and still lacks — independent proof of.

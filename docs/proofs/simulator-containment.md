@@ -269,13 +269,23 @@ SUCCESS! -- 4 Passed | 0 Failed | 0 Pending | 25 Skipped
 
 ### What this proof does NOT cover
 
-- **Kubernetes.** This paragraph used to say `grep -rn simulator deploy/helm/` was empty. It is
-  no longer: `deploy/helm/shepherd/templates/{deployment,service,serviceaccount,networkpolicy}-simulator.yaml`
-  exist, with default-deny egress and `automountServiceAccountToken: false`, asserted by
-  `deploy/helm/chart_test.go`. What remains open on finding H5 is that a rendered-template
-  assertion is not a probe: nothing here dials from inside a real cluster's simulator Pod the way
-  `P-deny-ip` dials from inside the compose one. A green compose run says nothing about a
-  Kubernetes deployment and must not be read as if it did.
+- **Kubernetes — now covered.** This paragraph used to say `grep -rn simulator deploy/helm/` was
+  empty, then that the chart existed but nothing dialled from inside a real cluster's simulator Pod
+  the way `P-deny-ip` dials from inside the compose one. Finding H5 is closed: `e2e/k8s/simulator_containment_test.go`'s
+  `TestSimulatorContainmentProbes` (Layer B of `docs/kind-test-environment-plan.md` §5) runs seven
+  probes from an ephemeral debug container sharing the real simulator Pod's network namespace —
+  P-harness (reachable, the vacuity guard), P-shepherd, P-incluster, P-node, P-external, P-dns-only,
+  P-apiserver (all denied) — against a live `kind` cluster with the chart's own
+  NetworkPolicy applied, gated behind `TestCNIEnforcesNetworkPolicy` so a non-enforcing CNI cannot
+  produce a false-green denial. `make e2e-k8s` runs it; a rendered-template assertion in
+  `deploy/helm/chart_test.go` is no longer the only evidence for the Kubernetes posture. The one
+  gap still open: `templates/networkpolicy-simulator.yaml`'s egress rules open UDP/TCP 53 to the
+  `kube-system` namespace so the Pod can resolve this chart's own Service name, even though the
+  four harness endpoints the sandboxed Alloy child process must reach (capture, synthetic,
+  OTLP-gRPC, syslog) are all served by that same Pod and reachable at its own address with no name
+  resolution at all. P-dns-only's "resolves, denied" proves connecting to whatever a name resolves
+  to is still refused, but the DNS egress itself is a channel nothing legitimate needs — a residual
+  worth closing, not a hole in the containment as proven today.
 - **The full S3 suite.** No longer an open item. Finding M13 — `internal/visual/render.go`'s
   list-cardinality bracket-wrap, which made `alloy run` refuse every discovery-to-scrape wire
   (`discovery.relabel.k8s.output target::ConvertFrom: conversion from '[]discovery.Target' is not
