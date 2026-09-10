@@ -26,7 +26,13 @@ name: Release
 on:
   push:
     tags:
-      - "v*"
+      # GitHub's tag filter is a glob, not a regex -- there is no \d
+      # equivalent beyond a [0-9] character class, so this is the tightest
+      # match it allows ("vfoo", "v1" and "version-2" no longer trigger).
+      # The verify job's "Validate tag" step backs this up with a real regex
+      # at runtime, since e.g. "v1.2.3.4" still satisfies this glob.
+      - "v[0-9]+.[0-9]+.[0-9]+"
+      - "v[0-9]+.[0-9]+.[0-9]+-*"
 
 # One release at a time. Two tags pushed in quick succession would otherwise
 # race the "is this chart version already published" check below, and both
@@ -38,22 +44,99 @@ concurrency:
 permissions:
   contents: write
   packages: write
+  id-token: write      # actions/attest-build-provenance: sign with Sigstore
+  attestations: write  # actions/attest-build-provenance: publish the attestation
 
 jobs:
+  # Gates the tagged commit exactly as hard as a PR to main: nothing here
+  # assumes the tag's commit ever passed ci.yml (there is no merge queue and
+  # branch protection requires no status checks), so `release` needs this job
+  # rather than trusting the tag alone.
+  verify:
+    name: verify
+    runs-on: ubuntu-latest
+    if: github.repository == 'procoduck/shepherd'
+    timeout-minutes: 20
+    steps:
+      # The push.tags glob above (GitHub Actions has no \d) still lets
+      # through e.g. "v1.2.3.4" or "v01.2.3" -- reject anything that isn't a
+      # real semver release tag before doing anything else.
+      - name: Validate tag
+        run: |
+          if [[ ! "$GITHUB_REF_NAME" =~ ^v[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z.-]+)?$ ]]; then
+            echo "::error::tag '$GITHUB_REF_NAME' is not a valid semver release tag (expected vMAJOR.MINOR.PATCH[-PRERELEASE])" >&2
+            exit 1
+          fi
+
+      - name: Checkout
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+
+      - name: Set up Go
+        uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5.6.0
+        with:
+          go-version-file: go.mod
+          cache: true
+
+      # Pinned to the same version as ci.yml's lint job so a release cannot
+      # pass a check main's own CI would have failed.
+      - name: golangci-lint
+        uses: golangci/golangci-lint-action@4afd733a84b1f43292c63897423277bb7f4313a9 # v8.0.0
+        with:
+          version: v2.12.2
+          args: --timeout=5m
+
+      - name: golangci-lint config verify
+        run: golangci-lint config verify
+
+      # Pure shell/grep/find guards (check-single-dist, check-raw-sql,
+      # check-docker, ...) — see ci.yml's own guards job.
+      - name: Repo guards
+        run: make guards
+
+      - name: go build
+        run: go build ./...
+
+      - name: go vet
+        run: go vet ./...
+
+      # internal/visual's stage-2 corpus spec shells the pinned Alloy binary
+      # via a Docker fallback and fails (rather than silently skipping) when
+      # no binary or image is available — see internal/visual/render_test.go.
+      # Pulling here surfaces a registry/network problem as its own step
+      # instead of inside the test run, pinned to the same source of truth
+      # (deploy/versions.env) ci.yml uses.
+      - name: Pull pinned Alloy image
+        run: |
+          source deploy/versions.env
+          docker pull --quiet "$ALLOY_IMAGE"
+
+      - name: go test
+        run: go test ./...
+
+      # ubuntu-latest ships helm; seconds-cheap and the chart has shipped
+      # uninstallable before (commit ec0130f).
+      - name: Helm lint
+        run: make helm-lint
+
   release:
     name: release
+    needs: verify
     runs-on: ubuntu-latest
     if: github.repository == 'procoduck/shepherd'
     timeout-minutes: 30
+    outputs:
+      # JSON array of {name, digest} for the attest-images job's matrix —
+      # the image names and digests aren't known until goreleaser has run.
+      images: ${{ steps.images.outputs.images }}
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
         with:
           fetch-depth: 0
           fetch-tags: true
 
       - name: Set up Go
-        uses: actions/setup-go@v5
+        uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5.6.0
         with:
           go-version-file: go.mod
           cache: true
@@ -69,12 +152,12 @@ jobs:
           echo "version=$version" >> "$GITHUB_OUTPUT"
 
       - name: Set up pnpm
-        uses: pnpm/action-setup@v4
+        uses: pnpm/action-setup@b906affcce14559ad1aafd4ab0e942779e9f58b1 # v4.3.0
         with:
           version: ${{ steps.pnpm-version.outputs.version }}
 
       - name: Set up Node
-        uses: actions/setup-node@v4
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
         with:
           node-version: 24
           cache: pnpm
@@ -106,19 +189,10 @@ jobs:
             exit 1
           fi
 
-      - name: Set up syft (SBOM generation)
-        uses: anchore/sbom-action/download-syft@v0
-
-      - name: Set up QEMU (for linux/arm64 cross-build)
-        uses: docker/setup-qemu-action@v3
-        with:
-          platforms: arm64
-
-      - name: Set up Docker Buildx
-        uses: docker/setup-buildx-action@v3
-
       # docker/login-action needs just the registry host, but IMAGE_REGISTRY
       # (e.g. "ghcr.io/procoduck") includes the namespace path — split it.
+      # Resolved here, ahead of syft/buildx, because the chart-publication
+      # probe below needs it too.
       - name: Resolve registry host
         id: registry
         run: |
@@ -127,49 +201,19 @@ jobs:
         env:
           IMAGE_REGISTRY: ${{ vars.IMAGE_REGISTRY }}
 
-      - name: Log in to registry
-        uses: docker/login-action@v3
-        with:
-          registry: ${{ steps.registry.outputs.host }}
-          username: ${{ secrets.REGISTRY_USERNAME || github.actor }}
-          password: ${{ secrets.REGISTRY_PASSWORD || secrets.GITHUB_TOKEN }}
-
       - name: Set up Helm
-        uses: azure/setup-helm@v4
+        uses: azure/setup-helm@1a275c3b69536ee54be43f2070a358922e12c8d4 # v4.3.1
         with:
           version: v3.16.3
 
-      - name: goreleaser release
-        uses: goreleaser/goreleaser-action@v6
-        with:
-          distribution: goreleaser
-          version: latest
-          args: release --clean
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          IMAGE_REGISTRY: ${{ vars.IMAGE_REGISTRY || 'ghcr.io/procoduck' }}
-          SOURCE_URL: ${{ vars.SOURCE_URL || 'https://github.com/procoduck/shepherd' }}
-
-      # The chart is published as an OCI artifact so an operator can install it
-      # without cloning the repo:
-      #
-      #   helm install shepherd oci://ghcr.io/procoduck/charts/shepherd --version X
-      #
-      # It is versioned independently of the application -- Chart.yaml's
-      # `version` is the chart's, `appVersion` is Shepherd's -- so it is pushed
-      # under its own version rather than the git tag. Two things have to hold
-      # for that to be safe, and both are checked rather than assumed:
-      #
-      #   1. appVersion matches the tag being released. The image tag falls
-      #      back to appVersion (see _helpers.tpl), so a chart published with a
-      #      stale one installs the WRONG image -- and does it silently, since
-      #      the rendered manifest is perfectly valid.
-      #   2. This chart version is not already published. An OCI registry will
-      #      happily overwrite a tag, and a chart version whose contents change
-      #      underneath it is the one failure a chart consumer cannot defend
-      #      against. Bump Chart.yaml's `version` for every release that
-      #      changes the chart.
-      - name: Publish the Helm chart to GHCR (OCI)
+      # Runs before goreleaser (and therefore before either image is built or
+      # pushed, and before the GitHub release is cut) so a chart that fails
+      # to lint, or a chart version that is already published, stops the
+      # release here instead of after the half-published state this used to
+      # risk: goreleaser had already pushed images and cut the GitHub release
+      # by the time this same check used to run, inside the "Publish the Helm
+      # chart" step below.
+      - name: Verify the Helm chart is unpublished and lints cleanly
         env:
           IMAGE_REGISTRY: ${{ vars.IMAGE_REGISTRY || 'ghcr.io/procoduck' }}
           REGISTRY_HOST: ${{ steps.registry.outputs.host }}
@@ -177,12 +221,14 @@ jobs:
           REGISTRY_PASS: ${{ secrets.REGISTRY_PASSWORD || secrets.GITHUB_TOKEN }}
         run: |
           set -euo pipefail
+          make helm-lint
+
           chart_dir=deploy/helm/shepherd
           tag_version="${GITHUB_REF_NAME#v}"
 
           # awk rather than `sed | head -1`: under `set -o pipefail`, head
-          # closing the pipe early can hand sed a SIGPIPE and fail the step for
-          # no reason at all.
+          # closing the pipe early can hand sed a SIGPIPE and fail the step
+          # for no reason at all.
           read_field() {
             awk -v k="$1:" '$1 == k { gsub(/"/, "", $2); print $2; exit }' "$chart_dir/Chart.yaml"
           }
@@ -208,9 +254,9 @@ jobs:
           echo "$REGISTRY_PASS" | helm registry login "$REGISTRY_HOST" -u "$REGISTRY_USER" --password-stdin
 
           # Distinguish "absent" from "could not tell". A transient network or
-          # auth failure previously looked identical to "not published", and the
-          # workflow went on to push -- overwriting a released chart version,
-          # the exact thing this check exists to prevent.
+          # auth failure previously looked identical to "not published", and
+          # the workflow went on to push -- overwriting a released chart
+          # version, the exact thing this check exists to prevent.
           probe_out="$(helm show chart "${chart_repo}/shepherd" --version "$chart_version" 2>&1)" && probe_rc=0 || probe_rc=$?
           if [ "$probe_rc" -ne 0 ] && ! grep -qiE "not found|manifest unknown|no such|does not exist" <<<"$probe_out"; then
             echo "::error::could not determine whether chart $chart_version is already published: $probe_out" >&2
@@ -222,8 +268,136 @@ jobs:
             exit 1
           fi
 
-          helm lint "$chart_dir"
+      - name: Set up syft (SBOM generation)
+        uses: anchore/sbom-action/download-syft@e22c389904149dbc22b58101806040fa8d37a610 # v0.24.0
+
+      - name: Set up QEMU (for linux/arm64 cross-build)
+        uses: docker/setup-qemu-action@c7c53464625b32c7a7e944ae62b3e17d2b600130 # v3.7.0
+        with:
+          platforms: arm64
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@8d2750c68a42422c14e847fe6c8ac0403b4cbd6f # v3.12.0
+
+      - name: Log in to registry
+        uses: docker/login-action@c94ce9fb468520275223c153574b00df6fe4bcc9 # v3.7.0
+        with:
+          registry: ${{ steps.registry.outputs.host }}
+          username: ${{ secrets.REGISTRY_USERNAME || github.actor }}
+          password: ${{ secrets.REGISTRY_PASSWORD || secrets.GITHUB_TOKEN }}
+
+      - name: goreleaser release
+        uses: goreleaser/goreleaser-action@e435ccd777264be153ace6237001ef4d979d3a7a # v6.4.0
+        with:
+          distribution: goreleaser
+          # Pinned, not "latest": .goreleaser.yaml declares a `version: 2`
+          # config schema that assumes a v2.x CLI, and "latest" could pick up
+          # a new major (or any other behaviour change) between releases with
+          # no warning.
+          version: v2.18.1
+          args: release --clean
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          IMAGE_REGISTRY: ${{ vars.IMAGE_REGISTRY || 'ghcr.io/procoduck' }}
+          SOURCE_URL: ${{ vars.SOURCE_URL || 'https://github.com/procoduck/shepherd' }}
+
+      # Ties every downloaded archive to the workflow run, commit and builder
+      # that produced it. checksums.txt already lists a digest per archive
+      # (.goreleaser.yaml's checksum section), so one call attests all of
+      # them.
+      - name: Attest release archives
+        uses: actions/attest-build-provenance@4d101475d8b20a2381f78447822ac1eab6504dd8 # v4.2.2
+        with:
+          subject-checksums: dist/checksums.txt
+
+      # The four docker_manifests entries in .goreleaser.yaml (shepherd and
+      # shepherd-simulator, each :{{ .Version }} and :latest) aren't known
+      # until goreleaser has written dist/artifacts.json. Collect their
+      # name+digest here and hand them to the attest-images job below as a
+      # matrix -- actions/attest-build-provenance attests one subject per
+      # invocation.
+      - name: Collect image digests
+        id: images
+        run: |
+          set -euo pipefail
+          # goreleaser's artifact "name" is the full tagged ref
+          # (ghcr.io/<ns>/shepherd:X.Y.Z); actions/attest-build-provenance
+          # wants subject-name as the untagged image ref, matched to the
+          # pushed manifest digest by subject-digest.
+          images="$(jq -c '[
+            .[] | select(.type == "Docker Manifest") |
+            {name: (.name | sub(":[^:/]+$"; "")), digest: .extra.Digest}
+          ]' dist/artifacts.json)"
+          echo "images=$images" >> "$GITHUB_OUTPUT"
+
+      # The chart is published as an OCI artifact so an operator can install it
+      # without cloning the repo:
+      #
+      #   helm install shepherd oci://ghcr.io/procoduck/charts/shepherd --version X
+      #
+      # It is versioned independently of the application -- Chart.yaml's
+      # `version` is the chart's, `appVersion` is Shepherd's -- so it is pushed
+      # under its own version rather than the git tag. Two things have to hold
+      # for that to be safe, and both are checked rather than assumed:
+      #
+      #   1. appVersion matches the tag being released. The image tag falls
+      #      back to appVersion (see _helpers.tpl), so a chart published with a
+      #      stale one installs the WRONG image -- and does it silently, since
+      #      the rendered manifest is perfectly valid.
+      #   2. This chart version is not already published. An OCI registry will
+      #      happily overwrite a tag, and a chart version whose contents change
+      #      underneath it is the one failure a chart consumer cannot defend
+      #      against. Bump Chart.yaml's `version` for every release that
+      #      changes the chart.
+      #
+      # Both checks above, the strict lint, and the registry login already
+      # ran in "Verify the Helm chart is unpublished and lints cleanly" —
+      # before goreleaser, not after. The registry login persists on disk for
+      # the rest of the job (same runner, same $HOME), so this step only
+      # packages and pushes.
+      - name: Publish the Helm chart to GHCR (OCI)
+        env:
+          IMAGE_REGISTRY: ${{ vars.IMAGE_REGISTRY || 'ghcr.io/procoduck' }}
+        run: |
+          set -euo pipefail
+          chart_dir=deploy/helm/shepherd
+
+          # awk rather than `sed | head -1`: under `set -o pipefail`, head
+          # closing the pipe early can hand sed a SIGPIPE and fail the step for
+          # no reason at all.
+          read_field() {
+            awk -v k="$1:" '$1 == k { gsub(/"/, "", $2); print $2; exit }' "$chart_dir/Chart.yaml"
+          }
+          chart_version="$(read_field version)"
+          app_version="$(read_field appVersion)"
+
+          # ghcr.io/<ns> -> ghcr.io/<ns>/charts, so the chart lands at
+          # oci://ghcr.io/<ns>/charts/shepherd and does not collide with the
+          # image package of the same name.
+          chart_repo="oci://${IMAGE_REGISTRY}/charts"
+
           helm package "$chart_dir" --destination dist-chart
           helm push "dist-chart/shepherd-${chart_version}.tgz" "$chart_repo"
 
           echo "Published ${chart_repo}/shepherd:${chart_version} (appVersion ${app_version})"
+
+  # actions/attest-build-provenance attests one subject per invocation, so
+  # the four docker_manifests images (shepherd and shepherd-simulator, each
+  # :{{ .Version }} and :latest) each get their own matrix job, built from
+  # the release job's "Collect image digests" step. Skips cleanly if goreleaser
+  # skipped a manifest's push (e.g. :latest on a prerelease) -- that manifest
+  # is simply absent from dist/artifacts.json and so from the matrix.
+  attest-images:
+    name: attest-images
+    needs: release
+    if: needs.release.outputs.images != '[]'
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        image: ${{ fromJson(needs.release.outputs.images) }}
+    steps:
+      - name: Attest ${{ matrix.image.name }}
+        uses: actions/attest-build-provenance@4d101475d8b20a2381f78447822ac1eab6504dd8 # v4.2.2
+        with:
+          subject-name: ${{ matrix.image.name }}
+          subject-digest: ${{ matrix.image.digest }}
