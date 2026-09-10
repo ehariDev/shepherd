@@ -366,16 +366,22 @@ func (h *Handler) LoginHandler(w http.ResponseWriter, r *http.Request) {
 	state := randomState()
 	// Generate PKCE S256 verifier and challenge.
 	verifierStr := oauth2.GenerateVerifier()
+	// W3-6: bind the ID token to THIS login with a nonce, independent of
+	// state (CSRF on the redirect) and the PKCE verifier (binds the token
+	// exchange to this client). A stolen or replayed ID token minted for a
+	// different login attempt carries a different nonce and CallbackHandler
+	// refuses it.
+	nonce := randomState()
 	http.SetCookie(w, &http.Cookie{ //nolint:gosec // G124: Secure/HttpOnly/SameSite all set
 		Name:     "oidc_state",
-		Value:    state + "|" + verifierStr,
+		Value:    state + "|" + verifierStr + "|" + nonce,
 		MaxAge:   300,
 		HttpOnly: true,
 		SameSite: http.SameSiteLaxMode,
 		Path:     "/",
 		Secure:   !h.cfg.Auth.InsecureCookies,
 	})
-	http.Redirect(w, r, rt.oauth2.AuthCodeURL(state, oauth2.S256ChallengeOption(verifierStr)), http.StatusFound)
+	http.Redirect(w, r, rt.oauth2.AuthCodeURL(state, oauth2.S256ChallengeOption(verifierStr), oidc.Nonce(nonce)), http.StatusFound)
 }
 
 // CallbackHandler handles the OIDC callback, creates a session, and redirects to /.
@@ -395,13 +401,14 @@ func (h *Handler) CallbackHandler(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Split state and PKCE verifier stored in the cookie.
-	parts := strings.SplitN(stateCookie.Value, "|", 2)
-	if len(parts) != 2 || parts[0] != r.URL.Query().Get("state") {
+	// Split state, PKCE verifier and nonce stored in the cookie.
+	parts := strings.SplitN(stateCookie.Value, "|", 3)
+	if len(parts) != 3 || parts[0] != r.URL.Query().Get("state") {
 		http.Error(w, "invalid state", http.StatusBadRequest)
 		return
 	}
 	verifierStr := parts[1]
+	nonce := parts[2]
 
 	http.SetCookie(w, &http.Cookie{Name: "oidc_state", MaxAge: -1, Path: "/", HttpOnly: true, SameSite: http.SameSiteLaxMode, Secure: !h.cfg.Auth.InsecureCookies}) //nolint:gosec // G124: all attributes set
 
@@ -422,6 +429,16 @@ func (h *Handler) CallbackHandler(w http.ResponseWriter, r *http.Request) {
 	idToken, err := verifier.Verify(r.Context(), rawIDToken)
 	if err != nil {
 		h.logger.Error("OIDC ID token verify", "err", err)
+		http.Redirect(w, r, "/?auth_error=1", http.StatusFound)
+		return
+	}
+	// Verify does not check the nonce itself (go-oidc leaves that to the
+	// caller): confirm the ID token was minted for THIS login, not replayed
+	// from one the provider issued for a different authorize request. state
+	// already defends the redirect itself against CSRF; this defends the
+	// token inside it.
+	if idToken.Nonce != nonce {
+		h.logger.Error("OIDC ID token nonce mismatch")
 		http.Redirect(w, r, "/?auth_error=1", http.StatusFound)
 		return
 	}
