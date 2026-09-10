@@ -1,0 +1,46 @@
+name: govulncheck
+
+# SECURITY.md names govulncheck "the arbiter" for which reachable
+# vulnerabilities are in scope. ci.yml's `build` job already runs
+# `make vulncheck` on every backend-touching PR/push, which catches the case
+# where a code or dependency CHANGE newly makes a vulnerability reachable.
+# It cannot catch the other direction: a new CVE disclosed against a
+# dependency this repo already pins, with no code change of its own to
+# trigger that job. Weekly is the right cadence for that -- a freshly
+# disclosed CVE is not a daily-scale risk, and this matches
+# schema-verify.yml's own weekly cadence for the same kind of "nothing here
+# changed, but the world around it did" drift.
+#
+# `go run golang.org/x/vuln/cmd/govulncheck@v1.8.0` (the Makefile `vulncheck`
+# target) never touches go.mod/go.sum, so this needs no extra setup beyond Go
+# itself.
+
+on:
+  schedule:
+    - cron: "12 4 * * 3"
+  workflow_dispatch: {}
+
+concurrency:
+  group: govulncheck-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  govulncheck:
+    name: govulncheck
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache: true
+
+      - name: govulncheck
+        run: make vulncheck

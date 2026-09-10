@@ -219,6 +219,20 @@ jobs:
       - name: go vet
         run: go vet ./...
 
+      # SECURITY.md names govulncheck "the arbiter" for which reachable
+      # vulnerabilities are in scope: only ones on a call path this code
+      # actually exercises, not every CVE in the module graph. `go run
+      # pkg@version` (the Makefile target) never touches go.mod/go.sum, so
+      # this needs no ask-first dependency bump to run. Lives in this
+      # backend-gated job rather than its own always-on one: a vulnerability
+      # can only newly become reachable by a Go code or dependency change,
+      # exactly what `changes.outputs.backend` already tracks. The weekly
+      # govulncheck.yml (schedule-only) catches the OTHER way this goes red:
+      # a new CVE disclosed against a dependency this repo already pins,
+      # with no code change of its own to trigger this job at all.
+      - name: govulncheck
+        run: make vulncheck
+
   guards:
     name: guards
     runs-on: ubuntu-latest

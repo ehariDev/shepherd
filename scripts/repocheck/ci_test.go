@@ -61,3 +61,34 @@ var _ = Describe("ci.yml's guards job", func() {
 		Expect(joinedRuns(guards.Steps)).To(ContainSubstring("golangci-lint config verify"))
 	})
 })
+
+// Red run, 2026-09-10: SECURITY.md:43 names govulncheck "the arbiter" for
+// which reachable vulnerabilities are in scope, but nothing ran it anywhere
+// -- not in ci.yml, not on a schedule. The base-merged Makefile `vulncheck:`
+// target (`go run golang.org/x/vuln/cmd/govulncheck@v1.8.0 ./...`) existed
+// and passed locally, but no workflow ever invoked it, and there was no
+// .github/workflows/govulncheck.yml file at all.
+var _ = Describe("govulncheck", func() {
+	It("gates backend changes in ci.yml's build job", func() {
+		ci := loadWorkflow("ci.yml")
+		build, ok := ci.Jobs["build"]
+		Expect(ok).To(BeTrue(), "ci.yml has no build job")
+		Expect(joinedRuns(build.Steps)).To(ContainSubstring("make vulncheck"))
+	})
+
+	It("also runs weekly via .github/workflows/govulncheck.yml", func() {
+		gv := loadWorkflow("govulncheck.yml")
+		schedule, ok := gv.On["schedule"].([]any)
+		Expect(ok).To(BeTrue(), "govulncheck.yml has no on.schedule")
+		Expect(schedule).NotTo(BeEmpty())
+		entry, ok := schedule[0].(map[string]any)
+		Expect(ok).To(BeTrue())
+		Expect(entry["cron"]).NotTo(BeEmpty())
+
+		var joined string
+		for _, j := range gv.Jobs {
+			joined += joinedRuns(j.Steps)
+		}
+		Expect(joined).To(ContainSubstring("make vulncheck"), "govulncheck.yml must run `make vulncheck`")
+	})
+})
