@@ -1,6 +1,7 @@
 package store_test
 
 import (
+	"bytes"
 	"context"
 	"testing"
 
@@ -41,5 +42,17 @@ var _ = Describe("Migration up→down→up cycle", Label("integration"), func() 
 		Expect(store.MigrateUp(ctx, url)).To(Succeed())
 		Expect(store.MigrateDown(ctx, url)).To(Succeed())
 		Expect(store.MigrateUp(ctx, url)).To(Succeed())
+	})
+
+	It("MigrateStatusTo writes status to the given io.Writer instead of stdout", func() {
+		ctx := context.Background()
+		url := sharedPG.RootURL
+
+		Expect(store.MigrateUp(ctx, url)).To(Succeed())
+
+		var buf bytes.Buffer
+		Expect(store.MigrateStatusTo(ctx, &buf, url)).To(Succeed())
+		Expect(buf.String()).To(MatchRegexp(`^version=\d+ dirty=false\n$`),
+			"MigrateStatusTo must write exactly the version/dirty line to the caller's writer")
 	})
 })

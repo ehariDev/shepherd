@@ -4,6 +4,8 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"io"
+	"os"
 	"strings"
 
 	"github.com/golang-migrate/migrate/v4"
@@ -75,7 +77,18 @@ func MigrateDown(_ context.Context, databaseURL string) error {
 }
 
 // MigrateStatus prints migration status to stdout and closes the migrator.
-func MigrateStatus(_ context.Context, databaseURL string) error {
+// A thin wrapper over MigrateStatusTo so the CLI's existing
+// func(context.Context, string) error call shape keeps compiling unchanged.
+func MigrateStatus(ctx context.Context, databaseURL string) error {
+	return MigrateStatusTo(ctx, os.Stdout, databaseURL)
+}
+
+// MigrateStatusTo writes migration status to w and closes the migrator.
+// store is a library package: it must not assume its caller wants status on
+// stdout (a caller capturing output, e.g. into a CLI's own out-of-band
+// writer, or a test asserting on the exact text, could not otherwise get at
+// it), so the write goes to an explicit io.Writer instead of fmt.Printf.
+func MigrateStatusTo(_ context.Context, w io.Writer, databaseURL string) error {
 	m, err := newMigrate(databaseURL)
 	if err != nil {
 		return err
@@ -88,6 +101,8 @@ func MigrateStatus(_ context.Context, databaseURL string) error {
 	if err != nil && !errors.Is(err, migrate.ErrNilVersion) {
 		return fmt.Errorf("getting migration version: %w", err)
 	}
-	fmt.Printf("version=%d dirty=%v\n", v, dirty)
+	if _, err := fmt.Fprintf(w, "version=%d dirty=%v\n", v, dirty); err != nil {
+		return fmt.Errorf("writing migration status: %w", err)
+	}
 	return nil
 }
