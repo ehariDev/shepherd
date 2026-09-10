@@ -28,11 +28,11 @@ import {
   reconcileEdges,
   reconcileNodes,
 } from '../reconcile';
-import { getWireColor, portHandleId } from '../schemaAdapter';
+import { getThemedWireColor, portHandleId } from '../schemaAdapter';
 import { type ConnectingFrom, useVisualStore } from '../store';
 import type { GraphEdge, GraphNode, L1Diagnostic } from '../types';
 import { orientConnection } from '../wireOrient';
-import { PipelineNode } from './PipelineNode';
+import { PipelineNode, useTheme } from './PipelineNode';
 
 const nodeTypes: NodeTypes = { pipeline: PipelineNode as NodeTypes[string] };
 
@@ -152,6 +152,7 @@ function FlowApiBridge({
 export function CanvasPane() {
   const doc = useVisualStore((s) => s.doc);
   const schema = useVisualStore((s) => s.schema);
+  const theme = useTheme();
   const selected = useVisualStore((s) => s.selected);
   const diagnostics = useVisualStore((s) => s.diagnostics);
   const simHealthByNode = useVisualStore((s) => s.simHealthByNode);
@@ -281,9 +282,11 @@ export function CanvasPane() {
   const connectionLineStyle = useMemo<CSSProperties>(
     () => ({
       strokeWidth: 2,
-      stroke: connectingFrom?.wireType ? getWireColor(schema, connectingFrom.wireType) : undefined,
+      stroke: connectingFrom?.wireType
+        ? getThemedWireColor(schema, connectingFrom.wireType, theme)
+        : undefined,
     }),
-    [connectingFrom, schema],
+    [connectingFrom, schema, theme],
   );
 
   // --- Controlled mode: React Flow's change stream ---

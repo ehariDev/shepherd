@@ -5,6 +5,7 @@ import {
   type UpgradeItem,
   upgradeCheck,
 } from '../../api/client';
+import { Modal } from '../../components/ui/Modal';
 import { useMe } from '../../hooks/useMe';
 import { useVisualStore } from '../store';
 import { hasBlockingItems, pruneRemovedAttrs } from '../upgradeOps';
@@ -72,61 +73,55 @@ export function UpgradeReview({ open, onClose, onAccept }: UpgradeReviewProps) {
 
   if (!open) return null;
   return (
-    <div
-      data-testid='upgrade-review'
-      className='fixed inset-0 z-50 bg-black/40 flex items-center justify-center'
-    >
-      <div className='bg-card border rounded-lg p-6 max-w-xl w-full shadow-lg'>
-        <h2>Upgrade Review</h2>
-        {error ? (
-          <p data-testid='upgrade-error'>{error}</p>
-        ) : !result ? (
-          <p data-testid='upgrade-loading'>Loading…</p>
-        ) : (
-          <>
-            <p>
-              From {result.old_version} → {result.new_version}
-            </p>
-            {result.items.map((item, i) => (
-              <div key={i} data-testid={`upgrade-item-${item.class}`} className='flex gap-2 py-2'>
-                <span data-testid='upgrade-item-node'>{item.node_label}</span>
-                <span data-testid='upgrade-item-detail'>{renderItemUI(item)}</span>
-              </div>
-            ))}
-            {result.items.length === 0 && (
-              <p data-testid='upgrade-no-items'>No structural changes detected.</p>
-            )}
-            <div className='flex gap-2 mt-4 flex-col'>
-              <p className='text-xs text-muted'>
-                Accept stamps the new schema version in your local draft. Save the pipeline to
-                persist the upgrade.
-              </p>
-              {blocked && (
-                <p data-testid='upgrade-blocked' className='text-xs text-red-500'>
-                  Resolve every removed component above before accepting this upgrade.
-                </p>
-              )}
-              <div className='flex gap-2'>
-                <button
-                  data-testid='upgrade-accept'
-                  disabled={blocked}
-                  title={blocked ? 'Resolve removed components before accepting' : undefined}
-                  onClick={() => {
-                    const pruned = pruneRemovedAttrs(doc, result.items);
-                    importGraph(stampSchemaVersion(pruned, result.new_version));
-                    onAccept(result.new_version);
-                  }}
-                >
-                  Accept upgrade
-                </button>
-                <button data-testid='upgrade-close' onClick={onClose}>
-                  Cancel
-                </button>
-              </div>
+    <Modal title='Upgrade Review' onClose={onClose} size='xl' testId='upgrade-review'>
+      {error ? (
+        <p data-testid='upgrade-error'>{error}</p>
+      ) : !result ? (
+        <p data-testid='upgrade-loading'>Loading…</p>
+      ) : (
+        <>
+          <p>
+            From {result.old_version} → {result.new_version}
+          </p>
+          {result.items.map((item, i) => (
+            <div key={i} data-testid={`upgrade-item-${item.class}`} className='flex gap-2 py-2'>
+              <span data-testid='upgrade-item-node'>{item.node_label}</span>
+              <span data-testid='upgrade-item-detail'>{renderItemUI(item)}</span>
             </div>
-          </>
-        )}
-      </div>
-    </div>
+          ))}
+          {result.items.length === 0 && (
+            <p data-testid='upgrade-no-items'>No structural changes detected.</p>
+          )}
+          <div className='flex gap-2 mt-4 flex-col'>
+            <p className='text-xs text-muted'>
+              Accept stamps the new schema version in your local draft. Save the pipeline to persist
+              the upgrade.
+            </p>
+            {blocked && (
+              <p data-testid='upgrade-blocked' className='text-xs text-red-500'>
+                Resolve every removed component above before accepting this upgrade.
+              </p>
+            )}
+            <div className='flex gap-2'>
+              <button
+                data-testid='upgrade-accept'
+                disabled={blocked}
+                title={blocked ? 'Resolve removed components before accepting' : undefined}
+                onClick={() => {
+                  const pruned = pruneRemovedAttrs(doc, result.items);
+                  importGraph(stampSchemaVersion(pruned, result.new_version));
+                  onAccept(result.new_version);
+                }}
+              >
+                Accept upgrade
+              </button>
+              <button data-testid='upgrade-close' onClick={onClose}>
+                Cancel
+              </button>
+            </div>
+          </div>
+        </>
+      )}
+    </Modal>
   );
 }

@@ -142,8 +142,10 @@ test.describe('visual simulate S3 — sandbox run', () => {
     await expect(rewriteRow).toContainText('endpoint rewritten to the harness capture receiver');
 
     // Closing the dialog clears the canvas badges — they're scoped to
-    // "while viewing", not a permanent decoration.
-    await page.getByTestId('sandbox-run-close').click();
+    // "while viewing", not a permanent decoration. W5 migrated this overlay
+    // onto components/ui/Modal, so it closes the same accessible way every
+    // other dialog in the app does (Escape), not a bespoke testid button.
+    await page.keyboard.press('Escape');
     await expect(page.getByTestId('sandbox-run-overlay')).toHaveCount(0);
     await expect(page.locator('[data-testid="node-health-badge"]')).toHaveCount(0);
   });
