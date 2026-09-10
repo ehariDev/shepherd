@@ -11,6 +11,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"log/slog"
 	"net/http"
 	"strings"
 	"time"
@@ -22,10 +23,12 @@ import (
 	"github.com/go-git/go-git/v6/plumbing/object"
 	xhttp "github.com/go-git/go-git/v6/plumbing/transport/http"
 	"github.com/go-git/go-git/v6/storage/memory"
+	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/jackc/pgx/v5/pgtype"
 	"github.com/spf13/cobra"
 
+	"shepherd/internal/auth"
 	"shepherd/internal/config"
 	"shepherd/internal/crypto"
 	"shepherd/internal/store"
@@ -212,6 +215,9 @@ func runDevSeed(cmd *cobra.Command, _ []string) error {
 	}
 	fmt.Println("collectors: metrics, logs, singleton (prod-eu-1); metrics (data-eng-eu-1) — instances register themselves")
 
+	if err := seedLocalUsers(ctx, st, platform.ID); err != nil {
+		return fmt.Errorf("seeding local users: %w", err)
+	}
 	if err := seedDestinations(ctx, st, platform.ID); err != nil {
 		return fmt.Errorf("seeding destinations: %w", err)
 	}
@@ -253,6 +259,93 @@ func upsertSeedOrg(ctx context.Context, st *store.Store, id, name, displayName, 
 	}
 	err := st.Pool().QueryRow(ctx, `INSERT INTO orgs (id, name, display_name, admin_group_id, reader_group_id, tenant_id) VALUES ($1, $2, $3, $4, $5, $6) ON CONFLICT (name) DO UPDATE SET display_name=EXCLUDED.display_name, admin_group_id=EXCLUDED.admin_group_id, reader_group_id=EXCLUDED.reader_group_id RETURNING id, name, display_name, admin_group_id, reader_group_id, created_at, updated_at`, id, name, displayName, adminGroup, reader, tenantID).Scan(&org.ID, &org.Name, &org.DisplayName, &org.AdminGroupID, &org.ReaderGroupID, &org.CreatedAt, &org.UpdatedAt)
 	return org, err
+}
+
+// Dev-only local user fixtures, seeded on the platform org so the RBAC edges
+// (fullstack roles.spec.ts and friends) have real editor/viewer accounts to
+// log in as, next to the admin BootstrapAdmin would otherwise create.
+const (
+	seedEditorLogin    = "editor"
+	seedEditorPassword = "editor-dev-pass" //nolint:gosec // deterministic development fixture
+	seedViewerLogin    = "viewer"
+	seedViewerPassword = "viewer-dev-pass" //nolint:gosec // deterministic development fixture
+)
+
+// seedLocalUsers seeds the dev stack's three local accounts: the bootstrap
+// admin, then an org-editor and an org-viewer on platformOrgID. Idempotent —
+// safe to call on every `dev seed` run.
+//
+// ORDERING HAZARD, load-bearing: shepherd-seed runs in its own container
+// BEFORE `serve` ever starts (dev/docker-compose.dev.yaml), and
+// auth.UserStore.BootstrapAdmin (internal/auth/localusers.go) only creates
+// the "admin" account when CountUsers()==0 — it is a first-boot check, not a
+// "does admin exist" check. If this function seeded editor/viewer first, the
+// users table would be non-empty by the time BootstrapAdmin next ran (inside
+// `serve`, on its own first boot), so BootstrapAdmin would silently never
+// create admin at all and the dev stack would have no way in. Calling
+// BootstrapAdmin here — deterministically, before editor/viewer — closes that
+// gap: it either creates admin now (using the same
+// SHEPHERD_BOOTSTRAP_ADMIN_LOGIN/_PASSWORD env vars, or the same "admin"
+// default, BootstrapAdmin itself would use) or, on a re-seed, finds the users
+// table already non-empty and no-ops, exactly as it would from `serve`. By
+// the time `serve` starts and calls BootstrapAdmin itself, CountUsers()>0
+// already, so that call is a guaranteed no-op rather than a second, possibly
+// conflicting, attempt to create admin.
+func seedLocalUsers(ctx context.Context, st *store.Store, platformOrgID pgtype.UUID) error {
+	us := auth.NewUserStore(st, slog.New(slog.DiscardHandler))
+	if err := us.BootstrapAdmin(ctx); err != nil {
+		return fmt.Errorf("bootstrapping admin: %w", err)
+	}
+
+	for _, u := range []struct {
+		login, password, orgRole string
+	}{
+		{seedEditorLogin, seedEditorPassword, auth.OrgRoleEditor},
+		{seedViewerLogin, seedViewerPassword, auth.OrgRoleViewer},
+	} {
+		userID, err := seedLocalUser(ctx, st, u.login, u.password)
+		if err != nil {
+			return fmt.Errorf("seeding local user %s: %w", u.login, err)
+		}
+		if _, err := st.Queries.UpsertOrgMember(ctx, sqlc.UpsertOrgMemberParams{
+			OrgID: platformOrgID, UserID: userID, Role: u.orgRole,
+		}); err != nil {
+			return fmt.Errorf("adding %s to platform org: %w", u.login, err)
+		}
+	}
+	fmt.Printf("local users: admin (bootstrap password), %s/%s (editor), %s/%s (viewer)\n",
+		seedEditorLogin, seedEditorPassword, seedViewerLogin, seedViewerPassword)
+	return nil
+}
+
+// seedLocalUser creates login with password if it does not already exist
+// (check-then-skip, matching the rest of this file's idempotency style), and
+// returns its user ID either way.
+func seedLocalUser(ctx context.Context, st *store.Store, login, password string) (pgtype.UUID, error) {
+	if existing, err := st.Queries.GetUserByLogin(ctx, login); err == nil {
+		return existing.ID, nil
+	} else if !errors.Is(err, pgx.ErrNoRows) {
+		return pgtype.UUID{}, fmt.Errorf("looking up %s: %w", login, err)
+	}
+	hash, err := auth.HashPassword(password)
+	if err != nil {
+		return pgtype.UUID{}, fmt.Errorf("hashing password: %w", err)
+	}
+	created, err := st.Queries.CreateUser(ctx, sqlc.CreateUserParams{
+		Login: login, DisplayName: login, PasswordHash: hash,
+	})
+	if err != nil {
+		if isUnique(err) {
+			// Raced with another seed run; the row now exists — fetch it.
+			existing, getErr := st.Queries.GetUserByLogin(ctx, login)
+			if getErr != nil {
+				return pgtype.UUID{}, fmt.Errorf("re-fetching %s after unique conflict: %w", login, getErr)
+			}
+			return existing.ID, nil
+		}
+		return pgtype.UUID{}, fmt.Errorf("creating user: %w", err)
+	}
+	return created.ID, nil
 }
 
 // seedPipelineItem describes one pipeline to seed.
