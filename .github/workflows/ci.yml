@@ -226,9 +226,40 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
 
-      # Pure shell/grep/find guards — no Go or Node toolchain required.
+      # `make guards` gathers all ten repo-shape guards (check-single-dist,
+      # check-dist-consistency, check-build-script, check-raw-sql,
+      # check-docker, check-no-route-mocks, check-gateway-pin,
+      # check-chartvalues-pin, check-docs-version, check-docs-drift) — the
+      # same target `lint:` depends on, so CI cannot silently run fewer
+      # guards than a local `make lint` does. Pure shell/grep/find; no Go or
+      # Node toolchain required.
       - name: Repo guard checks
-        run: make check-single-dist check-dist-consistency check-build-script check-raw-sql check-docker check-no-route-mocks
+        run: make guards
+
+      # golangci-lint accepts unknown keys in .golangci.yml without
+      # complaint — including a misplaced or misspelled key meant to ENABLE
+      # a check (found the hard way on 2026-08-22: a `run.exclude-dirs` key,
+      # valid in v1, moved in v2, was silently ignored). `make lint` already
+      # runs this locally; it belongs in the always-on guards job too so a
+      # config regression fails every PR, not only the ones the backend-gated
+      # `lint` job happens to run for.
+      #
+      # Installed via the official script rather than golangci-lint-action:
+      # that action's whole job is to run `golangci-lint run` (the FULL lint
+      # pass), which is exactly the expensive, backend-gated work the `lint`
+      # job above already does — running it again, unconditionally, in this
+      # always-on ~1-minute job would blow its budget for a check
+      # (`config verify`) that only needs the binary on PATH.
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache: true
+      - name: Install golangci-lint
+        run: |
+          curl -sSfL https://raw.githubusercontent.com/golangci/golangci-lint/master/install.sh | sh -s -- -b "$(go env GOPATH)/bin" v2.12.2
+      - name: golangci-lint config verify
+        run: golangci-lint config verify
 
       # ubuntu-latest ships helm; this is seconds-cheap and the chart has
       # shipped uninstallable before (commit ec0130f).
@@ -238,11 +269,6 @@ jobs:
       # Repository-shape guards: Ginkgo specs over the Makefile and the
       # workflow files themselves (scripts/repocheck). Needs Go but no
       # Docker; each spec was written red first.
-      - name: Set up Go
-        uses: actions/setup-go@v5
-        with:
-          go-version-file: go.mod
-          cache: true
       - name: Repocheck guards
         run: go test ./scripts/repocheck/... -count=1
 

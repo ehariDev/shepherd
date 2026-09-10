@@ -1,0 +1,63 @@
+// Specs over .github/workflows/ci.yml. Every spec here was written red
+// first against the tree it guards; the spec comment records what the tree
+// looked like when it failed.
+package repocheck_test
+
+import (
+	"regexp"
+
+	. "github.com/onsi/ginkgo/v2"
+	. "github.com/onsi/gomega"
+)
+
+// guardNamesFromMakefile follows one level of indirection: `lint:` depends
+// on `guards`, and `guards:` lists the ten check-* prerequisites. Returns
+// those ten names, parsed from the Makefile rather than hard-coded, so this
+// spec fails the moment the two lists (guards: and lint:) drift apart again.
+func guardNamesFromMakefile() []string {
+	GinkgoHelper()
+	lintLine := mkTargetLine("lint")
+	Expect(lintLine).To(MatchRegexp(`^lint:.*\bguards\b`), "lint: must depend on guards")
+
+	guardsLine := mkTargetLine("guards")
+	re := regexp.MustCompile(`\bcheck-[a-z-]+\b`)
+	names := re.FindAllString(guardsLine, -1)
+	Expect(names).NotTo(BeEmpty(), "guards: target lists no check-* prerequisites")
+	return names
+}
+
+// Red run, 2026-09-10: ci.yml's guards job ran
+// `make check-single-dist check-dist-consistency check-build-script
+// check-raw-sql check-docker check-no-route-mocks` -- six of the ten guards
+// the (then-nonexistent) `guards:` Makefile target gathers; check-gateway-pin,
+// check-chartvalues-pin, check-docs-version and check-docs-drift never ran in
+// CI at all. The job also never ran `golangci-lint config verify`, so a
+// misplaced or misspelled .golangci.yml key (the exact failure mode the lint
+// target's own comment warns about, 2026-08-22) could reach main undetected in
+// any PR the `lint` job's if-gate happened to skip.
+var _ = Describe("ci.yml's guards job", func() {
+	It("runs every guard the Makefile's guards target gathers, via `make guards`", func() {
+		names := guardNamesFromMakefile()
+
+		ci := loadWorkflow("ci.yml")
+		guards, ok := ci.Jobs["guards"]
+		Expect(ok).To(BeTrue(), "ci.yml has no guards job")
+		joined := joinedRuns(guards.Steps)
+
+		// `make guards` resolves through the Makefile's own single source of
+		// truth, so asserting the literal invocation is what actually proves
+		// every one of the ten guards runs -- listing them again here would
+		// just be a second copy that could itself drift.
+		Expect(joined).To(ContainSubstring("make guards"),
+			"ci.yml's guards job must invoke `make guards`, not an inline subset (guards found in Makefile: %v)", names)
+		Expect(joined).NotTo(MatchRegexp(`make\s+check-[a-z-]+\s+check-`),
+			"ci.yml's guards job must not list guards inline -- it should resolve through `make guards`")
+	})
+
+	It("runs golangci-lint config verify", func() {
+		ci := loadWorkflow("ci.yml")
+		guards, ok := ci.Jobs["guards"]
+		Expect(ok).To(BeTrue(), "ci.yml has no guards job")
+		Expect(joinedRuns(guards.Steps)).To(ContainSubstring("golangci-lint config verify"))
+	})
+})
