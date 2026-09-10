@@ -1,4 +1,4 @@
-.PHONY: docs check-docs-drift check-docs-version web-ci check-gateway-pin check-chartvalues-pin chart-verify preflight-docker help build build-web build-all test e2e e2e-k8s e2e-k8s-clean e2e-sim e2e-egress smoke test-ui check-single-dist check-dist-consistency check-build-script check-raw-sql check-docker check-no-route-mocks lint fmt generate gen-alloy-version generate-corpus schema schema-verify helm-lint release-snapshot docker-build docker-build-local docker-build-init docker-build-simulator dev dev-sim dev-frontend dev-restart dev-seed dev-reset test-fullstack clean clean-docker tools preflight-ginkgo preflight-k8s
+.PHONY: docs check-docs-drift check-docs-version web-ci check-gateway-pin check-chartvalues-pin chart-verify preflight-docker help build build-web build-all test e2e e2e-k8s e2e-k8s-clean e2e-sim e2e-egress smoke test-ui check-single-dist check-dist-consistency check-build-script check-raw-sql check-docker check-no-route-mocks guards lint fmt generate gen-alloy-version generate-corpus schema schema-verify helm-lint release-snapshot docker-build docker-build-local docker-build-init docker-build-simulator dev dev-sim dev-frontend dev-restart dev-seed dev-reset test-fullstack clean clean-docker tools preflight-ginkgo preflight-k8s
 
 # Several recipes are bash-idiomatic (the smoke here-string, trap chains);
 # /bin/sh is dash on Debian/Ubuntu and rejects them.
@@ -527,7 +527,12 @@ check-docs-version: ## Guard: docs quote the chart's own version and appVersion
 	[ "$$fail" = "0" ] || exit 1
 	@echo "check-docs-version: OK"
 
-lint: check-single-dist check-dist-consistency check-build-script check-raw-sql check-docker check-no-route-mocks check-gateway-pin check-chartvalues-pin check-docs-version check-docs-drift ## Repo guards + golangci-lint
+# The ten repo-shape guards, gathered in one place so CI's guards job and
+# `make lint` resolve through the same list instead of two that can drift
+# apart (CI ran only six of the ten until this target existed).
+guards: check-single-dist check-dist-consistency check-build-script check-raw-sql check-docker check-no-route-mocks check-gateway-pin check-chartvalues-pin check-docs-version check-docs-drift ## Run all ten repo-shape guards
+
+lint: guards ## Repo guards + golangci-lint
 	$(call preflight,golangci-lint,Install golangci-lint v2 (https://golangci-lint.run).)
 	@# `golangci-lint run` accepts unknown keys in .golangci.yml without
 	@# complaint, so a misplaced or misspelled setting silently does nothing

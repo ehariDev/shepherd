@@ -92,3 +92,36 @@ var _ = Describe("the check-raw-sql guard", func() {
 		Expect(out).To(ContainSubstring("probe.go"))
 	})
 })
+
+// The ten guards `make lint` currently runs inline. A `guards:` target
+// gathering them in one place is the single source of truth ci.yml's guards
+// job resolves through (scripts/repocheck/ci_test.go, A2 territory) — this
+// spec only pins the Makefile half.
+var tenGuards = []string{
+	"check-single-dist", "check-dist-consistency", "check-build-script",
+	"check-raw-sql", "check-docker", "check-no-route-mocks",
+	"check-gateway-pin", "check-chartvalues-pin", "check-docs-version",
+	"check-docs-drift",
+}
+
+// Red run, 2026-09-10: `make lint` lists all ten guards as its own direct
+// prerequisites; there is no `guards:` target for CI's guards job (which
+// only runs six of the ten, per the workstream brief) to resolve through as
+// a single source of truth.
+var _ = Describe("the guards target", func() {
+	It("gathers exactly the ten checks make lint used to list inline", func() {
+		line := mkTargetLine("guards")
+		for _, g := range tenGuards {
+			Expect(line).To(MatchRegexp(`\b`+g+`\b`), g)
+		}
+	})
+
+	It("is lint's prerequisite, not the ten checks listed inline on lint itself", func() {
+		lintLine := mkTargetLine("lint")
+		Expect(lintLine).To(MatchRegexp(`^lint:.*\bguards\b`))
+		for _, g := range tenGuards {
+			Expect(lintLine).NotTo(MatchRegexp(`\b`+g+`\b`),
+				"lint: should depend on guards, not list %q directly (double indirection)", g)
+		}
+	})
+})
