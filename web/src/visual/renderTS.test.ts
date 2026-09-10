@@ -10,28 +10,36 @@
  * receiver), the Go suite declared the same fiction, and all nine goldens matched
  * on both sides while being config that real Alloy rejects. A fixture cannot
  * disagree with the artifact if it *is* the artifact.
+ *
+ * The corpus itself is read directly from `internal/visual/testdata/corpus` —
+ * the same directory `internal/visual/render_test.go` reads — rather than from
+ * a web-local copy. A copy needs a sync step (`make generate-corpus`) and a
+ * test proving the copy stayed in sync; reading the one source directly needs
+ * neither. Same precedent as `web/tests/fixtures/schema-fixture.ts` reading
+ * `internal/schema/artifacts` directly instead of vendoring it.
  */
-import { readdirSync, readFileSync } from 'node:fs';
+import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { describe, expect, it } from 'vitest';
 import { shippedSchema } from '../../tests/fixtures/schema-fixture';
-import bindingsSecretGraph from './__fixtures__/corpus/bindings-secret.graph.json';
-import disabledNodeGraph from './__fixtures__/corpus/disabled-node.graph.json';
-import fanInFanOutGraph from './__fixtures__/corpus/fanin-fanout.graph.json';
-import kitchenSinkGraph from './__fixtures__/corpus/kitchen-sink.graph.json';
-import labelEdgecasesGraph from './__fixtures__/corpus/label-edgecases.graph.json';
-import logsChainGraph from './__fixtures__/corpus/logs-chain.graph.json';
-// Import corpus fixtures
-import minimalScrapeGraph from './__fixtures__/corpus/minimal-scrape.graph.json';
-import nestedBlocksGraph from './__fixtures__/corpus/nested-blocks.graph.json';
-import otelThreeSignalsGraph from './__fixtures__/corpus/otel-three-signals.graph.json';
 import { renderTS } from './renderTS';
 import type { GraphDocument } from './types';
 
-const fixtureDir = join(__dirname, '__fixtures__/corpus');
 const goCorpusDir = join(__dirname, '../../../internal/visual/testdata/corpus');
+const readGraph = (name: string): GraphDocument =>
+  JSON.parse(readFileSync(join(goCorpusDir, `${name}.graph.json`), 'utf-8')) as GraphDocument;
 const readGolden = (name: string) =>
-  readFileSync(join(fixtureDir, `${name}.golden.alloy`), 'utf-8');
+  readFileSync(join(goCorpusDir, `${name}.golden.alloy`), 'utf-8');
+
+const minimalScrapeGraph = readGraph('minimal-scrape');
+const fanInFanOutGraph = readGraph('fanin-fanout');
+const nestedBlocksGraph = readGraph('nested-blocks');
+const bindingsSecretGraph = readGraph('bindings-secret');
+const logsChainGraph = readGraph('logs-chain');
+const disabledNodeGraph = readGraph('disabled-node');
+const labelEdgecasesGraph = readGraph('label-edgecases');
+const otelThreeSignalsGraph = readGraph('otel-three-signals');
+const kitchenSinkGraph = readGraph('kitchen-sink');
 
 const minimalScrapeGolden = readGolden('minimal-scrape');
 const fanInFanOutGolden = readGolden('fanin-fanout');
@@ -105,19 +113,6 @@ describe('7.5.2 TS codegen vs corpus', () => {
       }
     });
   }
-
-  // `make generate-corpus` copies the Go corpus into web/src/visual/__fixtures__.
-  // A half-run copy is invisible otherwise: the TS suite would keep passing
-  // against a stale golden while the Go suite asserts a newer one.
-  it('the web corpus copies are byte-identical to the Go originals', () => {
-    const goFiles = readdirSync(goCorpusDir).sort();
-    expect(readdirSync(fixtureDir).sort()).toEqual(goFiles);
-    for (const file of goFiles) {
-      expect(readFileSync(join(fixtureDir, file), 'utf-8'), `${file} is out of sync`).toBe(
-        readFileSync(join(goCorpusDir, file), 'utf-8'),
-      );
-    }
-  });
 });
 
 // ---------------------------------------------------------------------------
