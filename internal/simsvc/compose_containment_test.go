@@ -199,6 +199,18 @@ var _ = DescribeTable("Compose containment for the simulator service",
 		Expect(shepherd.Environment).To(HaveKey("SHEPHERD_SIMULATOR_ENABLED"))
 		Expect(shepherd.Environment["SHEPHERD_SIMULATOR_ENABLED"]).To(ContainSubstring(":-false"))
 
+		// The control API bearer token: both sides must read the SAME
+		// operator-supplied env var, or the compose stack ships an
+		// unauthenticated control API with nothing failing to start to
+		// notice — the simulator would accept any request and shepherd
+		// would never send an Authorization header at all.
+		Expect(sim.Environment).To(HaveKey("SIM_TOKEN"))
+		Expect(shepherd.Environment).To(HaveKey("SHEPHERD_SIMULATOR_TOKEN"))
+		Expect(sim.Environment["SIM_TOKEN"]).To(ContainSubstring("${SHEPHERD_SIM_TOKEN:-"),
+			"the token must be operator-overridable via SHEPHERD_SIM_TOKEN, not a bare literal")
+		Expect(sim.Environment["SIM_TOKEN"]).To(Equal(shepherd.Environment["SHEPHERD_SIMULATOR_TOKEN"]),
+			"the simulator and shepherd services must share the same bearer token so the control API is actually reachable")
+
 		// B-CONTAIN-1: shepherd must not LISTEN on sim-internal even though it
 		// is a member of it — a control that removal of these two env vars (or
 		// reverting them to a bare ":port") silently defeats.
