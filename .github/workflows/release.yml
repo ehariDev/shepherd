@@ -40,8 +40,69 @@ permissions:
   packages: write
 
 jobs:
+  # Gates the tagged commit exactly as hard as a PR to main: nothing here
+  # assumes the tag's commit ever passed ci.yml (there is no merge queue and
+  # branch protection requires no status checks), so `release` needs this job
+  # rather than trusting the tag alone.
+  verify:
+    name: verify
+    runs-on: ubuntu-latest
+    if: github.repository == 'procoduck/shepherd'
+    timeout-minutes: 20
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache: true
+
+      # Pinned to the same version as ci.yml's lint job so a release cannot
+      # pass a check main's own CI would have failed.
+      - name: golangci-lint
+        uses: golangci/golangci-lint-action@v8
+        with:
+          version: v2.12.2
+          args: --timeout=5m
+
+      - name: golangci-lint config verify
+        run: golangci-lint config verify
+
+      # Pure shell/grep/find guards (check-single-dist, check-raw-sql,
+      # check-docker, ...) — see ci.yml's own guards job.
+      - name: Repo guards
+        run: make guards
+
+      - name: go build
+        run: go build ./...
+
+      - name: go vet
+        run: go vet ./...
+
+      # internal/visual's stage-2 corpus spec shells the pinned Alloy binary
+      # via a Docker fallback and fails (rather than silently skipping) when
+      # no binary or image is available — see internal/visual/render_test.go.
+      # Pulling here surfaces a registry/network problem as its own step
+      # instead of inside the test run, pinned to the same source of truth
+      # (deploy/versions.env) ci.yml uses.
+      - name: Pull pinned Alloy image
+        run: |
+          source deploy/versions.env
+          docker pull --quiet "$ALLOY_IMAGE"
+
+      - name: go test
+        run: go test ./...
+
+      # ubuntu-latest ships helm; seconds-cheap and the chart has shipped
+      # uninstallable before (commit ec0130f).
+      - name: Helm lint
+        run: make helm-lint
+
   release:
     name: release
+    needs: verify
     runs-on: ubuntu-latest
     if: github.repository == 'procoduck/shepherd'
     timeout-minutes: 30
