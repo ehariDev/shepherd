@@ -61,7 +61,6 @@ export function InspectorPanel() {
   const rawDiagnostics = useVisualStore((s) => s.diagnostics);
   const setDisabled = useVisualStore((s) => s.setDisabled);
   const updateNode = useVisualStore((s) => s.updateNode);
-  const importGraph = useVisualStore((s) => s.importGraph);
   const moveEdge = useVisualStore((s) => s.moveEdge);
   const [reviewOpen, setReviewOpen] = useState(false);
   const [showOptional, setShowOptional] = useState(false);
@@ -116,11 +115,15 @@ export function InspectorPanel() {
             <UpgradeReview
               open={reviewOpen}
               onClose={() => setReviewOpen(false)}
-              onAccept={(newVersion) => {
-                // A one-off read at click time rather than a standing
-                // subscription — the whole document is only needed here, to
-                // spread it back with the version bumped.
-                importGraph({ ...useVisualStore.getState().doc, schema_version: newVersion });
+              onAccept={() => {
+                // UpgradeReview's own Accept handler already imported the
+                // pruned+stamped document (pruneRemovedAttrs + stampSchemaVersion)
+                // before calling this callback — that import is the sole
+                // source of truth for the post-upgrade doc. Re-deriving a
+                // document here from a fresh (or worse, stale) store read
+                // and re-importing it is redundant at best and, at worst
+                // (a render-time snapshot, a future non-synchronous import),
+                // silently discards W5-04's pruning. Just close the review.
                 setReviewOpen(false);
               }}
             />
