@@ -316,7 +316,10 @@ export const RenderWizardResponseSchema: GenMessage<RenderWizardResponse> = /*@_
   messageDesc(file_shepherd_mgmt_v1_wizard, 8);
 
 /**
- * WizardService covers /api/orgs/{org}/wizards/*. All methods require org-admin.
+ * WizardService covers /api/orgs/{org}/wizards/*. All methods require
+ * org-editor (D6): a wizard authors what the org runs, without needing the
+ * ability to change what the org IS (destinations, tenant routes, git
+ * credentials, teams, service accounts — those stay org-admin).
  *
  * @generated from service shepherd.mgmt.v1.WizardService
  */

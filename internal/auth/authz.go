@@ -172,6 +172,32 @@ func authorizeOrgAccess(ctx context.Context, st *store.Store, sess *Session, org
 	return nil
 }
 
+// RoleSatisfies reports whether a caller holding role `have` clears the
+// minimum requirement `need`, using the same admin > editor > reader
+// ordering authorizeOrgAccess enforces for a human session (orgRoleRank).
+// It exists so a non-human caller with its own, separately-stored role —
+// today, a service account's tier (internal/mgmtapi's
+// authorizeServiceAccountProcedure, W3-1) — can be checked against the
+// exact procedureRequirements vocabulary a human session already is,
+// without either caller kind reaching into the other's authorization path.
+//
+// RoleAny is satisfied by any non-empty have (mirrors Authorize's RoleAny
+// case: authenticated is enough). RoleAppAdmin is satisfied ONLY by
+// RoleAppAdmin itself — no org role, however high, ever satisfies the
+// app-admin floor, the same way an org admin is not an app admin in
+// authorizeOrgAccess. Anything else falls to orgRoleRank, so an unrecognized
+// `have` (rank 0, same as no role at all) satisfies nothing.
+func RoleSatisfies(have, need string) bool {
+	switch need {
+	case RoleAny:
+		return have != ""
+	case RoleAppAdmin:
+		return have == RoleAppAdmin
+	default:
+		return orgRoleRank(have) >= orgRoleRank(need)
+	}
+}
+
 // orgRoleRank orders the org roles so a floor can be compared numerically.
 // Higher is more capable; admin satisfies every floor.
 func orgRoleRank(role string) int {

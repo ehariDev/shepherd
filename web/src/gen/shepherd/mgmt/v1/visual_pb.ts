@@ -689,7 +689,9 @@ export const GraphViewResponseSchema: GenMessage<GraphViewResponse> = /*@__PURE_
 
 /**
  * VisualService covers /api/orgs/{org}/visual/* and the pipeline graph view.
- * Render/Validate/UpgradeCheck require org-admin; GraphView requires org-reader.
+ * Render/Validate/UpgradeCheck require org-editor (D6, the same authoring
+ * ceiling WizardService and SimulateService hold); GraphView requires
+ * org-reader.
  *
  * @generated from service shepherd.mgmt.v1.VisualService
  */

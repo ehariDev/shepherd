@@ -3,6 +3,7 @@ package mgmtapi
 import (
 	"context"
 	"errors"
+	"fmt"
 
 	"connectrpc.com/connect"
 
@@ -319,23 +320,53 @@ func authorizeProcedure(ctx context.Context, st *store.Store, sess *auth.Session
 }
 
 // authorizeServiceAccountProcedure decides whether a machine caller may
-// reach a procedure at all (org match). auth.RoleAppAdmin is always
-// refused — no service account is ever app-admin. auth.RoleAny (MeService)
-// is granted to any authenticated machine identity; every other
-// requirement (RoleOrgAdmin, RoleOrgReader, reqAppOrOrgAdmin) requires the
-// token's org to match the org named in the request.
+// reach a procedure at all: org match, THEN role tier (W3-1).
+// auth.RoleAppAdmin is always refused — no service account is ever
+// app-admin, by construction (0012_teams_service_accounts' org_id column
+// is required, not nullable-for-global). auth.RoleAny (MeService) is
+// granted to any authenticated machine identity. Every other requirement
+// (RoleOrgAdmin, RoleOrgEditor, RoleOrgReader, reqAppOrOrgAdmin) requires
+// BOTH the token's org to match the org named in the request AND its role
+// tier (sa.Role — "editor" or "admin", 0018_service_account_role) to
+// satisfy the requirement, via auth.RoleSatisfies — the same comparison a
+// human session's role is checked with. reqAppOrOrgAdmin is normalized to
+// RoleOrgAdmin here: a service account can never take the app-admin half
+// of that either/or, so only the org-admin half is reachable.
 func authorizeServiceAccountProcedure(sa serviceAccountIdentity, orgID, requirement string) error {
 	switch requirement {
 	case auth.RoleAny:
 		return nil
 	case auth.RoleAppAdmin:
 		return connect.NewError(connect.CodePermissionDenied, errors.New("mgmtapi: service accounts are never app-admin"))
-	default: // RoleOrgAdmin, RoleOrgReader, reqAppOrOrgAdmin
+	default: // RoleOrgAdmin, RoleOrgEditor, RoleOrgReader, reqAppOrOrgAdmin
 		if orgID == "" || sa.OrgID != orgID {
 			return connect.NewError(connect.CodePermissionDenied, errors.New("mgmtapi: service account is not scoped to this org"))
 		}
+		need := requirement
+		if need == reqAppOrOrgAdmin {
+			need = auth.RoleOrgAdmin
+		}
+		if !auth.RoleSatisfies(serviceAccountTierRequirement(sa.Role), need) {
+			return connect.NewError(connect.CodePermissionDenied, fmt.Errorf(
+				"mgmtapi: service account %q holds %q tier; this procedure requires %q", sa.Name, sa.Role, need))
+		}
 		return nil
 	}
+}
+
+// serviceAccountTierRequirement maps a service account's stored role
+// ("editor" or "admin", 0018_service_account_role's CHECK constraint) onto
+// auth's Role* requirement vocabulary ("org-editor"/"org-admin"), so
+// auth.RoleSatisfies can compare it against a procedure's requirement
+// without internal/auth needing to know service_accounts' own role
+// spelling. Any role value other than "admin" — including an unrecognized
+// one, which the CHECK constraint should never allow through — maps to the
+// lower tier: fail toward less reach, not more.
+func serviceAccountTierRequirement(role string) string {
+	if role == "admin" {
+		return auth.RoleOrgAdmin
+	}
+	return auth.RoleOrgEditor
 }
 
 // toConnectError maps auth's sentinel errors to connect.Error codes.

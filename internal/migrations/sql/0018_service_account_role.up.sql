@@ -1,0 +1,28 @@
+-- 0018_service_account_role.up.sql
+-- W3-1 (docs/gateway-tier-plan.md, D3): give a service account a role TIER
+-- of its own, instead of implicitly treating "org matches" as "may reach
+-- any org-scoped procedure". Before this column existed,
+-- authorizeServiceAccountProcedure (internal/mgmtapi/rpc_interceptor.go)
+-- checked only sa.OrgID == orgID for every non-app-admin requirement, so an
+-- apply-capability service account reached every RoleOrgAdmin procedure
+-- (RotateTenantRoute, DeleteTeam, AddTeamMember, DeleteCredential,
+-- ListAudit, ListTeamMembers...) it was never explicitly granted.
+--
+-- role is the TIER axis (editor vs admin, mirroring the human org-editor /
+-- org-admin ladder in internal/auth) and is orthogonal to capability
+-- (0012_teams_service_accounts, propose vs apply, "may this write at
+-- all"). A service account is described by BOTH: what it may REACH (role)
+-- and whether it may WRITE once there (capability).
+--
+-- DEFAULT 'editor' NOT NULL backfills every existing row as a metadata-only
+-- change (Postgres 11+ does not rewrite the table for a NOT NULL column
+-- added with a constant DEFAULT). This is a deliberate narrowing, not a
+-- no-op: an existing apply-capability service account that depended on the
+-- unchecked org-match gap to reach an org-admin procedure will now get
+-- PermissionDenied there — see the workstream report's RISKS entry for
+-- W3-1. 'admin' is never assigned implicitly; CreateServiceAccount
+-- (internal/mgmtapi/rpc_service_account.go) only sets it when the request
+-- explicitly asks for it (D3: "admin explicit at creation"), the same way
+-- 0015/0016 never implicitly promote a human to org-admin.
+ALTER TABLE service_accounts
+    ADD COLUMN role text NOT NULL DEFAULT 'editor' CHECK (role IN ('editor', 'admin'));
