@@ -124,6 +124,18 @@ test('a chart-managed provider is readable but not editable', async ({ page, api
   await expect(page.getByTestId('sso-remove')).toHaveCount(0);
 });
 
+test('shows an alert, not the forbidden message, when settings fail to load for another reason', async ({
+  page,
+  api,
+}) => {
+  await api.loginAs(appAdmin);
+  api.failNext('POST', '/shepherd.mgmt.v1.AdminService/GetOidcSettings', 503, 'unavailable');
+  await page.goto('/admin/auth');
+
+  await expect(page.getByTestId('sso-load-error')).toBeVisible({ timeout: 5000 });
+  await expect(page.getByTestId('sso-forbidden')).toHaveCount(0);
+});
+
 test('a non-app-admin is refused', async ({ page, api }) => {
   await api.loginAs(orgAdmin);
   await page.goto('/admin/auth');
