@@ -12,21 +12,34 @@ export const DEV_ADMIN_USERNAME = 'admin';
 export const DEV_ADMIN_PASSWORD = 'admin';
 export const DEV_BASE_URL = 'http://localhost:8080';
 
+// Local editor/viewer accounts seeded by `shepherd dev seed` on the platform
+// org (internal/cli/dev.go's seedLocalUsers) — same login/password pair as
+// the seed's seedEditorLogin/seedEditorPassword and
+// seedViewerLogin/seedViewerPassword constants.
+export const DEV_EDITOR = { username: 'editor', password: 'editor-dev-pass' };
+export const DEV_VIEWER = { username: 'viewer', password: 'viewer-dev-pass' };
+
 /**
  * loginAs performs a real POST /api/auth/local/login and waits for the
  * shepherd_session cookie to be set. Fast: ~1 round-trip, no browser redirect.
  */
-export async function loginAsAdmin(page: Page): Promise<void> {
+export async function loginAs(page: Page, username: string, password: string): Promise<void> {
   const resp = await page.request.post('/api/auth/local/login', {
-    data: { username: DEV_ADMIN_USERNAME, password: DEV_ADMIN_PASSWORD },
+    data: { username, password },
     headers: {
       'Content-Type': 'application/json',
       'X-Requested-With': 'XMLHttpRequest',
     },
   });
   if (resp.status() !== 200) {
-    throw new Error(`loginAsAdmin failed: ${resp.status()} ${await resp.text()}`);
+    throw new Error(`loginAs failed: ${resp.status()} ${await resp.text()}`);
   }
+}
+
+/** loginAsAdmin is loginAs for the seeded bootstrap admin — kept as its own
+ * export because every existing fullstack spec imports it by name. */
+export async function loginAsAdmin(page: Page): Promise<void> {
+  return loginAs(page, DEV_ADMIN_USERNAME, DEV_ADMIN_PASSWORD);
 }
 
 /**
