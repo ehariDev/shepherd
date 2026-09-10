@@ -49,9 +49,9 @@ Migration `000N`: no schema change needed (`wizard_state` JSONB exists); add `'v
 POST /api/orgs/{org}/visual/render     [orgadmin]  graph → { content, diagnostics[], node_map }   // node_map: alloy block ↔ node id, for error mapping
 POST /api/orgs/{org}/visual/validate   [orgadmin]  graph → diagnostics[] (layers L2+L3, node-addressed)
 GET  /api/schema/{version}             [reader]    the schema artifact + overlay, ETag-cached      // the palette's data source
-POST /api/orgs/{org}/simulate/relabel  [orgadmin]  { rules|graph_slice, sample_targets } → per-target trace   (Tier 2, §6.3)
-POST /api/orgs/{org}/simulate/logs     [orgadmin]  { stages|graph_slice, sample_lines } → per-line trace      (Tier 2, §6.3)
-POST /api/orgs/{org}/simulate/runs     [orgadmin]  graph → { run_id }                              (Tier 3, §6.4)
+POST /api/orgs/{org}/simulate/relabel  [orgeditor] { rules|graph_slice, sample_targets } → per-target trace   (Tier 2, §6.3)
+POST /api/orgs/{org}/simulate/logs     [orgeditor] { stages|graph_slice, sample_lines } → per-line trace      (Tier 2, §6.3)
+POST /api/orgs/{org}/simulate/runs     [orgeditor] graph → { run_id }                              (Tier 3, §6.4)
 GET  /api/orgs/{org}/simulate/runs/{id}            → status | results (captured series/lines, component health)
 ```
 

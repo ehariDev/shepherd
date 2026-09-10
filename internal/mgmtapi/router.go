@@ -208,12 +208,20 @@ func Router(st *store.Store, cfg *config.Config, enc *crypto.Encryptor, logger *
 			r.Delete("/repo-links/{id}", repoLinks.DeleteRepoLink)
 		})
 
-		// org-admin: VisualService (except GraphView) and SimulateService.
+		// org-admin: VisualService (except GraphView).
 		r.Group(func(r chi.Router) {
 			r.Use(auth.RequireOrgAccess(st, "org", "orgadmin"))
 			r.Post("/visual/render", visualHandler.Render)
 			r.Post("/visual/validate", visualHandler.Validate)
 			r.Post("/visual/upgrade-check", visualHandler.UpgradeCheck)
+		})
+
+		// org-editor: SimulateService (D6 — settled at org-editor on every
+		// layer: Connect's procedureRequirements already gated it here,
+		// simulate.proto's comments and docs/visual-builder-design-VB1.md
+		// now say so too).
+		r.Group(func(r chi.Router) {
+			r.Use(auth.RequireOrgAccess(st, "org", "orgeditor"))
 			r.Post("/simulate/relabel", simulateHandler.SimulateRelabel)
 			r.Post("/simulate/logs", simulateHandler.SimulateLogs)
 			r.Post("/simulate/runs", simulateHandler.CreateRun)
