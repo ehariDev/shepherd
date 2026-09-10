@@ -108,6 +108,58 @@ app.kubernetes.io/component: simulator
 app.kubernetes.io/component: simulator
 {{- end }}
 
+{{/*
+The Secret + key holding the simulator's bearer token (W4-S3, D9), read by
+BOTH consumers: the simulator's own SIM_TOKEN env var and Shepherd's
+SHEPHERD_SIMULATOR_TOKEN env var. One helper for both so they can never point
+at two different Secrets and silently desync -- the failure mode is every run
+getting a 401 nobody can explain from the values alone.
+
+Precedence, highest first:
+
+  1. simulator.token.existingSecret -- the operator's own Secret.
+  2. externalSecrets.enabled -- the ExternalSecret this chart renders in
+     externalsecret.yaml, named the same as case 3 so the name is stable
+     regardless of which of these two actually produced it.
+  3. otherwise, the chart's own generated Secret
+     (templates/secret-simulator-token.yaml).
+*/}}
+{{- define "shepherd.simulatorTokenSecretName" -}}
+{{- if ((.Values.simulator.token).existingSecret) -}}
+{{- .Values.simulator.token.existingSecret -}}
+{{- else -}}
+{{- printf "%s-token" (include "shepherd.simulatorFullname" .) -}}
+{{- end -}}
+{{- end }}
+
+{{- define "shepherd.simulatorTokenKey" -}}
+{{- (.Values.simulator.token).key | default "token" -}}
+{{- end }}
+
+{{/*
+"true" (a non-empty string) when simulator.enabled AND the operator has not
+overridden config.simulator by hand -- the one case where Shepherd's own
+config is wired to THIS chart's simulator automatically, token included.
+Shared between shepherd.podEnv (which env var to add) and shepherd.configYaml
+(which host/port dict to auto-fill) so the two conditions cannot drift apart.
+*/}}
+{{- define "shepherd.simulatorAutoWired" -}}
+{{- if and ((.Values.simulator).enabled) (not (hasKey (.Values.config | default dict) "simulator")) }}true{{ end -}}
+{{- end }}
+
+{{/*
+"true" when the chart itself owns generating the token's Secret (D9's
+precedence case 3) -- simulator.enabled, no existingSecret, no
+externalSecrets.enabled. Both Deployments' checksum/simulator-token
+annotations use this: existingSecret and ExternalSecret values are not known
+at render time (nothing here computed them), so there is nothing to hash for
+those two paths -- same reasoning as deployment.yaml's existing
+checksum/secret, which is also chart-generated-content only.
+*/}}
+{{- define "shepherd.simulatorTokenChartGenerated" -}}
+{{- if and ((.Values.simulator).enabled) (not ((.Values.simulator.token).existingSecret)) (not ((.Values.externalSecrets).enabled)) }}true{{ end -}}
+{{- end }}
+
 {{- define "shepherd.simulatorImage" -}}
 {{- $reg := .Values.simulator.image.registry }}
 {{- $repo := .Values.simulator.image.repository }}
@@ -262,6 +314,15 @@ database, and silently connecting somewhere else would be worse than loud.
 {{- if ((.Values.cnpg).enabled) -}}
 {{- $chunks = append $chunks (printf "- name: SHEPHERD_DATABASE_URL\n  valueFrom:\n    secretKeyRef:\n      name: %s-app\n      key: uri" (include "shepherd.cnpgClusterName" .)) -}}
 {{- end -}}
+{{- if eq (include "shepherd.simulatorAutoWired" .) "true" -}}
+{{- /*
+  Only when this chart auto-wires Shepherd to its own simulator -- an
+  explicit config.simulator block supplies its own token verbatim (and
+  shepherd.configYaml refuses to render at all if it doesn't), so adding this
+  env var there too would just be a second, unused source of truth.
+*/ -}}
+{{- $chunks = append $chunks (printf "- name: SHEPHERD_SIMULATOR_TOKEN\n  valueFrom:\n    secretKeyRef:\n      name: %s\n      key: %s" (include "shepherd.simulatorTokenSecretName" .) (include "shepherd.simulatorTokenKey" .)) -}}
+{{- end -}}
 {{- with .Values.extraEnv -}}
 {{- $chunks = append $chunks (trimSuffix "\n" (toYaml .)) -}}
 {{- end -}}
@@ -305,11 +366,27 @@ With the simulator enabled and no operator-supplied config.simulator block, wire
 shepherd to this chart's own simulator Service. The viper defaults happen to
 match only when the release is literally named "shepherd"; templating the
 Service DNS makes any release name work. An explicit .Values.config.simulator
-always wins verbatim.
+always wins verbatim, and -- once this chart started enforcing a token -- must
+supply its own `token` or the render refuses to ship an unauthenticated
+control API silently.
 */}}
 {{- define "shepherd.configYaml" -}}
 {{- $cfg := deepCopy .Values.config }}
-{{- if and ((.Values.simulator).enabled) (not (hasKey $cfg "simulator")) }}
+{{- if hasKey $cfg "simulator" }}
+{{- /*
+  An explicit config.simulator block always wins verbatim -- it is how an
+  operator points Shepherd at a simulator this chart did not deploy. It
+  bypasses simulator.token entirely (that only feeds the AUTO-wired path
+  below), so nothing else here can supply the control API's token for it.
+  Skipping the check would ship an unauthenticated control API silently
+  wherever this block is used with nothing after "token" -- the config.simulator
+  the operator wrote before this chart enforced auth at all still renders
+  and still runs, just without ever meaning to leave the API open.
+*/ -}}
+{{- if and (not (hasKey $cfg.simulator "token")) (ne (($cfg.simulator).enabled) false) }}
+{{- fail "config.simulator is set explicitly but has no `token`: the control API this chart wires Shepherd to must be authenticated. Add config.simulator.token (the shared secret your simulator expects), or remove config.simulator and let simulator.enabled/simulator.token wire it up automatically." }}
+{{- end }}
+{{- else if ((.Values.simulator).enabled) }}
 {{- $sim := include "shepherd.simulatorFullname" . }}
 {{- $_ := set $cfg "simulator" (dict
       "enabled" true

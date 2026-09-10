@@ -480,6 +480,9 @@ networkPolicy:
 #   - automountServiceAccountToken: false on its ServiceAccount. Defense in
 #     depth, not the only gate — internal/simsvc.Config.SATokenPath makes the
 #     binary itself refuse to start if a token is mounted anyway.
+#   - a bearer token (simulator.token below) on the control API. Without one
+#     POST /v1/runs was reachable by anything that could route to the Pod at
+#     all; every install now authenticates it, from one of three sources.
 #   - a default-deny egress NetworkPolicy. The sandboxed Alloy is a CHILD
 #     PROCESS of shepherd-simulator (internal/simsvc/runner.go), not a sibling
 #     container, so this Pod's own network boundary IS the sandbox's boundary.
@@ -490,6 +493,13 @@ networkPolicy:
 #     escalation, a read-only root filesystem (the run scratch directory is an
 #     emptyDir mounted over /tmp).
 #   - CPU/memory limits, so one runaway sandboxed config cannot starve the node.
+#   - what this chart CANNOT set: a per-Pod process/PID limit. Kubernetes has
+#     no PodSpec field for one (unlike the compose stacks' `pids_limit`) — it
+#     is a kubelet-level setting (`podPidsLimit` in KubeletConfiguration, or
+#     `--pod-max-pids`) that belongs to the cluster operator, not this chart.
+#     Mitigating factors: the sandboxed Alloy is one process (internal/simsvc
+#     runs it directly, no shell fork-bomb surface), and the CPU/memory limits
+#     above already bound a runaway config's other resource costs.
 #
 # See docs/visual-builder-design-VB1.md §6.4 and docs/archive/reviews/s3-sandbox-security-findings.md
 # (finding H5) for why each of these exists.
@@ -516,6 +526,26 @@ simulator:
   # §6.4's defense-in-depth check ON TOP OF the NetworkPolicy. Empty uses the
   # service's own built-in default (its own hostname plus localhost).
   allowedHosts: []
+  # token authenticates the control API both Deployments talk over: the
+  # simulator reads it as SIM_TOKEN, Shepherd as SHEPHERD_SIMULATOR_TOKEN /
+  # config.simulator.token, and both always read the SAME Secret + key
+  # (shepherd.simulatorTokenSecretName in _helpers.tpl resolves it once).
+  # Precedence, highest first:
+  #   1. existingSecret + key -- bring your own Secret (vault operator,
+  #      GitOps-managed, whatever already exists), unmanaged by this chart.
+  #   2. externalSecrets.enabled -- a Password generator + ExternalSecret this
+  #      chart renders in templates/externalsecret.yaml, the same pattern the
+  #      runtime bootstrap values already use.
+  #   3. otherwise, the chart generates its own Secret
+  #      (templates/secret-simulator-token.yaml) with lookup reuse: `value`
+  #      pins it to a literal, and left empty the chart generates a random
+  #      token ONCE and reuses it on every later `helm upgrade` -- see that
+  #      template for the caveat under GitOps tooling with no live cluster to
+  #      look up against.
+  token:
+    value: ""
+    existingSecret: ""
+    key: "token"
   podAnnotations: {}
   nodeSelector: {}
   tolerations: []
