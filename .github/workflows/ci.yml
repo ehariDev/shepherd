@@ -235,6 +235,17 @@ jobs:
       - name: Helm lint
         run: make helm-lint
 
+      # Repository-shape guards: Ginkgo specs over the Makefile and the
+      # workflow files themselves (scripts/repocheck). Needs Go but no
+      # Docker; each spec was written red first.
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache: true
+      - name: Repocheck guards
+        run: go test ./scripts/repocheck/... -count=1
+
   # Committed generated code (gen/ from proto/, internal/store/sqlc, and
   # internal/version/alloy_gen.go from deploy/versions.env) can silently drift
   # from its sources: an edit to proto/ without re-running `make generate`
