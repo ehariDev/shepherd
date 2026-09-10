@@ -5,6 +5,7 @@ import (
 	"errors"
 	"slices"
 
+	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgtype"
 
 	"shepherd/internal/store"
@@ -106,10 +107,28 @@ func authorizeOrgAccess(ctx context.Context, st *store.Store, sess *Session, org
 	// two places to look.
 	if sess.Source == SourceLocal && sess.UserID.Valid {
 		role, roleErr := st.Queries.GetOrgMemberRole(ctx, sqlc.GetOrgMemberRoleParams{OrgID: orgID, UserID: sess.UserID})
-		if roleErr != nil {
+		switch {
+		case roleErr == nil:
+			if orgRoleRank(localToRequirement(role)) < orgRoleRank(minRole) {
+				return ErrForbidden
+			}
+			return nil
+		case !errors.Is(roleErr, pgx.ErrNoRows):
 			return ErrForbidden
 		}
-		if orgRoleRank(localToRequirement(role)) < orgRoleRank(minRole) {
+
+		// W3-7: no org_members row, but this mirrors the OIDC path's team
+		// fallback below (W10) rather than stopping here -- a local user has
+		// no groups claim, so ListTeamsByOrgAndGroups can never reach them,
+		// and without this a local user who is only a team member (0017)
+		// was refused the same reader-equivalent floor a group-backed team
+		// member gets for free.
+		if orgRoleRank(RoleOrgReader) < orgRoleRank(minRole) {
+			return ErrForbidden
+		}
+		isMember, err := st.Queries.IsUserMemberOfAnyTeamInOrg(ctx,
+			sqlc.IsUserMemberOfAnyTeamInOrgParams{OrgID: orgID, UserID: sess.UserID})
+		if err != nil || !isMember {
 			return ErrForbidden
 		}
 		return nil
