@@ -142,6 +142,8 @@ export function InspectorPanel() {
         port={port}
         wireCount={port ? (wireCounts.get(port.id) ?? 0) : 0}
         binding={doc.bindings.find((b) => b.node === node.id && b.prop === attr.name)}
+        nodeId={node.id}
+        instancePath={[attr.name]}
         error={diagAt(nodeDiagnostics, [attr.name])}
       />
     );

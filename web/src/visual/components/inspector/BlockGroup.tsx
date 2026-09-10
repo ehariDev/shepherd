@@ -90,6 +90,8 @@ function InstanceFields({
             port={port}
             wireCount={port ? (wireCounts.get(port.id) ?? 0) : 0}
             binding={bindingAt(bindings, nodeId, attrSchemaPath)}
+            nodeId={nodeId}
+            instancePath={[...instancePath, attr.name]}
             error={diagAt(diagnostics, [...instancePath, attr.name])}
           />
         );
