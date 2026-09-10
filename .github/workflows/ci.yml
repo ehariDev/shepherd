@@ -409,8 +409,35 @@ jobs:
       # ./tools/..., so the schema generator's own unit tests (reconcile.go's
       # categorisation and merge behaviour, and the port/wire model in
       # portmodel.go) had never run in CI.
-      - name: go test ./...
-        run: go test ./...
+      #
+      # `make test-cover` (not bare `go test ./...`): same suite, plus a
+      # coverage profile. Nothing local or in CI measured Go test coverage
+      # before this -- coverage.out is *.out-ignored (.gitignore) so it never
+      # needed local cleanup, and is uploaded below so a PR's coverage is
+      # inspectable without re-running the suite.
+      - name: go test ./... (with coverage)
+        run: make test-cover
+
+      - name: Publish coverage summary
+        if: always()
+        run: |
+          if [ -s coverage.out ]; then
+            {
+              echo "### Go coverage"
+              echo '```'
+              go tool cover -func=coverage.out | tail -1
+              echo '```'
+            } >> "$GITHUB_STEP_SUMMARY"
+          fi
+
+      - name: Upload coverage profile
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: coverage
+          path: coverage.out
+          retention-days: 14
+          if-no-files-found: ignore
 
   web:
     name: web

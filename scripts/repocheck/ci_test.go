@@ -127,3 +127,31 @@ var _ = Describe("ci.yml housekeeping", func() {
 		Expect(expr).To(ContainSubstring("pull_request"))
 	})
 })
+
+// Red run, 2026-09-10: ci.yml's `test` job ran bare `go test ./...` -- no
+// coverage profile was produced, so nothing local or in CI ever measured or
+// published Go test coverage. The base-merged Makefile `test-cover:` target
+// (`go test -coverprofile=coverage.out -covermode=atomic ./... && go tool
+// cover -func=coverage.out | tail -1`) existed but nothing in ci.yml called
+// it.
+var _ = Describe("ci.yml's test job", func() {
+	It("runs make test-cover, publishes the total to the step summary, and uploads coverage.out", func() {
+		ci := loadWorkflow("ci.yml")
+		test, ok := ci.Jobs["test"]
+		Expect(ok).To(BeTrue(), "ci.yml has no test job")
+		joined := joinedRuns(test.Steps)
+
+		Expect(joined).To(ContainSubstring("make test-cover"))
+		Expect(joined).To(ContainSubstring("GITHUB_STEP_SUMMARY"))
+
+		var uploadsCoverage bool
+		for _, s := range test.Steps {
+			if strings.HasPrefix(s.Uses, "actions/upload-artifact@") {
+				if p, ok := s.With["path"].(string); ok && strings.Contains(p, "coverage.out") {
+					uploadsCoverage = true
+				}
+			}
+		}
+		Expect(uploadsCoverage).To(BeTrue(), "test job must upload coverage.out via actions/upload-artifact")
+	})
+})
