@@ -13,6 +13,7 @@ import type {
   L1Diagnostic,
   SchemaPayload,
 } from './types';
+import { scalarConflicts } from './wireOrient';
 
 /** Info about the in-flight connection drag (A3). Lives in the store — not in
  * PipelineNodeData / rfNodes — so starting/ending a drag doesn't force the
@@ -145,7 +146,16 @@ interface VisualStore {
    *  unset state a literal or a wire could then fill. */
   removeBinding: (nodeId: string, path: string[]) => void;
   removeNode: (id: string) => void;
-  addEdge: (from: { node: string; port: string }, to: { node: string; port: string }) => void;
+  /** Adds a wire, or — when `to`'s port is `cardinality: scalar` (W5-03,
+   *  design §3.2) — REPLACES whatever wire already lands there, as one undo
+   *  step. `added` is false for a self-connection, an exact duplicate, or a
+   *  cycle (the pre-existing checks); `replaced` lists the edge(s) removed to
+   *  make room, `[]` otherwise — CanvasPane's onConnect uses it to show an
+   *  Undo toast only when something was actually replaced. */
+  addEdge: (
+    from: { node: string; port: string },
+    to: { node: string; port: string },
+  ) => { added: boolean; replaced: GraphEdge[] };
   /** Deletes every currently-selected node and edge (selected ids may name either)
    * plus every edge attached to a deleted node, as ONE atomic history entry — so a
    * single undo restores the whole selection, node(s), cascaded wires and all. */
@@ -318,7 +328,8 @@ export const useVisualStore = create<VisualStore>()(
           };
         }),
 
-      addEdge: (from, to) =>
+      addEdge: (from, to) => {
+        let result: { added: boolean; replaced: GraphEdge[] } = { added: false, replaced: [] };
         set((state) => {
           if (
             from.node === to.node ||
@@ -341,12 +352,20 @@ export const useVisualStore = create<VisualStore>()(
             )
           )
             return state;
+          const replaced = scalarConflicts(state.schema, state.doc, { from, to });
+          const replacedIds = new Set(replaced.map((e) => e.id));
           const doc = {
             ...state.doc,
-            edges: [...state.doc.edges, { id: `e_${nanoid(8)}`, from, to }],
+            edges: [
+              ...state.doc.edges.filter((e) => !replacedIds.has(e.id)),
+              { id: `e_${nanoid(8)}`, from, to },
+            ],
           };
+          result = { added: true, replaced };
           return { doc, diagnostics: revalidate({ ...state, doc }) };
-        }),
+        });
+        return result;
+      },
 
       pasteNodesAndEdges: (nodes, edges) =>
         set((state) => {

@@ -320,6 +320,90 @@ describe('undo/redo keep diagnostics in step with the document', () => {
   });
 });
 
+describe('addEdge scalar fan-in (W5-03)', () => {
+  // Same hand-built-schema convention as scalarConflicts's own tests
+  // (wireOrient.test.ts) — the shipped schema does not populate `cardinality`
+  // on any real port yet.
+  const schema = {
+    _meta: { alloy_version: 'x' },
+    components: {
+      source: {
+        stability: 'ga',
+        attributes: [],
+        blocks: [],
+        inputs: [],
+        outputs: [{ export: 'out', path: ['out'], type: 'x', role: 'produces' }],
+      },
+      sink: {
+        stability: 'ga',
+        attributes: [],
+        blocks: [],
+        inputs: [{ prop: 'in', path: ['in'], type: 'x', role: 'accepts', cardinality: 'scalar' }],
+        outputs: [],
+      },
+    },
+  } as unknown as SchemaPayload;
+
+  beforeEach(() => {
+    useVisualStore.setState({
+      doc: {
+        kind: 'alloy-graph/v1',
+        schema_version: 'alloy-v1.18.1',
+        nodes: [],
+        edges: [],
+        bindings: [],
+        viewport: { x: 0, y: 0, zoom: 1 },
+        meta: { created_with: 'test' },
+      },
+      selected: [],
+      diagnostics: [],
+      schema,
+      allowExperimental: false,
+      connectingFrom: null,
+    });
+    useVisualStore.temporal.getState().clear();
+  });
+
+  it('a second wire onto a scalar port replaces the first, in one undo step', () => {
+    const store = useVisualStore;
+    store.getState().addNode('source', { x: 0, y: 0 });
+    store.getState().addNode('source', { x: 0, y: 100 });
+    store.getState().addNode('sink', { x: 200, y: 50 });
+    const [a, b, c] = store.getState().doc.nodes.map((n) => n.id);
+
+    const first = store.getState().addEdge({ node: a, port: 'out' }, { node: c, port: 'in' });
+    expect(first).toEqual({ added: true, replaced: [] });
+    const afterFirst = store.temporal.getState().pastStates.length;
+
+    const second = store.getState().addEdge({ node: b, port: 'out' }, { node: c, port: 'in' });
+    expect(second.added).toBe(true);
+    expect(second.replaced).toHaveLength(1);
+    expect(second.replaced[0].from.node).toBe(a);
+
+    expect(store.getState().doc.edges).toHaveLength(1);
+    expect(store.getState().doc.edges[0].from.node).toBe(b);
+    // The replace is ONE undo step, not two (the add and the removal happen
+    // in the same `set` call).
+    expect(store.temporal.getState().pastStates.length).toBe(afterFirst + 1);
+
+    store.temporal.getState().undo();
+    expect(store.getState().doc.edges).toHaveLength(1);
+    expect(store.getState().doc.edges[0].from.node).toBe(a);
+  });
+
+  it('a duplicate or cycling edge is still refused (added: false, replaced: [])', () => {
+    const store = useVisualStore;
+    store.getState().addNode('source', { x: 0, y: 0 });
+    store.getState().addNode('sink', { x: 200, y: 0 });
+    const [a, c] = store.getState().doc.nodes.map((n) => n.id);
+    store.getState().addEdge({ node: a, port: 'out' }, { node: c, port: 'in' });
+
+    const dup = store.getState().addEdge({ node: a, port: 'out' }, { node: c, port: 'in' });
+    expect(dup).toEqual({ added: false, replaced: [] });
+    expect(store.getState().doc.edges).toHaveLength(1);
+  });
+});
+
 describe('setBinding / removeBinding (W5-01)', () => {
   // A minimal hand-built schema (store.test.ts's established pattern —
   // selectConnectionState's `scalarSink` above, and the undo/redo describe
