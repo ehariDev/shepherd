@@ -76,8 +76,13 @@ test('group search debounce suppresses calls within the typing window', async ({
   // Type rapidly — the 300ms debounce should suppress calls fired mid-burst.
   await input.pressSequentially('test', { delay: 50 });
   expect(api.calls('/shepherd.mgmt.v1.AdminService/SearchGroups').length).toBeLessThanOrEqual(1);
-  await page.waitForTimeout(400);
-  expect(api.calls('/shepherd.mgmt.v1.AdminService/SearchGroups').length).toBeGreaterThanOrEqual(1);
+  // Poll instead of a blind sleep: waits exactly as long as the debounce
+  // (CollectorDetailPage.tsx) actually takes, not a fixed guess. (A faked
+  // page.clock was tried here first and does not work: it stalls the React
+  // Query refetch this debounce triggers, not just the setTimeout itself.)
+  await expect
+    .poll(() => api.calls('/shepherd.mgmt.v1.AdminService/SearchGroups').length, { timeout: 2000 })
+    .toBeGreaterThanOrEqual(1);
 });
 
 test('search result click adds the group directly', async ({ page, api }) => {
