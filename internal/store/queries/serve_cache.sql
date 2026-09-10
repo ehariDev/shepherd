@@ -8,6 +8,12 @@ FROM collectors c
 JOIN clusters cl ON c.cluster_id = cl.id
 WHERE sc.collector_id = c.id AND cl.org_id = $1;
 
+-- name: MarkServeCacheDirtyByCluster :exec
+UPDATE serve_cache sc
+SET dirty = true
+FROM collectors c
+WHERE sc.collector_id = c.id AND c.cluster_id = $1;
+
 -- name: MarkServeCacheDirty :exec
 -- KEEP: single-collector dirty marking; used in agentapi tests and available for
 -- targeted per-collector invalidation. Do not remove.

@@ -259,6 +259,37 @@ func (q *Queries) ListEnabledPipelinesForMerge(ctx context.Context, orgID pgtype
 	return items, nil
 }
 
+const listPipelineNamesReferencingDestination = `-- name: ListPipelineNamesReferencingDestination :many
+SELECT name FROM pipelines
+WHERE wizard_state IS NOT NULL
+AND wizard_state @> jsonb_build_object('destination_id', $1::text)
+ORDER BY name
+`
+
+// Backs DeleteDestination's in-use check: a wizard-managed pipeline records
+// the destination it targets as {"destination_id": "<uuid>"} inside its
+// wizard_state JSONB, and deleting the destination out from under it would
+// leave the pipeline pointing at nothing.
+func (q *Queries) ListPipelineNamesReferencingDestination(ctx context.Context, destinationID string) ([]string, error) {
+	rows, err := q.db.Query(ctx, listPipelineNamesReferencingDestination, destinationID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []string
+	for rows.Next() {
+		var name string
+		if err := rows.Scan(&name); err != nil {
+			return nil, err
+		}
+		items = append(items, name)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const listPipelinesByOrg = `-- name: ListPipelinesByOrg :many
 SELECT id, org_id, name, contents, matchers, enabled, source, wizard_kind, wizard_state, repo_link_id, git_path, created_by, updated_by, created_at, updated_at, sanitized_name, owner_team_id FROM pipelines WHERE org_id = $1 ORDER BY name
 `

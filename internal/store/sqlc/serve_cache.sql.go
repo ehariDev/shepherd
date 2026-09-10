@@ -39,6 +39,18 @@ func (q *Queries) MarkServeCacheDirty(ctx context.Context, collectorID pgtype.UU
 	return err
 }
 
+const markServeCacheDirtyByCluster = `-- name: MarkServeCacheDirtyByCluster :exec
+UPDATE serve_cache sc
+SET dirty = true
+FROM collectors c
+WHERE sc.collector_id = c.id AND c.cluster_id = $1
+`
+
+func (q *Queries) MarkServeCacheDirtyByCluster(ctx context.Context, clusterID pgtype.UUID) error {
+	_, err := q.db.Exec(ctx, markServeCacheDirtyByCluster, clusterID)
+	return err
+}
+
 const markServeCacheDirtyByOrg = `-- name: MarkServeCacheDirtyByOrg :exec
 UPDATE serve_cache sc
 SET dirty = true
