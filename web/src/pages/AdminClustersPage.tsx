@@ -4,8 +4,52 @@ import { toast } from 'sonner';
 import { clients, toApiError } from '@/api/transport';
 import { AdminConfirmDialog } from '@/components/admin/AdminConfirmDialog';
 import { AdminModal, AdminModalActions } from '@/components/admin/AdminModal';
+import { DataTable, type DataTableColumn } from '@/components/ui/DataTable';
 import type { Cluster } from '@/gen/shepherd/mgmt/v1/admin_pb';
 import { useMe } from '@/hooks/useMe';
+
+function clusterColumns(
+  isAppAdmin: boolean,
+  orgLabel: (orgId: string) => string,
+  onUnclaim: (c: Cluster) => void,
+  onClaim: (c: Cluster) => void,
+): DataTableColumn<Cluster>[] {
+  const cols: DataTableColumn<Cluster>[] = [
+    {
+      key: 'name',
+      header: 'Cluster',
+      cellClassName: 'px-4 py-2.5 font-mono text-xs',
+      render: (c) => c.name,
+    },
+    {
+      key: 'org',
+      header: 'Org',
+      cellClassName: 'px-4 py-2.5 text-muted',
+      render: (c) => (c.orgId ? orgLabel(c.orgId) : '—'),
+    },
+  ];
+  if (isAppAdmin) {
+    cols.push({
+      key: 'actions',
+      header: '',
+      cellClassName: 'px-4 py-2.5 text-right',
+      render: (c) =>
+        c.orgId ? (
+          <button onClick={() => onUnclaim(c)} className='text-xs text-muted hover:text-red-400'>
+            Unclaim
+          </button>
+        ) : (
+          <button
+            onClick={() => onClaim(c)}
+            className='text-xs text-indigo-400 hover:text-indigo-300'
+          >
+            Claim
+          </button>
+        ),
+    });
+  }
+  return cols;
+}
 
 export function AdminClustersPage() {
   const { data: me } = useMe();
@@ -81,47 +125,14 @@ export function AdminClustersPage() {
           </p>
         </div>
       ) : (
-        <div className='rounded-lg border border-border overflow-hidden'>
-          <table className='w-full text-sm'>
-            <thead className='bg-card text-muted'>
-              <tr>
-                <th className='px-4 py-3 text-left font-medium'>Cluster</th>
-                <th className='px-4 py-3 text-left font-medium'>Org</th>
-                {isAppAdmin && <th className='px-4 py-3' />}
-              </tr>
-            </thead>
-            <tbody>
-              {(data?.items ?? []).map((c) => (
-                <tr key={c.id} className='border-t border-border hover:bg-card/60'>
-                  <td className='px-4 py-2.5 font-mono text-xs'>{c.name}</td>
-                  <td className='px-4 py-2.5 text-muted'>{c.orgId ? orgLabel(c.orgId) : '—'}</td>
-                  {isAppAdmin && (
-                    <td className='px-4 py-2.5 text-right'>
-                      {c.orgId ? (
-                        <button
-                          onClick={() => setUnclaimCluster(c)}
-                          className='text-xs text-muted hover:text-red-400'
-                        >
-                          Unclaim
-                        </button>
-                      ) : (
-                        <button
-                          onClick={() => {
-                            setClaimCluster(c);
-                            setClaimOrgId('');
-                          }}
-                          className='text-xs text-indigo-400 hover:text-indigo-300'
-                        >
-                          Claim
-                        </button>
-                      )}
-                    </td>
-                  )}
-                </tr>
-              ))}
-            </tbody>
-          </table>
-        </div>
+        <DataTable
+          columns={clusterColumns(isAppAdmin, orgLabel, setUnclaimCluster, (c) => {
+            setClaimCluster(c);
+            setClaimOrgId('');
+          })}
+          rows={data?.items ?? []}
+          rowKey={(c) => c.id}
+        />
       )}
 
       {claimCluster && (

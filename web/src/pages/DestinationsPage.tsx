@@ -5,6 +5,7 @@ import { toast } from 'sonner';
 import { clients, toApiError } from '@/api/transport';
 import { AdminConfirmDialog } from '@/components/admin/AdminConfirmDialog';
 import { QueryError } from '@/components/QueryError';
+import { DataTable, type DataTableColumn } from '@/components/ui/DataTable';
 import { Modal, ModalActions } from '@/components/ui/Modal';
 import type { Destination } from '@/gen/shepherd/mgmt/v1/destination_pb';
 import { useCanAdminister, useOrgId } from '@/hooks/useOrg';
@@ -46,6 +47,48 @@ function DestinationUrl({ url }: { url: string }) {
       <ExternalLink size={10} />
     </a>
   );
+}
+
+function destinationColumns(
+  canAdminister: boolean,
+  setPendingDelete: (d: { id: string; name: string } | null) => void,
+): DataTableColumn<Destination>[] {
+  return [
+    {
+      key: 'name',
+      header: 'Name',
+      cellClassName: 'px-4 py-2.5 font-medium',
+      render: (d) => d.name,
+    },
+    { key: 'type', header: 'Type', cellClassName: 'px-4 py-2.5 text-muted', render: (d) => d.type },
+    {
+      key: 'url',
+      header: 'URL',
+      cellClassName: 'px-4 py-2.5 font-mono text-xs text-zinc-300',
+      render: (d) => <DestinationUrl url={d.url} />,
+    },
+    {
+      key: 'auth',
+      header: 'Auth',
+      cellClassName: 'px-4 py-2.5 text-xs text-muted',
+      render: (d) => d.authMode,
+    },
+    {
+      key: 'actions',
+      header: '',
+      cellClassName: 'px-4 py-2.5 text-right',
+      render: (d) =>
+        canAdminister && (
+          <button
+            onClick={() => setPendingDelete({ id: d.id, name: d.name })}
+            className='text-muted-3 transition-colors hover:text-red-400'
+            aria-label='Delete destination'
+          >
+            <Trash2 size={14} />
+          </button>
+        ),
+    },
+  ];
 }
 
 export function DestinationsPage() {
@@ -171,42 +214,11 @@ export function DestinationsPage() {
           </button>
         </div>
       ) : (
-        <div className='rounded-lg border border-border overflow-hidden'>
-          <table className='w-full text-sm'>
-            <thead className='bg-card text-muted'>
-              <tr>
-                <th className='px-4 py-3 text-left font-medium'>Name</th>
-                <th className='px-4 py-3 text-left font-medium'>Type</th>
-                <th className='px-4 py-3 text-left font-medium'>URL</th>
-                <th className='px-4 py-3 text-left font-medium'>Auth</th>
-                <th className='px-4 py-3' />
-              </tr>
-            </thead>
-            <tbody>
-              {(data?.items ?? []).map((d: Destination) => (
-                <tr key={d.id} className='border-t border-border hover:bg-card/60'>
-                  <td className='px-4 py-2.5 font-medium'>{d.name}</td>
-                  <td className='px-4 py-2.5 text-muted'>{d.type}</td>
-                  <td className='px-4 py-2.5 font-mono text-xs text-zinc-300'>
-                    <DestinationUrl url={d.url} />
-                  </td>
-                  <td className='px-4 py-2.5 text-xs text-muted'>{d.authMode}</td>
-                  <td className='px-4 py-2.5 text-right'>
-                    {canAdminister && (
-                      <button
-                        onClick={() => setPendingDelete({ id: d.id, name: d.name })}
-                        className='text-muted-3 transition-colors hover:text-red-400'
-                        aria-label='Delete destination'
-                      >
-                        <Trash2 size={14} />
-                      </button>
-                    )}
-                  </td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
-        </div>
+        <DataTable
+          columns={destinationColumns(canAdminister, setPendingDelete)}
+          rows={data?.items ?? []}
+          rowKey={(d) => d.id}
+        />
       )}
 
       {showCreate && (

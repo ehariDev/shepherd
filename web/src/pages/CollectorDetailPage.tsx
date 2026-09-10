@@ -4,6 +4,8 @@ import { CheckCircle, Copy, Plus, Search, Trash2 } from 'lucide-react';
 import { useEffect, useState } from 'react';
 import { toast } from 'sonner';
 import { clients, toApiError } from '@/api/transport';
+import { DataTable, type DataTableColumn } from '@/components/ui/DataTable';
+import type { Assignment, CollectorInstance } from '@/gen/shepherd/mgmt/v1/fleet_pb';
 import { useMe } from '@/hooks/useMe';
 import { useOrgId } from '@/hooks/useOrg';
 import { formatTimestampRelative } from '@/lib/utils';
@@ -13,6 +15,103 @@ const STATUS_COLORS: Record<string, string> = {
   APPLYING: 'text-yellow-400 bg-yellow-400/10 border-yellow-400/20',
   FAILED: 'text-red-400 bg-red-400/10 border-red-400/20',
 };
+
+const instanceColumns: DataTableColumn<CollectorInstance>[] = [
+  {
+    key: 'name',
+    header: 'Name',
+    headerClassName: 'px-4 py-2 text-left font-medium',
+    cellClassName: 'px-4 py-2.5 font-mono text-xs',
+    render: (i) => i.name,
+  },
+  {
+    key: 'version',
+    header: 'Version',
+    headerClassName: 'px-4 py-2 text-left font-medium',
+    cellClassName: 'px-4 py-2.5 text-muted',
+    render: (i) => i.alloyVersion || '—',
+  },
+  {
+    key: 'os',
+    header: 'OS',
+    headerClassName: 'px-4 py-2 text-left font-medium',
+    cellClassName: 'px-4 py-2.5 text-muted',
+    render: (i) => i.os || '—',
+  },
+  {
+    key: 'lastSeen',
+    header: 'Last seen',
+    headerClassName: 'px-4 py-2 text-left font-medium',
+    cellClassName: 'px-4 py-2.5 text-muted',
+    render: (i) => formatTimestampRelative(i.lastSeen),
+  },
+  {
+    key: 'status',
+    header: 'Status',
+    headerClassName: 'px-4 py-2 text-left font-medium',
+    render: (i) => {
+      const instStatus = i.remoteConfigStatus?.toUpperCase() ?? '';
+      const instColor = STATUS_COLORS[instStatus] ?? 'text-muted bg-border border-border-strong';
+      return (
+        <span className={`text-xs font-medium px-2 py-0.5 rounded border ${instColor}`}>
+          {instStatus || 'UNKNOWN'}
+        </span>
+      );
+    },
+  },
+  {
+    key: 'error',
+    header: 'Error',
+    headerClassName: 'px-4 py-2 text-left font-medium',
+    cellClassName: 'px-4 py-2.5 text-red-400 text-xs',
+    render: (i) => i.remoteConfigError || '—',
+  },
+];
+
+function assignmentColumns(
+  onRemove: (a: Assignment) => void,
+  removePending: boolean,
+): DataTableColumn<Assignment>[] {
+  return [
+    {
+      key: 'group',
+      header: 'Group',
+      headerClassName: 'px-4 py-2 text-left font-medium',
+      render: (a) => a.groupDisplayName || '—',
+    },
+    {
+      key: 'groupId',
+      header: 'Group ID',
+      headerClassName: 'px-4 py-2 text-left font-medium',
+      cellClassName: 'px-4 py-2.5 font-mono text-xs text-muted',
+      render: (a) => a.groupId,
+    },
+    {
+      key: 'added',
+      header: 'Added',
+      headerClassName: 'px-4 py-2 text-left font-medium',
+      cellClassName: 'px-4 py-2.5 text-muted text-xs',
+      render: (a) => formatTimestampRelative(a.createdAt),
+    },
+    {
+      key: 'actions',
+      header: '',
+      headerClassName: 'px-4 py-2',
+      cellClassName: 'px-4 py-2.5 text-right',
+      render: (a) => (
+        <button
+          type='button'
+          onClick={() => onRemove(a)}
+          disabled={removePending}
+          aria-label={`Remove ${a.groupDisplayName || a.groupId}`}
+          className='text-muted-3 transition-colors hover:text-red-400 disabled:opacity-50'
+        >
+          <Trash2 size={14} />
+        </button>
+      ),
+    },
+  ];
+}
 
 type Tab = 'config' | 'info' | 'access';
 
@@ -248,47 +347,13 @@ export function CollectorDetailPage() {
             {instances.length === 0 ? (
               <p className='text-sm text-muted-2'>No instances have reported in yet.</p>
             ) : (
-              <div className='rounded-lg border border-border overflow-hidden overflow-x-auto'>
-                <table className='w-full text-sm'>
-                  <thead className='bg-card text-muted'>
-                    <tr>
-                      <th className='px-4 py-2 text-left font-medium'>Name</th>
-                      <th className='px-4 py-2 text-left font-medium'>Version</th>
-                      <th className='px-4 py-2 text-left font-medium'>OS</th>
-                      <th className='px-4 py-2 text-left font-medium'>Last seen</th>
-                      <th className='px-4 py-2 text-left font-medium'>Status</th>
-                      <th className='px-4 py-2 text-left font-medium'>Error</th>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {instances.map((inst) => {
-                      const instStatus = inst.remoteConfigStatus?.toUpperCase() ?? '';
-                      const instColor =
-                        STATUS_COLORS[instStatus] ?? 'text-muted bg-border border-border-strong';
-                      return (
-                        <tr key={inst.name} className='border-t border-border'>
-                          <td className='px-4 py-2.5 font-mono text-xs'>{inst.name}</td>
-                          <td className='px-4 py-2.5 text-muted'>{inst.alloyVersion || '—'}</td>
-                          <td className='px-4 py-2.5 text-muted'>{inst.os || '—'}</td>
-                          <td className='px-4 py-2.5 text-muted'>
-                            {formatTimestampRelative(inst.lastSeen)}
-                          </td>
-                          <td className='px-4 py-2.5'>
-                            <span
-                              className={`text-xs font-medium px-2 py-0.5 rounded border ${instColor}`}
-                            >
-                              {instStatus || 'UNKNOWN'}
-                            </span>
-                          </td>
-                          <td className='px-4 py-2.5 text-red-400 text-xs'>
-                            {inst.remoteConfigError || '—'}
-                          </td>
-                        </tr>
-                      );
-                    })}
-                  </tbody>
-                </table>
-              </div>
+              <DataTable
+                columns={instanceColumns}
+                rows={instances}
+                rowKey={(inst) => inst.name}
+                rowClassName='border-t border-border'
+                scrollX
+              />
             )}
           </div>
         </div>
@@ -385,40 +450,16 @@ export function CollectorDetailPage() {
                 <p className='text-sm text-muted-2'>No groups have access to this collector yet.</p>
               </div>
             ) : (
-              <div className='rounded-lg border border-border overflow-hidden overflow-x-auto'>
-                <table className='w-full text-sm'>
-                  <thead className='bg-card text-muted'>
-                    <tr>
-                      <th className='px-4 py-2 text-left font-medium'>Group</th>
-                      <th className='px-4 py-2 text-left font-medium'>Group ID</th>
-                      <th className='px-4 py-2 text-left font-medium'>Added</th>
-                      <th className='px-4 py-2' />
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {(assignments?.items ?? []).map((a) => (
-                      <tr key={a.id} className='border-t border-border'>
-                        <td className='px-4 py-2.5'>{a.groupDisplayName || '—'}</td>
-                        <td className='px-4 py-2.5 font-mono text-xs text-muted'>{a.groupId}</td>
-                        <td className='px-4 py-2.5 text-muted text-xs'>
-                          {formatTimestampRelative(a.createdAt)}
-                        </td>
-                        <td className='px-4 py-2.5 text-right'>
-                          <button
-                            type='button'
-                            onClick={() => removeAssignment.mutate(a.groupId)}
-                            disabled={removeAssignment.isPending}
-                            aria-label={`Remove ${a.groupDisplayName || a.groupId}`}
-                            className='text-muted-3 transition-colors hover:text-red-400 disabled:opacity-50'
-                          >
-                            <Trash2 size={14} />
-                          </button>
-                        </td>
-                      </tr>
-                    ))}
-                  </tbody>
-                </table>
-              </div>
+              <DataTable
+                columns={assignmentColumns(
+                  (a) => removeAssignment.mutate(a.groupId),
+                  removeAssignment.isPending,
+                )}
+                rows={assignments?.items ?? []}
+                rowKey={(a) => a.id}
+                rowClassName='border-t border-border'
+                scrollX
+              />
             )}
           </div>
         </div>
