@@ -122,4 +122,65 @@ var _ = Describe("MeService GetMe role resolution", Label("integration"), func()
 			}
 		}
 	})
+
+	// W3-7b: authorizeOrgAccess already grants the reader-equivalent floor
+	// to a local user who has no org_members row but is a member of a team
+	// in the org (W3-7). Before ResolveOrgRole grew the matching fallback,
+	// GetMe called auth.ResolveOrgRole (rpc_me.go) and got "" for this exact
+	// session, so the org was omitted from the response entirely — the UI
+	// showed no org while the server was already granting reads under it.
+	It("reports the viewer role for a local user who is only a team member", func() {
+		org, err := st.Queries.CreateOrg(ctx, sqlc.CreateOrgParams{
+			Name: "me-roles-local-team-only", DisplayName: "Local Team Only", AdminGroupID: "me-roles-local-team-only-admin",
+		})
+		Expect(err).NotTo(HaveOccurred())
+
+		user, err := st.Queries.CreateUser(ctx, sqlc.CreateUserParams{
+			Login: "me-roles-team-user", Email: "me-roles-team-user@example.com", DisplayName: "Team User",
+			PasswordHash: "x", IsAppAdmin: false, MustChangePassword: false,
+		})
+		Expect(err).NotTo(HaveOccurred())
+
+		team, err := st.Queries.CreateTeam(ctx, sqlc.CreateTeamParams{
+			OrgID: org.ID, Name: "me-roles-local-only-team",
+		})
+		Expect(err).NotTo(HaveOccurred())
+		Expect(st.Queries.AddTeamMember(ctx, sqlc.AddTeamMemberParams{
+			TeamID: team.ID, UserID: user.ID,
+		})).To(Succeed())
+
+		sessionID := fmt.Sprintf("me-roles-local-session-%d", time.Now().UnixNano())
+		groupsJSON, err := json.Marshal([]string{})
+		Expect(err).NotTo(HaveOccurred())
+		_, err = st.Queries.CreateSession(ctx, sqlc.CreateSessionParams{
+			ID: sessionID, UserID: user.ID, UserOid: "local:" + user.Login, Email: user.Email, DisplayName: user.DisplayName,
+			GroupIds:   groupsJSON,
+			IsAppAdmin: false,
+			ExpiresAt:  pgtype.Timestamptz{Time: time.Now().Add(time.Hour), Valid: true},
+			Source:     auth.SourceLocal,
+		})
+		Expect(err).NotTo(HaveOccurred())
+		cookie := &http.Cookie{Name: "shepherd_session", Value: sessionID}
+
+		resp := postConnect("/shepherd.mgmt.v1.MeService/GetMe", map[string]any{}, cookie)
+		Expect(resp.StatusCode).To(Equal(http.StatusOK))
+		payload := decodeBody(resp)
+
+		orgsRaw, present := payload["orgs"]
+		Expect(present).To(BeTrue(), "the team-only local user should see at least this org")
+		orgs, ok := orgsRaw.([]any)
+		Expect(ok).To(BeTrue(), "expected orgs to be an array")
+
+		found := false
+		for _, e := range orgs {
+			entry, ok := e.(map[string]any)
+			Expect(ok).To(BeTrue())
+			if entry["id"] == org.ID.String() {
+				found = true
+				Expect(entry["role"]).To(Equal(auth.OrgRoleViewer),
+					"a local user who is only a team member should resolve to the viewer role")
+			}
+		}
+		Expect(found).To(BeTrue(), "org membership by team should have appeared in GetMe's org list")
+	})
 })

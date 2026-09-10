@@ -217,6 +217,93 @@ var _ = Describe("Org role ladder", Label("integration"), func() {
 		assertLadder(sess, expectation{})
 	})
 
+	// W3-7b: ResolveOrgRole is the GetMe-facing counterpart to
+	// authorizeOrgAccess -- authorizeOrgAccess answers "does this session
+	// clear requirement X" and already grants the reader-equivalent floor to
+	// a local user who is only a team member (W3-7, above). ResolveOrgRole
+	// answers "what is this session's role", full stop, and drives what the
+	// UI offers; before this, it still returned "" for the exact same
+	// session, so GetMe reported no org at all while the server was already
+	// granting reads under it.
+	Describe("ResolveOrgRole", func() {
+		It("resolves a local team-only member to the viewer role", func() {
+			var oid pgtype.UUID
+			Expect(oid.Scan(orgID)).To(Succeed())
+			team, err := st.Queries.CreateTeam(ctx, sqlc.CreateTeamParams{
+				OrgID: oid, Name: "resolve-local-only-team",
+			})
+			Expect(err).NotTo(HaveOccurred())
+
+			sess := newLocalUser("l-resolve-team-only", "") // no org_members row
+			Expect(st.Queries.AddTeamMember(ctx, sqlc.AddTeamMemberParams{
+				TeamID: team.ID, UserID: sess.UserID,
+			})).To(Succeed())
+
+			org, err := st.Queries.GetOrgByID(ctx, oid)
+			Expect(err).NotTo(HaveOccurred())
+			Expect(auth.ResolveOrgRole(ctx, st, sess, org)).To(Equal(auth.OrgRoleViewer),
+				"a local user who is only a team member should resolve to the viewer role, "+
+					"matching the reader-equivalent floor authorizeOrgAccess already grants them")
+		})
+
+		// The fallback grants exactly what team membership earns, not a
+		// blanket floor for every local user with no org_members row.
+		It("resolves nothing for a local user on no team and no org_members row", func() {
+			var oid pgtype.UUID
+			Expect(oid.Scan(orgID)).To(Succeed())
+			sess := newLocalUser("l-resolve-no-team", "")
+
+			org, err := st.Queries.GetOrgByID(ctx, oid)
+			Expect(err).NotTo(HaveOccurred())
+			Expect(auth.ResolveOrgRole(ctx, st, sess, org)).To(Equal(""))
+		})
+
+		// A team in ANOTHER org must not leak the viewer role here, mirroring
+		// the cross-org guard the Authorize-side fallback already enforces.
+		It("does not resolve a role from a team in another org", func() {
+			other, err := st.Queries.CreateOrg(ctx, sqlc.CreateOrgParams{
+				Name: "resolve-w37b-other", DisplayName: "Other", AdminGroupID: "resolve-w37b-other-admin",
+			})
+			Expect(err).NotTo(HaveOccurred())
+			foreignTeam, err := st.Queries.CreateTeam(ctx, sqlc.CreateTeamParams{
+				OrgID: other.ID, Name: "resolve-foreign-team",
+			})
+			Expect(err).NotTo(HaveOccurred())
+
+			sess := newLocalUser("l-resolve-foreign-team", "")
+			Expect(st.Queries.AddTeamMember(ctx, sqlc.AddTeamMemberParams{
+				TeamID: foreignTeam.ID, UserID: sess.UserID,
+			})).To(Succeed())
+
+			var oid pgtype.UUID
+			Expect(oid.Scan(orgID)).To(Succeed())
+			org, err := st.Queries.GetOrgByID(ctx, oid)
+			Expect(err).NotTo(HaveOccurred())
+			Expect(auth.ResolveOrgRole(ctx, st, sess, org)).To(Equal(""))
+		})
+
+		// A local user WITH an org_members row must keep reading straight off
+		// it -- the team fallback only fires on the pgx.ErrNoRows path, never
+		// overriding an explicit role.
+		It("prefers the org_members role over team membership when both exist", func() {
+			var oid pgtype.UUID
+			Expect(oid.Scan(orgID)).To(Succeed())
+			team, err := st.Queries.CreateTeam(ctx, sqlc.CreateTeamParams{
+				OrgID: oid, Name: "resolve-editor-and-team",
+			})
+			Expect(err).NotTo(HaveOccurred())
+
+			sess := newLocalUser("l-resolve-editor-and-team", auth.OrgRoleEditor)
+			Expect(st.Queries.AddTeamMember(ctx, sqlc.AddTeamMemberParams{
+				TeamID: team.ID, UserID: sess.UserID,
+			})).To(Succeed())
+
+			org, err := st.Queries.GetOrgByID(ctx, oid)
+			Expect(err).NotTo(HaveOccurred())
+			Expect(auth.ResolveOrgRole(ctx, st, sess, org)).To(Equal(auth.OrgRoleEditor))
+		})
+	})
+
 	It("an app admin clears every requirement regardless of path", func() {
 		assertLadder(&auth.Session{IsAppAdmin: true, Source: auth.SourceOIDC},
 			expectation{admin: true, editor: true, reader: true})
