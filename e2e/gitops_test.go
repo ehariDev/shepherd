@@ -173,6 +173,36 @@ func gitOpsScenario5() {
 		Expect(content).To(ContainSubstring("e2e_git_pat_v2"))
 	})
 
+	// W2-S1 consumed layer: gitsync's Reconciler.validator was injected at
+	// construction but never referenced, so a file that PARSES (stage 1
+	// passes) but fails `alloy validate` (stage 2 — here, a component that
+	// does not exist) used to sync "ok" anyway, same as the two production
+	// stage3Check callers this closes the gap with. Unlike the syntax-error
+	// case above (caught by stage 1 alone, already covered before this
+	// step), this spec is only red before W2-S1's fix.
+	It("pat: pushing a file that parses but fails alloy validate (stage 2) marks sync_status=error and keeps serving the last good config", func() {
+		Expect(patHashAfterV2).NotTo(BeEmpty(), "v2 sync must have completed")
+
+		linkID := findRepoLinkByCollector(collectorID, patRepoInternalURL)
+		Expect(linkID).NotTo(BeEmpty())
+
+		ctx := context.Background()
+		_, err := patPusher.commitAndPush(ctx, map[string]string{
+			patPipelineFile: "nonexistent.component \"x\" {\n  forward_to = []\n}\n",
+		}, "v3b: fails stage 2")
+		Expect(err).NotTo(HaveOccurred())
+
+		Eventually(func() string {
+			return repoLinkSyncStatus(linkID)
+		}).WithTimeout(30 * time.Second).WithPolling(time.Second).Should(Equal("error"))
+
+		// The broken commit must never reach the served config, same
+		// contract as the stage-1 failure above.
+		content, hash := servedConfig(collectorID)
+		Expect(hash).To(Equal(patHashAfterV2), "served hash must stay pinned to the last good sync while sync_status=error")
+		Expect(content).To(ContainSubstring("e2e_git_pat_v2"))
+	})
+
 	It("pat: fixing the file recovers — sync_status returns to ok and the new content is served", func() {
 		linkID := findRepoLinkByCollector(collectorID, patRepoInternalURL)
 		Expect(linkID).NotTo(BeEmpty())
