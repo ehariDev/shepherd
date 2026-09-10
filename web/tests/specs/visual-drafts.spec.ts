@@ -8,8 +8,9 @@ import { test } from '../fixtures/test';
 
 // subscribeDraftAutosave's production delayMs default (VisualBuilderPage.tsx)
 // is 500ms; wait comfortably past it before relying on the draft having
-// landed in IndexedDB.
-const AUTOSAVE_SETTLE_MS = 700;
+// landed in IndexedDB. Generous margin because this fires a real setTimeout
+// in the browser, which a loaded CI/dev machine can delay well past 500ms.
+const AUTOSAVE_SETTLE_MS = 1500;
 
 test.describe('visual builder drafts', () => {
   test.beforeEach(async ({ page, api }) => {
