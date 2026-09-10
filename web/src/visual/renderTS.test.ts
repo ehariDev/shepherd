@@ -30,6 +30,23 @@ const readGraph = (name: string): GraphDocument =>
   JSON.parse(readFileSync(join(goCorpusDir, `${name}.graph.json`), 'utf-8')) as GraphDocument;
 const readGolden = (name: string) =>
   readFileSync(join(goCorpusDir, `${name}.golden.alloy`), 'utf-8');
+// The diagnostics parity contract between this renderer and
+// internal/visual/render.go: every corpus entry records the {code, severity}
+// pairs both renderers must emit for the same graph, sorted so emission order
+// isn't part of the contract. internal/visual/render_test.go's "7.2.1 corpus
+// renders byte-exact" DescribeTable reads the exact same file per entry.
+interface DiagExpectation {
+  code: string;
+  severity: string;
+}
+const readDiagnostics = (name: string): DiagExpectation[] =>
+  JSON.parse(
+    readFileSync(join(goCorpusDir, `${name}.diagnostics.json`), 'utf-8'),
+  ) as DiagExpectation[];
+const sortDiagnostics = (diags: Array<{ code: string; severity?: string }>): DiagExpectation[] =>
+  diags
+    .map(({ code, severity }) => ({ code, severity: severity ?? '' }))
+    .sort((a, b) => a.code.localeCompare(b.code) || a.severity.localeCompare(b.severity));
 
 const minimalScrapeGraph = readGraph('minimal-scrape');
 const fanInFanOutGraph = readGraph('fanin-fanout');
@@ -40,6 +57,7 @@ const disabledNodeGraph = readGraph('disabled-node');
 const labelEdgecasesGraph = readGraph('label-edgecases');
 const otelThreeSignalsGraph = readGraph('otel-three-signals');
 const kitchenSinkGraph = readGraph('kitchen-sink');
+const diagnosticsMixedGraph = readGraph('diagnostics-mixed');
 
 const minimalScrapeGolden = readGolden('minimal-scrape');
 const fanInFanOutGolden = readGolden('fanin-fanout');
@@ -50,6 +68,7 @@ const disabledNodeGolden = readGolden('disabled-node');
 const labelEdgecasesGolden = readGolden('label-edgecases');
 const otelThreeSignalsGolden = readGolden('otel-three-signals');
 const kitchenSinkGolden = readGolden('kitchen-sink');
+const diagnosticsMixedGolden = readGolden('diagnostics-mixed');
 
 // Seeded shuffle for deterministic permutation tests (matches Go test seed 42)
 function seededShuffle<T>(arr: T[], seed: number): T[] {
@@ -67,16 +86,72 @@ function seededShuffle<T>(arr: T[], seed: number): T[] {
   return result;
 }
 
-const corpus: Array<{ name: string; graph: unknown; golden: string }> = [
-  { name: 'minimal-scrape', graph: minimalScrapeGraph, golden: minimalScrapeGolden },
-  { name: 'fanin-fanout', graph: fanInFanOutGraph, golden: fanInFanOutGolden },
-  { name: 'nested-blocks', graph: nestedBlocksGraph, golden: nestedBlocksGolden },
-  { name: 'bindings-secret', graph: bindingsSecretGraph, golden: bindingsSecretGolden },
-  { name: 'logs-chain', graph: logsChainGraph, golden: logsChainGolden },
-  { name: 'disabled-node', graph: disabledNodeGraph, golden: disabledNodeGolden },
-  { name: 'label-edgecases', graph: labelEdgecasesGraph, golden: labelEdgecasesGolden },
-  { name: 'otel-three-signals', graph: otelThreeSignalsGraph, golden: otelThreeSignalsGolden },
-  { name: 'kitchen-sink', graph: kitchenSinkGraph, golden: kitchenSinkGolden },
+const corpus: Array<{
+  name: string;
+  graph: unknown;
+  golden: string;
+  diagnostics: DiagExpectation[];
+}> = [
+  {
+    name: 'minimal-scrape',
+    graph: minimalScrapeGraph,
+    golden: minimalScrapeGolden,
+    diagnostics: readDiagnostics('minimal-scrape'),
+  },
+  {
+    name: 'fanin-fanout',
+    graph: fanInFanOutGraph,
+    golden: fanInFanOutGolden,
+    diagnostics: readDiagnostics('fanin-fanout'),
+  },
+  {
+    name: 'nested-blocks',
+    graph: nestedBlocksGraph,
+    golden: nestedBlocksGolden,
+    diagnostics: readDiagnostics('nested-blocks'),
+  },
+  {
+    name: 'bindings-secret',
+    graph: bindingsSecretGraph,
+    golden: bindingsSecretGolden,
+    diagnostics: readDiagnostics('bindings-secret'),
+  },
+  {
+    name: 'logs-chain',
+    graph: logsChainGraph,
+    golden: logsChainGolden,
+    diagnostics: readDiagnostics('logs-chain'),
+  },
+  {
+    name: 'disabled-node',
+    graph: disabledNodeGraph,
+    golden: disabledNodeGolden,
+    diagnostics: readDiagnostics('disabled-node'),
+  },
+  {
+    name: 'label-edgecases',
+    graph: labelEdgecasesGraph,
+    golden: labelEdgecasesGolden,
+    diagnostics: readDiagnostics('label-edgecases'),
+  },
+  {
+    name: 'otel-three-signals',
+    graph: otelThreeSignalsGraph,
+    golden: otelThreeSignalsGolden,
+    diagnostics: readDiagnostics('otel-three-signals'),
+  },
+  {
+    name: 'kitchen-sink',
+    graph: kitchenSinkGraph,
+    golden: kitchenSinkGolden,
+    diagnostics: readDiagnostics('kitchen-sink'),
+  },
+  {
+    name: 'diagnostics-mixed',
+    graph: diagnosticsMixedGraph,
+    golden: diagnosticsMixedGolden,
+    diagnostics: readDiagnostics('diagnostics-mixed'),
+  },
 ];
 
 // 7.5.2 — TS codegen vs corpus
@@ -86,12 +161,21 @@ const corpus: Array<{ name: string; graph: unknown; golden: string }> = [
 // Because the schema is the shipped artifact, renaming a port inside it — say
 // prometheus.remote_write's `receiver` export — also fails here, as the metrics hop
 // stops resolving and reports edge_unresolved.
+//
+// Diagnostics are checked against `<name>.diagnostics.json` rather than a
+// hard-coded `[]`: nine of the ten entries record no diagnostics, and
+// "diagnostics-mixed" records the three codes (secret_by_value,
+// empty_binding_expr, empty_binding_prop) this renderer and
+// internal/visual/render.go both claim to emit for the same graph —
+// render_test.go's "7.2.1 corpus renders byte-exact" DescribeTable asserts the
+// same file, so a renderer that drops or renames one of these codes fails on
+// whichever side changed.
 describe('7.5.2 TS codegen vs corpus', () => {
-  for (const { name, graph, golden } of corpus) {
+  for (const { name, graph, golden, diagnostics } of corpus) {
     it(`${name} renders byte-exact`, () => {
       const doc = graph as GraphDocument;
       const result = renderTS(doc, shippedSchema);
-      expect(result.diagnostics).toEqual([]);
+      expect(sortDiagnostics(result.diagnostics)).toEqual(sortDiagnostics(diagnostics));
       expect(result.content).toBe(golden);
     });
   }
