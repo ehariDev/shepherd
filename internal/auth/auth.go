@@ -728,7 +728,30 @@ func (h *Handler) SessionMiddleware(next http.Handler) http.Handler {
 		c, err := r.Cookie("shepherd_session")
 		if err == nil && c.Value != "" {
 			row, err := h.store.Queries.GetSessionByID(r.Context(), c.Value)
-			if err == nil {
+			switch {
+			case err != nil:
+				// No such row (never existed, already logged out, or its own
+				// expires_at filter excluded it) — the existing "no session"
+				// fallthrough below handles this; nothing to do here.
+			case row.IDTokenExpires.Valid && !time.Now().Before(row.IDTokenExpires.Time):
+				// D7: an OIDC session must not outlive the ID token that
+				// created it, even though expires_at (the session row's own,
+				// sliding TTL) has not run out — Entra/Okta typically mint a
+				// ~1h token and this deployment stores no refresh token to
+				// silently renew it. A local session's IDTokenExpires is
+				// never set (createSessionAndSetCookie only fills it for the
+				// OIDC path), so .Valid is false and this branch never fires
+				// for one.
+				//
+				// Deleted rather than merely skipped, matching LogoutHandler:
+				// once past its ID token's expiry the row is dead weight, and
+				// leaving it would let the SAME expired cookie keep tripping
+				// this check (and this delete) on every subsequent request
+				// instead of failing once and staying failed.
+				if delErr := h.store.Queries.DeleteSession(r.Context(), row.ID); delErr != nil {
+					h.logger.Warn("deleting session past id_token_expires", "err", delErr)
+				}
+			default:
 				var groups []string
 				if err := json.Unmarshal(row.GroupIds, &groups); err != nil {
 					h.logger.Debug("unmarshal group ids", "err", err)
