@@ -2,6 +2,7 @@ package simsvc
 
 import (
 	"context"
+	"errors"
 	"log/slog"
 	"os"
 	"path/filepath"
@@ -131,5 +132,65 @@ var _ = Describe("runAlloy", func() {
 		Expect(strings.Join(outcome.StderrTail, "\n")).NotTo(ContainSubstring("SIM_TEST_CANARY"),
 			"the sandboxed Alloy must get an explicit, minimal environment — not the simulator's own (which after "+
 				"W4-S3/S4 carries SIM_TOKEN, readable by any user config via sys.env(...))")
+	})
+
+	It("invokes Alloy with the exact run flags runnerOptions describes", func() {
+		opts := baseOpts(dir, fakeAlloy(`printf '%s\n' "$@" >&2`))
+		outcome := runAlloy(context.Background(), opts, discardLogger())
+		Expect(outcome.StderrTail).To(Equal([]string{
+			"run", filepath.Join(opts.RunDir, "config.alloy"),
+			"--storage.path=" + opts.StorageDir,
+			"--server.http.listen-addr=" + opts.AlloyHTTP,
+			"--disable-reporting",
+			"--server.http.enable-pprof=false",
+			"--server.http.disable-support-bundle",
+			"--stability.level=" + opts.StabilityLevel,
+		}))
+	})
+
+	It("always tears down its run and storage directories, whether or not Alloy started successfully", func() {
+		// One-line-revert red proof (control already holds today): commenting
+		// out `defer os.RemoveAll(opts.RunDir)` at runner.go:76 leaves this
+		// spec's `NotTo(BeADirectory())` failing with the directory still
+		// present, restored immediately after confirming the failure.
+		opts := baseOpts(dir, fakeAlloy("exit 0"))
+		runAlloy(context.Background(), opts, discardLogger())
+		Expect(opts.RunDir).NotTo(BeADirectory())
+		Expect(opts.StorageDir).NotTo(BeADirectory())
+	})
+
+	It("reports a start failure as a completed outcome carrying errAlloyStartFailed, not a transport error", func() {
+		opts := baseOpts(dir, filepath.Join(dir, "does-not-exist"))
+		outcome := runAlloy(context.Background(), opts, discardLogger())
+		Expect(errors.Is(outcome.Err, errAlloyStartFailed)).To(BeTrue(),
+			"a binary that fails to start must surface as outcome.Err wrapping errAlloyStartFailed — §6.4 treats a "+
+				"start-time failure as the run's RESULT, not an API error")
+		// The scratch dirs are created before cmd.Start() and must still be
+		// torn down on this early-return path.
+		Expect(opts.RunDir).NotTo(BeADirectory())
+		Expect(opts.StorageDir).NotTo(BeADirectory())
+	})
+
+	It("kills Alloy after KillGrace, rather than the production 15s constant, once it ignores the initial interrupt", func() {
+		// Duration must comfortably outlast a freshly-exec'd shell's own
+		// startup latency (measured up to ~150ms on this platform): a
+		// shorter one would deliver the SIGINT before the script's `trap`
+		// line ever ran, killing it on the default disposition instead of
+		// exercising the grace path this spec means to prove.
+		opts := baseOpts(dir, fakeAlloy(`trap '' TERM INT; sleep 5`))
+		opts.Duration = 500 * time.Millisecond
+		opts.KillGrace = 300 * time.Millisecond
+
+		result := make(chan runOutcome, 1)
+		go func() { result <- runAlloy(context.Background(), opts, discardLogger()) }()
+
+		// Duration + KillGrace + slop: comfortably more than the ~800ms this
+		// should take, comfortably less than the 15s+ it takes if KillGrace
+		// were not actually wired to cmd.WaitDelay.
+		select {
+		case <-result:
+		case <-time.After(3 * time.Second):
+			Fail("runAlloy did not return within Duration+KillGrace — the injected KillGrace was not honored")
+		}
 	})
 })
