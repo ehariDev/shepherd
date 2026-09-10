@@ -151,7 +151,7 @@ func (h *RepoLinksHandler) TestCredential(w http.ResponseWriter, r *http.Request
 // repoLinkOmitFields names the RepoLink fields the legacy repoLinkResponse
 // struct marked `,omitempty`: both are unset on a just-created repo link
 // (its poller hasn't run yet).
-var repoLinkOmitFields = []string{"sync_status", "last_synced_at"} //nolint:gochecknoglobals // shared, read-only field list
+var repoLinkOmitFields = []string{"sync_status", "last_synced_at"}
 
 // repoLinkRequest is the wire shape for POST .../repo-links. repo_url
 // replaces the pre-rename project+repository pair.

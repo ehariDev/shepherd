@@ -41,7 +41,7 @@ type orgRequest struct {
 // editor_group_id, which postdates that struct and is omitted for the same
 // reason: an org with no editor tier should not advertise an empty one.
 // Every other Org field is always emitted, even when empty.
-var orgOmitFields = []string{"reader_group_id", "editor_group_id"} //nolint:gochecknoglobals // shared, read-only field list
+var orgOmitFields = []string{"reader_group_id", "editor_group_id"}
 
 // ListOrgs lists organizations.
 func (h *AdminHandler) ListOrgs(w http.ResponseWriter, r *http.Request) {

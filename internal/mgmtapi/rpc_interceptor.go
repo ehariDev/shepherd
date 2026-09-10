@@ -27,7 +27,7 @@ type orgScoped interface {
 // authorization requirement, mirroring the Services table in
 // docs/archive/api-contract-design.md. A procedure absent from this map is denied —
 // see newAuthzInterceptor.
-var procedureRequirements = map[string]string{ //nolint:gochecknoglobals // static authz table, read-only after init
+var procedureRequirements = map[string]string{
 	// MeService — any authenticated session.
 	mgmtv1connect.MeServiceGetMeProcedure: auth.RoleAny,
 
@@ -193,7 +193,7 @@ var procedureRequirements = map[string]string{ //nolint:gochecknoglobals // stat
 // (capability_enumeration_test.go) fail the moment a new mutating RPC is
 // added without a classification decision, so "forgot to gate the new
 // write path" cannot happen silently.
-var capabilityRequirements = map[string]string{ //nolint:gochecknoglobals // static classification table, read-only after init
+var capabilityRequirements = map[string]string{
 	mgmtv1connect.AdminServiceCreateOrgProcedure:        capabilityApply,
 	mgmtv1connect.AdminServiceUpdateOrgProcedure:        capabilityApply,
 	mgmtv1connect.AdminServiceDeleteOrgProcedure:        capabilityApply,

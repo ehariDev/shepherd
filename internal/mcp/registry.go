@@ -21,7 +21,7 @@ import (
 // with this server's actual propose-scoped credential and asserts
 // PermissionDenied for literally all of them, not only the ones this table
 // happens to name today.
-var toolProcedures = map[string][]string{ //nolint:gochecknoglobals // static mapping table, read-only after init, checked by registry_test.go
+var toolProcedures = map[string][]string{
 	"list_collectors":       {mgmtv1connect.FleetServiceListCollectorsProcedure},
 	"get_collector":         {mgmtv1connect.FleetServiceGetCollectorProcedure},
 	"list_fleet_attributes": {mgmtv1connect.FleetServiceListAttributesProcedure},
