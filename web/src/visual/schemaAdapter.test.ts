@@ -1,6 +1,12 @@
 import { describe, expect, it } from 'vitest';
 import { schemaFixture } from '../../tests/fixtures/schema-fixture';
-import { getCategoryColor, getWireColor, portHandleId } from './schemaAdapter';
+import {
+  DEFAULT_CATEGORY_COLOR,
+  DEFAULT_WIRE_COLOR,
+  getCategoryColor,
+  getWireColor,
+  portHandleId,
+} from './schemaAdapter';
 
 describe('portHandleId (A1)', () => {
   it('prefers `prop` when present', () => {
@@ -22,23 +28,18 @@ describe('getWireColor / getCategoryColor (A4)', () => {
     // the fixture invented.
     expect(getWireColor(schemaFixture, 'loki.logs')).toBe('#22c55e');
   });
-  it('falls back to the built-in hex table for a wire type missing from the schema payload', () => {
-    // The served overlay defines every wire type, so the fallback is only
-    // reachable through a payload that is missing one — e.g. an older schema
-    // version whose overlay predates pyroscope support.
-    const withoutPyroscope = { ...schemaFixture, wire_types: {} };
-    expect(getWireColor(withoutPyroscope, 'pyroscope.profiles')).toBe('#f43f5e');
+  it('returns the default for a wire type the schema does not define', () => {
+    expect(
+      getWireColor({ wire_types: {}, components: {}, _meta: schemaFixture._meta }, 'targets'),
+    ).toBe(DEFAULT_WIRE_COLOR);
   });
-  it('falls back to a default hex for a wire type in neither the schema nor the fallback table', () => {
-    expect(getWireColor(schemaFixture, 'totally.unknown')).toBe('#94a3b8');
+  it('falls back to the default hex when schema is null', () => {
+    expect(getWireColor(null, 'targets')).toBe(DEFAULT_WIRE_COLOR);
   });
-  it('falls back to the built-in hex table entirely when schema is null', () => {
-    expect(getWireColor(null, 'targets')).toBe('#8b5cf6');
-  });
-  it('falls back to the built-in category table when the payload carries no categories', () => {
+  it('falls back to the default category color when the payload carries no categories', () => {
     const withoutCategories = { ...schemaFixture, categories: undefined };
-    expect(getCategoryColor(withoutCategories, 'sources')).toBe('#3b82f6');
-    expect(getCategoryColor(withoutCategories, 'destinations')).toBe('#10b981');
+    expect(getCategoryColor(withoutCategories, 'sources')).toBe(DEFAULT_CATEGORY_COLOR);
+    expect(getCategoryColor(withoutCategories, 'destinations')).toBe(DEFAULT_CATEGORY_COLOR);
   });
   it('reads the category color from the schema payload when the overlay serves one (backend half of A4)', () => {
     const withCategories = {
