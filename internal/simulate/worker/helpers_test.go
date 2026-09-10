@@ -1,4 +1,4 @@
-package simulate_test
+package worker_test
 
 import (
 	"net/http"
@@ -9,6 +9,7 @@ import (
 	. "github.com/onsi/gomega"
 
 	"shepherd/internal/simulate"
+	"shepherd/internal/simulate/worker"
 )
 
 // SanitizeStderrTail is what stands between the sandbox Alloy's raw stderr
@@ -17,11 +18,12 @@ import (
 // simulate_runs.stderr_tail, a Postgres TEXT column. A byte-index truncation
 // that lands mid-rune produces invalid UTF-8, which Postgres refuses to
 // store (SQLSTATE 22021) — CompleteSimulateRun then fails and the run is
-// stuck until the janitor reaps it (internal/simulate/worker.go:363-368).
+// stuck until the janitor reaps it (internal/simulate/worker/worker.go's
+// finish method).
 //
-// maxTailBytes below must match worker_helpers.go's unexported
-// maxStderrTailBytes (8 * 1024); it is duplicated here because this spec
-// lives in the external simulate_test package.
+// maxTailBytes below must match helpers.go's unexported maxStderrTailBytes
+// (8 * 1024); it is duplicated here because this spec lives in the external
+// worker_test package.
 const maxTailBytes = 8 * 1024
 
 var _ = Describe("SanitizeStderrTail", func() {
@@ -32,7 +34,7 @@ var _ = Describe("SanitizeStderrTail", func() {
 		s := strings.Repeat("a", 1000) + strings.Repeat("€", 5000)
 		Expect(len(s)).To(BeNumerically(">", maxTailBytes))
 
-		out := simulate.SanitizeStderrTail(s)
+		out := worker.SanitizeStderrTail(s)
 
 		Expect(utf8.ValidString(out)).To(BeTrue(),
 			"a byte-index cut through multi-byte runes must not produce invalid UTF-8")
@@ -46,7 +48,7 @@ var _ = Describe("SanitizeStderrTail", func() {
 
 	It("strips control characters (including invalid UTF-8 bytes) but keeps newlines and tabs", func() {
 		s := "component started\x00\x1b[31m error\x01: dial tcp\ttimed out\x7f\nnext line\xff\xfe"
-		out := simulate.SanitizeStderrTail(s)
+		out := worker.SanitizeStderrTail(s)
 
 		Expect(utf8.ValidString(out)).To(BeTrue())
 		Expect(out).To(ContainSubstring("component started"))
@@ -60,7 +62,7 @@ var _ = Describe("SanitizeStderrTail", func() {
 
 	It("returns short, already-clean input unchanged", func() {
 		s := "alloy: config loaded\ncomponent prometheus.scrape.app started"
-		Expect(simulate.SanitizeStderrTail(s)).To(Equal(s))
+		Expect(worker.SanitizeStderrTail(s)).To(Equal(s))
 	})
 })
 
@@ -68,7 +70,7 @@ var _ = Describe("SanitizeStderrTail", func() {
 // SHEPHERD_SIMULATOR_TOKEN out of sync — a deployment/config problem) must
 // not be reported to the user as error_code "internal", which reads as a
 // Shepherd bug in what it rendered. classifySimulatorError is unexported;
-// export_test.go exposes it as simulate.ClassifySimulatorError.
+// export_test.go exposes it as worker.ClassifySimulatorError.
 var _ = Describe("classifySimulatorError", func() {
 	It("reports a rejected bearer token as simulator_unavailable, not internal, and names the cause", func() {
 		apiErr := &simulate.ClientAPIError{
@@ -76,7 +78,7 @@ var _ = Describe("classifySimulatorError", func() {
 			Code:       "unauthorized",
 			Message:    "invalid or missing bearer token",
 		}
-		code, message := simulate.ClassifySimulatorError(apiErr)
+		code, message := worker.ClassifySimulatorError(apiErr)
 		Expect(code).To(Equal(simulate.RunErrorSimulatorUnavailable))
 		Expect(message).To(ContainSubstring("token"),
 			"the message should be diagnosable — naming the mismatched-token cause, not a bare passthrough of the server's generic text")
@@ -88,7 +90,7 @@ var _ = Describe("classifySimulatorError", func() {
 			Code:       "invalid_config",
 			Message:    "component prometheus.scrape.app: unknown attribute",
 		}
-		code, _ := simulate.ClassifySimulatorError(apiErr)
+		code, _ := worker.ClassifySimulatorError(apiErr)
 		Expect(code).To(Equal(simulate.RunErrorInternal))
 	})
 })

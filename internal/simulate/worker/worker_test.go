@@ -1,4 +1,4 @@
-package simulate_test
+package worker_test
 
 import (
 	"context"
@@ -18,10 +18,12 @@ import (
 	"shepherd/internal/config"
 	"shepherd/internal/schema"
 	"shepherd/internal/simulate"
+	"shepherd/internal/simulate/worker"
 	"shepherd/internal/store"
 	"shepherd/internal/store/sqlc"
 	"shepherd/internal/validate"
 	"shepherd/internal/version"
+	"shepherd/internal/visual"
 )
 
 // fakeSimulator is a control-API test double. Its POST /v1/runs handler
@@ -99,6 +101,21 @@ func testStore(ctx context.Context) *store.Store {
 	return st
 }
 
+// singleNodeGraph builds the smallest graph containing one component.
+// Duplicated verbatim from internal/simulate's own transform_test.go fixture
+// of the same name: this package cannot import that _test.go file (it lives
+// in a different package's test binary), and worker_test.go needs the exact
+// same shape so the claim/execute lifecycle sees what the transform tests do.
+func singleNodeGraph(component string) visual.GraphDocument {
+	return visual.GraphDocument{
+		Kind:          "alloy-graph/v1",
+		SchemaVersion: "alloy-v1.18.1",
+		Nodes: []visual.GraphNode{{
+			ID: "d1", Component: component, Label: "sink", Props: map[string]interface{}{},
+		}},
+	}
+}
+
 func seedQueuedRun(ctx context.Context, st *store.Store, orgID pgtype.UUID, component string) sqlc.SimulateRun {
 	graphJSON, err := json.Marshal(singleNodeGraph(component))
 	Expect(err).NotTo(HaveOccurred())
@@ -160,8 +177,8 @@ var _ = Describe("RunWorker", Label("integration"), func() {
 		}
 
 		cfg := workerCfg()
-		workerA := simulate.NewRunWorker(st, reg, v, cfg, slog.Default().With("worker", "A"))
-		workerB := simulate.NewRunWorker(st, reg, v, cfg, slog.Default().With("worker", "B"))
+		workerA := worker.New(st, reg, v, cfg, slog.Default().With("worker", "A"))
+		workerB := worker.New(st, reg, v, cfg, slog.Default().With("worker", "B"))
 		workerA.Start(ctx)
 		workerB.Start(ctx)
 
@@ -198,8 +215,8 @@ var _ = Describe("RunWorker", Label("integration"), func() {
 		run := seedQueuedRun(ctx, st, orgID, "discovery.process") // Sources category, no discovery_stub in the shipped overlay
 
 		cfg := workerCfg()
-		worker := simulate.NewRunWorker(st, reg, v, cfg, slog.Default().With("worker", "solo"))
-		worker.Start(ctx)
+		w := worker.New(st, reg, v, cfg, slog.Default().With("worker", "solo"))
+		w.Start(ctx)
 
 		Eventually(func() string {
 			row, err := st.Queries.GetSimulateRunByID(ctx, run.ID)
