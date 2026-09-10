@@ -11,6 +11,28 @@ name: E2E
 on:
   workflow_dispatch: {}
   merge_group: {}
+  # Post-merge signal for the agent-protocol suite (D11): nothing else runs it
+  # in practice -- there is no merge queue configured on this repo (branch
+  # protection has no required_status_checks/rulesets), so merge_group never
+  # fires, and gh api confirmed workflow run 32844383559's `e2e` job was
+  # "skipped" on an ordinary PR. Path-filtered to what the suite actually
+  # exercises (registration, pipelines, GitOps, RBAC, agent protocol) rather
+  # than every push, at ~11 billed minutes per qualifying push (~90/month at
+  # an estimated 8 qualifying pushes) -- see the `e2e` job's own `if` below,
+  # which is unchanged (`!= 'pull_request'` already permits push) and the
+  # e2e-egress job's new `if`, which excludes push so this doesn't silently
+  # double the billed cost of every push to main.
+  push:
+    branches: [main]
+    paths:
+      - "e2e/**"
+      - "!e2e/k8s/**" # the k8s suite has its own workflow; irrelevant here
+      - "internal/agentapi/**"
+      - "internal/gitsync/**"
+      - "internal/auth/**"
+      - "deploy/Dockerfile*"
+      - "deploy/versions.env"
+      - ".github/workflows/e2e.yml"
   # The egress job ALSO runs on any PR that touches the S3 sandbox containment
   # surface. The rest of this workflow stays merge-queue-only per docs/spec.md's
   # "CI ordering" — this is a deliberate exception for one job, because the
@@ -48,10 +70,10 @@ jobs:
     if: github.event_name != 'pull_request'
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
 
       - name: Set up Go
-        uses: actions/setup-go@v5
+        uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5.6.0
         with:
           go-version-file: go.mod
           cache: true
@@ -60,15 +82,25 @@ jobs:
         run: go install "github.com/onsi/ginkgo/v2/ginkgo@$(go list -m -f '{{.Version}}' github.com/onsi/ginkgo/v2)"
 
       - name: Set up Docker buildx
-        uses: docker/setup-buildx-action@v3
+        uses: docker/setup-buildx-action@8d2750c68a42422c14e847fe6c8ac0403b4cbd6f # v3.12.0
 
+      # Keyed per workflow+job+run: actions/cache never overwrites an
+      # existing key, so a key shared across ci.yml/e2e.yml/e2e-k8s.yml (or
+      # across this workflow's own e2e and e2e-egress jobs) meant only the
+      # first save ever "won" it -- every later save was skipped, and each
+      # job's own "Rotate Docker layer cache" step found no
+      # /tmp/.buildx-cache-new and silently did nothing. The unique run_id
+      # guarantees this step always has something new to save; restore-keys
+      # stays scoped to this workflow+job (no run_id) so a later run still
+      # gets a warm prefix match against the most recent save for the SAME
+      # job.
       - name: Cache Docker layers
-        uses: actions/cache@v4
+        uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4.3.0
         with:
           path: /tmp/.buildx-cache
-          key: buildx-${{ runner.os }}-${{ hashFiles('go.sum', 'web/pnpm-lock.yaml', 'deploy/versions.env', 'deploy/Dockerfile.local', 'deploy/Dockerfile.init', 'deploy/Dockerfile.simulator') }}
+          key: buildx-${{ runner.os }}-${{ github.workflow }}-${{ github.job }}-${{ hashFiles('go.sum', 'web/pnpm-lock.yaml', 'deploy/versions.env', 'deploy/Dockerfile.local', 'deploy/Dockerfile.init', 'deploy/Dockerfile.simulator') }}-${{ github.run_id }}
           restore-keys: |
-            buildx-${{ runner.os }}-
+            buildx-${{ runner.os }}-${{ github.workflow }}-${{ github.job }}-
 
       - name: make e2e
         env:
@@ -118,12 +150,18 @@ jobs:
     name: e2e-sim (sandbox egress containment)
     runs-on: ubuntu-latest
     timeout-minutes: 30
+    # Excludes push: the on.push trigger above exists for the `e2e` job's
+    # post-merge signal only. Without this, a push to main matching those
+    # paths would also start this equally expensive job (its own image
+    # builds, its own compose stack) with no gate at all, silently doubling
+    # the billed cost the push trigger's budget assumed.
+    if: github.event_name != 'push'
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
 
       - name: Set up Go
-        uses: actions/setup-go@v5
+        uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5.6.0
         with:
           go-version-file: go.mod
           cache: true
@@ -132,15 +170,25 @@ jobs:
         run: go install "github.com/onsi/ginkgo/v2/ginkgo@$(go list -m -f '{{.Version}}' github.com/onsi/ginkgo/v2)"
 
       - name: Set up Docker buildx
-        uses: docker/setup-buildx-action@v3
+        uses: docker/setup-buildx-action@8d2750c68a42422c14e847fe6c8ac0403b4cbd6f # v3.12.0
 
+      # Keyed per workflow+job+run: actions/cache never overwrites an
+      # existing key, so a key shared across ci.yml/e2e.yml/e2e-k8s.yml (or
+      # across this workflow's own e2e and e2e-egress jobs) meant only the
+      # first save ever "won" it -- every later save was skipped, and each
+      # job's own "Rotate Docker layer cache" step found no
+      # /tmp/.buildx-cache-new and silently did nothing. The unique run_id
+      # guarantees this step always has something new to save; restore-keys
+      # stays scoped to this workflow+job (no run_id) so a later run still
+      # gets a warm prefix match against the most recent save for the SAME
+      # job.
       - name: Cache Docker layers
-        uses: actions/cache@v4
+        uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4.3.0
         with:
           path: /tmp/.buildx-cache
-          key: buildx-${{ runner.os }}-${{ hashFiles('go.sum', 'web/pnpm-lock.yaml', 'deploy/versions.env', 'deploy/Dockerfile.local', 'deploy/Dockerfile.init', 'deploy/Dockerfile.simulator') }}
+          key: buildx-${{ runner.os }}-${{ github.workflow }}-${{ github.job }}-${{ hashFiles('go.sum', 'web/pnpm-lock.yaml', 'deploy/versions.env', 'deploy/Dockerfile.local', 'deploy/Dockerfile.init', 'deploy/Dockerfile.simulator') }}-${{ github.run_id }}
           restore-keys: |
-            buildx-${{ runner.os }}-
+            buildx-${{ runner.os }}-${{ github.workflow }}-${{ github.job }}-
 
       # `make e2e-sim`, whose first ginkgo pass is exactly the egress-probe
       # filter with --fail-on-empty (this job's whole reason to exist) and

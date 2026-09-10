@@ -1,0 +1,79 @@
+# Automated dependency updates for the four ecosystems this repo ships:
+# Go modules (root), the web SPA (pnpm, under web/), the GitHub Actions
+# workflows themselves, and the container base images under deploy/.
+#
+# Weekly, Monday, matching schema-verify.yml's own Monday cron -- dependency
+# rot is a weekly-scale risk, not a daily one, and this keeps the update
+# noise to one batch of PRs a week instead of one PR per bump as it happens.
+#
+# Each ecosystem groups its own minor+patch bumps into a single PR so a
+# routine week doesn't open N separate PRs for N packages that all bumped a
+# patch version; a major bump is deliberately left ungrouped so it still gets
+# its own PR and its own review.
+#
+# The docker entry WILL open PRs that fail `make check-docker` by design:
+# every Dockerfile under deploy/ pins its base image via a `${...}` ARG whose
+# default must equal the corresponding pin in deploy/versions.env (see that
+# guard's recipe and deploy/versions.env's own header comment). Dependabot
+# bumps the Dockerfile ARG default only -- it has no way to also edit
+# versions.env -- so its docker PRs are a same-day nudge ("here's what's
+# available") that a human finishes by updating versions.env to match and
+# letting check-docker confirm the two agree. This is intentional, not a bug
+# to silence.
+version: 2
+updates:
+  - package-ecosystem: "gomod"
+    directory: "/"
+    schedule:
+      interval: "weekly"
+      day: "monday"
+      time: "06:00"
+      timezone: "UTC"
+    groups:
+      minor-and-patch:
+        update-types:
+          - "minor"
+          - "patch"
+
+  # Dependabot's npm ecosystem understands pnpm lockfiles (web/pnpm-lock.yaml);
+  # there is no separate "pnpm" ecosystem value.
+  - package-ecosystem: "npm"
+    directory: "/web"
+    schedule:
+      interval: "weekly"
+      day: "monday"
+      time: "06:00"
+      timezone: "UTC"
+    groups:
+      minor-and-patch:
+        update-types:
+          - "minor"
+          - "patch"
+
+  - package-ecosystem: "github-actions"
+    directory: "/"
+    schedule:
+      interval: "weekly"
+      day: "monday"
+      time: "06:00"
+      timezone: "UTC"
+    groups:
+      minor-and-patch:
+        update-types:
+          - "minor"
+          - "patch"
+
+  # See the header comment above: these PRs fail check-docker by design and
+  # are finished by hand (updating deploy/versions.env to match).
+  - package-ecosystem: "docker"
+    directory: "/deploy"
+    schedule:
+      interval: "weekly"
+      day: "monday"
+      time: "06:00"
+      timezone: "UTC"
+    groups:
+      minor-and-patch:
+        update-types:
+          - "minor"
+          - "patch"
