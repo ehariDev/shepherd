@@ -71,6 +71,52 @@ var _ = Describe("release.yml", func() {
 		}
 		Expect(usesGolangciLint).To(BeTrue(), "verify job must run golangci-lint")
 	})
+
+	// Red run, 2026-09-10: release.yml published dist/checksums.txt and four
+	// image manifests with no provenance attestation -- nothing tied a
+	// downloaded archive or pulled image back to the workflow run and commit
+	// that produced it.
+	It("attests provenance for the release archives and images", func() {
+		rel := loadWorkflow("release.yml")
+
+		Expect(rel.Permissions["id-token"]).To(Equal("write"),
+			"attest-build-provenance needs id-token: write")
+		Expect(rel.Permissions["attestations"]).To(Equal("write"),
+			"attest-build-provenance needs attestations: write")
+
+		release, ok := rel.Jobs["release"]
+		Expect(ok).To(BeTrue(), "release.yml has no release job")
+
+		var attestsChecksums bool
+		for _, s := range release.Steps {
+			if strings.HasPrefix(s.Uses, "actions/attest-build-provenance@") {
+				if sc, ok := s.With["subject-checksums"].(string); ok && strings.Contains(sc, "checksums.txt") {
+					attestsChecksums = true
+				}
+			}
+		}
+		Expect(attestsChecksums).To(BeTrue(),
+			"release job must attest dist/checksums.txt (the release archives) with actions/attest-build-provenance")
+
+		// The four docker_manifests entries in .goreleaser.yaml aren't known
+		// until goreleaser has run, so they're attested in a follow-up job
+		// driven by a dynamic matrix built from dist/artifacts.json.
+		joined := joinedRuns(release.Steps)
+		Expect(joined).To(ContainSubstring("dist/artifacts.json"))
+		Expect(joined).To(ContainSubstring("Docker Manifest"))
+
+		attestImages, ok := rel.Jobs["attest-images"]
+		Expect(ok).To(BeTrue(), "release.yml has no attest-images job")
+		Expect(needsList(attestImages.Needs)).To(ContainElement("release"))
+
+		var attestsImages bool
+		for _, s := range attestImages.Steps {
+			if strings.HasPrefix(s.Uses, "actions/attest-build-provenance@") {
+				attestsImages = true
+			}
+		}
+		Expect(attestsImages).To(BeTrue(), "attest-images job must call actions/attest-build-provenance")
+	})
 })
 
 // needsList normalizes a job's `needs:` field (a bare string or a list of

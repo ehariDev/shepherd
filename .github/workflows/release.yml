@@ -38,6 +38,8 @@ concurrency:
 permissions:
   contents: write
   packages: write
+  id-token: write      # actions/attest-build-provenance: sign with Sigstore
+  attestations: write  # actions/attest-build-provenance: publish the attestation
 
 jobs:
   # Gates the tagged commit exactly as hard as a PR to main: nothing here
@@ -106,6 +108,10 @@ jobs:
     runs-on: ubuntu-latest
     if: github.repository == 'procoduck/shepherd'
     timeout-minutes: 30
+    outputs:
+      # JSON array of {name, digest} for the attest-images job's matrix —
+      # the image names and digests aren't known until goreleaser has run.
+      images: ${{ steps.images.outputs.images }}
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -275,6 +281,35 @@ jobs:
           IMAGE_REGISTRY: ${{ vars.IMAGE_REGISTRY || 'ghcr.io/procoduck' }}
           SOURCE_URL: ${{ vars.SOURCE_URL || 'https://github.com/procoduck/shepherd' }}
 
+      # Ties every downloaded archive to the workflow run, commit and builder
+      # that produced it. checksums.txt already lists a digest per archive
+      # (.goreleaser.yaml's checksum section), so one call attests all of
+      # them.
+      - name: Attest release archives
+        uses: actions/attest-build-provenance@v4
+        with:
+          subject-checksums: dist/checksums.txt
+
+      # The four docker_manifests entries in .goreleaser.yaml (shepherd and
+      # shepherd-simulator, each :{{ .Version }} and :latest) aren't known
+      # until goreleaser has written dist/artifacts.json. Collect their
+      # name+digest here and hand them to the attest-images job below as a
+      # matrix -- actions/attest-build-provenance attests one subject per
+      # invocation.
+      - name: Collect image digests
+        id: images
+        run: |
+          set -euo pipefail
+          # goreleaser's artifact "name" is the full tagged ref
+          # (ghcr.io/<ns>/shepherd:X.Y.Z); actions/attest-build-provenance
+          # wants subject-name as the untagged image ref, matched to the
+          # pushed manifest digest by subject-digest.
+          images="$(jq -c '[
+            .[] | select(.type == "Docker Manifest") |
+            {name: (.name | sub(":[^:/]+$"; "")), digest: .extra.Digest}
+          ]' dist/artifacts.json)"
+          echo "images=$images" >> "$GITHUB_OUTPUT"
+
       # The chart is published as an OCI artifact so an operator can install it
       # without cloning the repo:
       #
@@ -325,3 +360,24 @@ jobs:
           helm push "dist-chart/shepherd-${chart_version}.tgz" "$chart_repo"
 
           echo "Published ${chart_repo}/shepherd:${chart_version} (appVersion ${app_version})"
+
+  # actions/attest-build-provenance attests one subject per invocation, so
+  # the four docker_manifests images (shepherd and shepherd-simulator, each
+  # :{{ .Version }} and :latest) each get their own matrix job, built from
+  # the release job's "Collect image digests" step. Skips cleanly if goreleaser
+  # skipped a manifest's push (e.g. :latest on a prerelease) -- that manifest
+  # is simply absent from dist/artifacts.json and so from the matrix.
+  attest-images:
+    name: attest-images
+    needs: release
+    if: needs.release.outputs.images != '[]'
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        image: ${{ fromJson(needs.release.outputs.images) }}
+    steps:
+      - name: Attest ${{ matrix.image.name }}
+        uses: actions/attest-build-provenance@v4
+        with:
+          subject-name: ${{ matrix.image.name }}
+          subject-digest: ${{ matrix.image.digest }}
