@@ -15,8 +15,10 @@ name: CI
 # dispatch + merge_group) per F7's scope, e2e-k8s in e2e-k8s.yml (nightly +
 # paths-filtered), and schema-verify in schema-verify.yml (weekly cron +
 # versions.env PRs). There is no separate test-integration stage any more —
-# `make test` runs the whole Go suite, testcontainers included. smoke is
-# still not wired into CI; that remains follow-up.
+# `make test` runs the whole Go suite, testcontainers included. `make smoke`
+# now runs inside test-fullstack, immediately before make test-fullstack —
+# the two targets share the same docker-build-local/docker-build-init
+# prerequisites, so it costs only the ~30-60s smoke run itself.
 
 # Actions minutes are a budgeted resource (3000/month on this plan) and GitHub
 # bills EVERY JOB separately, ROUNDED UP TO THE MINUTE. Measured over 20 recent
@@ -644,6 +646,20 @@ jobs:
           key: buildx-${{ runner.os }}-${{ github.workflow }}-${{ github.job }}-${{ hashFiles('go.sum', 'web/pnpm-lock.yaml', 'deploy/versions.env', 'deploy/Dockerfile.local', 'deploy/Dockerfile.init', 'deploy/Dockerfile.simulator') }}-${{ github.run_id }}
           restore-keys: |
             buildx-${{ runner.os }}-${{ github.workflow }}-${{ github.job }}-
+
+      # A <60s container smoke test (registration + local-admin login against
+      # the real shepherd:local/shepherd:local-init images) — not wired into
+      # any CI job until now. Placed here, right before make test-fullstack,
+      # because `smoke` and `test-fullstack` share the exact same
+      # `docker-build-local docker-build-init` prerequisites: this step pays
+      # for those image builds once, and test-fullstack's own prerequisite
+      # build below is a Docker layer-cache hit. The marginal cost of this
+      # step is the ~30-60s smoke run itself, inside a job that already bills
+      # for the images either way.
+      - name: make smoke
+        env:
+          DOCKER_CACHE_FLAGS: --cache-from type=local,src=/tmp/.buildx-cache --cache-to type=local,dest=/tmp/.buildx-cache-new,mode=max
+        run: make smoke
 
       # Brings up the dev compose stack (postgres, gitea, mockmsft, shepherd, alloy),
       # runs the fullstack specs against it, and tears it down. The target builds the

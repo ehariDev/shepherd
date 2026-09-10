@@ -155,3 +155,32 @@ var _ = Describe("ci.yml's test job", func() {
 		Expect(uploadsCoverage).To(BeTrue(), "test job must upload coverage.out via actions/upload-artifact")
 	})
 })
+
+// Red run, 2026-09-10: ci.yml's header comment says outright "smoke is still
+// not wired into CI; that remains follow-up" (line 18), and no step in any
+// job runs `make smoke`. Once S2 (base-merged) rewrote smoke around
+// shepherd:local/shepherd:local-init, it depends on exactly the images
+// test-fullstack's own `docker-build-local docker-build-init` prerequisites
+// build -- so wiring it in here costs only the ~30-60s smoke run itself, not
+// a second image build.
+var _ = Describe("ci.yml's test-fullstack job", func() {
+	It("runs make smoke before the fullstack Playwright suite", func() {
+		ci := loadWorkflow("ci.yml")
+		job, ok := ci.Jobs["test-fullstack"]
+		Expect(ok).To(BeTrue(), "ci.yml has no test-fullstack job")
+
+		idxSmoke, idxFullstack := -1, -1
+		for i, s := range job.Steps {
+			if idxSmoke == -1 && strings.Contains(s.Run, "make smoke") {
+				idxSmoke = i
+			}
+			if idxFullstack == -1 && strings.Contains(s.Run, "make test-fullstack") {
+				idxFullstack = i
+			}
+		}
+		Expect(idxSmoke).To(BeNumerically(">=", 0), "no step in test-fullstack runs `make smoke`")
+		Expect(idxFullstack).To(BeNumerically(">=", 0), "no step in test-fullstack runs `make test-fullstack`")
+		Expect(idxSmoke).To(BeNumerically("<", idxFullstack),
+			"make smoke must run before make test-fullstack (matching images, one billed job)")
+	})
+})
