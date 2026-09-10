@@ -468,20 +468,16 @@ chart-verify: check-chartvalues-pin ## Verify the vendored chart schema matches 
 	@echo "chart-verify: OK (G9 golden/schema/helm-template checks passed)"
 
 docs: ## Regenerate site/docs/ from scripts/docs-content/
-	python3 scripts/build-docs.py
+	python3 -B scripts/build-docs.py
 
 check-docs-drift: ## Guard: site/docs/ matches what build-docs.py produces
 	@# site/docs/ is generated but committed, so GitHub Pages keeps serving a
 	@# plain static directory with no build step. That bargain only holds if
 	@# the committed output is actually what the generator produces -- the
 	@# same reason the repo commits protobuf and sqlc output and guards it.
-	@python3 scripts/build-docs.py >/dev/null
-	@if ! git diff --quiet -- site/docs; then \
-		echo "ERROR: site/docs/ is stale. Run 'make docs' and commit the result."; \
-		git --no-pager diff --stat -- site/docs; \
-		exit 1; \
-	fi
-	@echo "check-docs-drift: OK"
+	@# --check builds into a temp dir and diffs against site/docs, so this
+	@# guard (part of `make lint`) never writes to the tree itself.
+	@python3 -B scripts/build-docs.py --check
 
 # site/index.html is checked for the CHART version too, not just the app
 # version. It was not, and it carries the single most-read install command on
