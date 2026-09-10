@@ -30,6 +30,12 @@ spec:
         # unrelated rollout happened to restart them. A hash, never the values.
         checksum/secret: {{ include (print $.Template.BasePath "/secret.yaml") . | sha256sum }}
         {{- end }}
+        {{- if and (eq (include "shepherd.simulatorAutoWired" .) "true") (eq (include "shepherd.simulatorTokenChartGenerated" .) "true") }}
+        # Same reasoning as checksum/secret above, for SHEPHERD_SIMULATOR_TOKEN:
+        # only meaningful for the chart-generated Secret (the existingSecret
+        # and ExternalSecret paths are not values this render computes).
+        checksum/simulator-token: {{ include (print $.Template.BasePath "/secret-simulator-token.yaml") . | sha256sum }}
+        {{- end }}
         {{- with .Values.podAnnotations }}
         {{- toYaml . | nindent 8 }}
         {{- end }}
