@@ -3,6 +3,7 @@ package spa_test
 import (
 	"net/http"
 	"net/http/httptest"
+	"regexp"
 
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
@@ -56,7 +57,11 @@ var _ = Describe("Handler", func() {
 	})
 
 	It("serves a real, embedded asset with long-lived immutable caching, not the SPA fallback", func() {
-		rec := get("/assets/index-DNv27iHH.js")
+		// The asset name is content-hashed and changes on every web build, so
+		// take it from the served index.html rather than pinning a filename.
+		m := regexp.MustCompile(`/assets/[A-Za-z0-9_.-]+\.js`).FindString(get("/").Body.String())
+		Expect(m).NotTo(BeEmpty(), "index.html references no /assets/*.js")
+		rec := get(m)
 		Expect(rec.Code).To(Equal(http.StatusOK))
 		Expect(rec.Header().Get("Cache-Control")).To(Equal("public, max-age=31536000, immutable"))
 	})
