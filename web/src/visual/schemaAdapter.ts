@@ -1,3 +1,4 @@
+import { currentTheme, type Theme } from '../theme';
 import type { ComponentDef, SchemaPayload, WireTypeDef } from './types';
 export async function fetchSchema(version = 'current'): Promise<SchemaPayload> {
   const res = await fetch(`/api/schema/${version}`, {
@@ -84,4 +85,57 @@ export function getCategoryColor(
     CATEGORY_COLOR_FALLBACK[category] ||
     DEFAULT_CATEGORY_COLOR
   );
+}
+
+// --- Theme-aware colors (D8, light mode — W6-S1) ---
+//
+// ADDITIVE ONLY: getWireColor/getCategoryColor above are unchanged and still
+// the dark-mode resolution every current caller (CanvasPane, etc.) uses.
+// getThemedWireColor/getThemedCategoryColor are new exports nothing calls
+// yet — wave 2 adopts them once the canvas surface itself is theme-aware.
+// They prefer the overlay's `color_light` in the light theme (see
+// internal/schema/artifacts/overlay.json and schema_test.go's "every wire
+// type/category also carries a hex color_light" guards), falling back to
+// the existing dark resolution when the payload has none yet (e.g. a cached
+// schema version predating this field).
+
+/** Wire type widened with the `color_light` field D8 adds to the overlay.
+ * Declared locally rather than in types.ts (out of this task's territory),
+ * same reasoning as SchemaWithCategories above. */
+type WireTypeDefWithLight = WireTypeDef & { color_light?: string };
+type SchemaWithLightWires = SchemaPayload & {
+  wire_types: Record<string, WireTypeDefWithLight | undefined>;
+};
+
+/** Resolves a wire type's display color for the given (or current) theme. */
+export function getThemedWireColor(
+  schema: SchemaPayload | null | undefined,
+  wireType: string,
+  theme: Theme = currentTheme(),
+): string {
+  if (theme === 'light') {
+    const withLightWires = schema as SchemaWithLightWires | null | undefined;
+    const light = withLightWires?.wire_types[wireType]?.color_light;
+    if (light) return light;
+  }
+  return getWireColor(schema, wireType);
+}
+
+/** Category widened with the `color_light` field D8 adds to the overlay. */
+type SchemaWithLightCategories = SchemaWithCategories & {
+  categories?: Record<string, { color?: string; color_light?: string; label?: string } | undefined>;
+};
+
+/** Resolves a component category's display color for the given (or current) theme. */
+export function getThemedCategoryColor(
+  schema: SchemaPayload | null | undefined,
+  category: string,
+  theme: Theme = currentTheme(),
+): string {
+  if (theme === 'light') {
+    const withLightCategories = schema as SchemaWithLightCategories | null | undefined;
+    const light = withLightCategories?.categories?.[category]?.color_light;
+    if (light) return light;
+  }
+  return getCategoryColor(schema, category);
 }

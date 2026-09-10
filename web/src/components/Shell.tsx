@@ -20,10 +20,11 @@ import {
   Wand2,
   Workflow,
 } from 'lucide-react';
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { useMe } from '@/hooks/useMe';
 import { useOrg } from '@/hooks/useOrg';
 import { cn } from '@/lib/utils';
+import { applyTheme, resolveTheme, setStoredTheme, type Theme } from '@/theme';
 
 interface NavItem {
   label: string;
@@ -86,7 +87,11 @@ export function Shell() {
   const [userCollapsed, setUserCollapsed] = useState(
     () => localStorage.getItem('sidebar-collapsed') === '1',
   );
-  const [dark, setDark] = useState(() => localStorage.getItem('theme') !== 'light');
+  const [theme, setTheme] = useState<Theme>(() => resolveTheme());
+  // D8: only an explicit toggle click persists a choice — reflecting the
+  // resolved (possibly system-derived) theme on mount must not silently
+  // turn "no preference set" into a stored one. See src/theme.ts.
+  const isFirstThemeEffect = useRef(true);
 
   // All effects must be before any conditional return (Rules of Hooks)
   useEffect(() => {
@@ -96,9 +101,13 @@ export function Shell() {
   }, [me, isLoading]);
 
   useEffect(() => {
-    document.documentElement.classList.toggle('dark', dark);
-    localStorage.setItem('theme', dark ? 'dark' : 'light');
-  }, [dark]);
+    applyTheme(theme);
+    if (isFirstThemeEffect.current) {
+      isFirstThemeEffect.current = false;
+      return;
+    }
+    setStoredTheme(theme);
+  }, [theme]);
 
   useEffect(() => {
     localStorage.setItem('sidebar-collapsed', userCollapsed ? '1' : '0');
@@ -235,11 +244,11 @@ export function Shell() {
               </select>
             )}
             <button
-              onClick={() => setDark((d) => !d)}
+              onClick={() => setTheme((t) => (t === 'dark' ? 'light' : 'dark'))}
               className='p-1.5 rounded-md text-muted hover:text-zinc-100 hover:bg-border/40'
               aria-label='Toggle theme'
             >
-              {dark ? <Sun size={16} /> : <Moon size={16} />}
+              {theme === 'dark' ? <Sun size={16} /> : <Moon size={16} />}
             </button>
             <button
               onClick={handleLogout}

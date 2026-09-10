@@ -1,6 +1,14 @@
 import { readdirSync, readFileSync, statSync } from 'node:fs';
 import { join } from 'node:path';
-import { describe, expect, it } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it } from 'vitest';
+import {
+  applyTheme,
+  currentTheme,
+  getStoredTheme,
+  getSystemTheme,
+  resolveTheme,
+  setStoredTheme,
+} from './theme';
 
 // Regression guard for docs/archive/visual-builder-refinement.md B1: the visual
 // builder used Tailwind utility classes (bg-card, bg-background, bg-accent,
@@ -25,7 +33,10 @@ const MIGRATED_DIRS = [
 
 // The exact token set + hex values from the mockup (B1), plus tokens added
 // while migrating web/src/pages/ and web/src/components/ onto the layer (B4).
-const EXPECTED_TOKENS: Record<string, string> = {
+// This is the DARK table — the default @theme block. D8 (light mode, W6-S1)
+// adds a second, LIGHT table below: the same token names, redefined under
+// `html.light` and `@media (prefers-color-scheme: light) { :root:not(.dark) }`.
+const EXPECTED_TOKENS_DARK: Record<string, string> = {
   '--color-background': '#09090b',
   '--color-panel': '#0e0e11',
   '--color-card': '#18181b',
@@ -35,6 +46,23 @@ const EXPECTED_TOKENS: Record<string, string> = {
   '--color-muted-2': '#71717a',
   '--color-muted-3': '#52525b',
   '--color-accent': '#6366f1',
+};
+
+// Light palette (D8). Contrast-checked (WCAG relative-luminance formula)
+// against both --color-background and --color-card: muted/muted-2/muted-3
+// all clear 4.5:1 (the AA text floor); the palette mirrors the dark table's
+// token semantics (background is the extreme shade, card the raised
+// surface) rather than being a literal hue-preserving invert.
+const EXPECTED_TOKENS_LIGHT: Record<string, string> = {
+  '--color-background': '#fafafa',
+  '--color-panel': '#f4f4f5',
+  '--color-card': '#ffffff',
+  '--color-border': '#e4e4e7',
+  '--color-border-strong': '#d4d4d8',
+  '--color-muted': '#3f3f46',
+  '--color-muted-2': '#52525b',
+  '--color-muted-3': '#71717a',
+  '--color-accent': '#4f46e5',
 };
 
 // Utility-class fragments that resolve to a real Tailwind zinc-scale color
@@ -70,9 +98,13 @@ function readCss(): string {
   return readFileSync(CSS_PATH, 'utf8');
 }
 
-function extractThemeBlock(css: string): string {
-  const start = css.indexOf('@theme');
-  expect(start, '@theme block not found in src/index.css').toBeGreaterThanOrEqual(0);
+// Extracts the balanced-brace body of the first `{...}` found after `marker`
+// in css (a literal substring search, e.g. '@theme' or 'html.light'). Works
+// for a rule nested inside another block (e.g. `:root:not(.dark)` inside an
+// `@media` block) because brace-depth counting starts fresh at the found `{`.
+function extractBlockAfter(css: string, marker: string, label: string): string {
+  const start = css.indexOf(marker);
+  expect(start, `"${marker}" not found in src/index.css (${label})`).toBeGreaterThanOrEqual(0);
   const braceStart = css.indexOf('{', start);
   let depth = 0;
   let i = braceStart;
@@ -84,6 +116,10 @@ function extractThemeBlock(css: string): string {
     }
   }
   return css.slice(braceStart + 1, i);
+}
+
+function extractThemeBlock(css: string): string {
+  return extractBlockAfter(css, '@theme', 'the dark @theme block');
 }
 
 function collectSourceFiles(dir: string): string[] {
@@ -100,13 +136,46 @@ function collectSourceFiles(dir: string): string[] {
   return out;
 }
 
-describe('design token layer (index.css @theme)', () => {
+describe('design token layer (index.css @theme, dark default)', () => {
   const css = readCss();
   const theme = extractThemeBlock(css);
 
-  it.each(Object.entries(EXPECTED_TOKENS))('defines %s as %s', (name, hex) => {
+  it.each(Object.entries(EXPECTED_TOKENS_DARK))('defines %s as %s', (name, hex) => {
     const re = new RegExp(`${name}\\s*:\\s*${hex}\\b`, 'i');
     expect(theme).toMatch(re);
+  });
+});
+
+// D8 (light mode, W6-S1). Two places redefine the same token names for
+// light: an explicit override (`html.light`, wins regardless of OS
+// preference — the toggle sets this class) and the system-preference
+// default (`:root:not(.dark)` nested inside `@media (prefers-color-scheme:
+// light)` — the ":not(.dark)" guard is what lets an explicit dark override
+// beat a light OS preference). Both must carry the identical light values,
+// or which one wins would depend on CSS specificity/source-order instead of
+// being deliberate.
+describe('design token layer (index.css light overrides)', () => {
+  const css = readCss();
+
+  it('defines a light override guarded by prefers-color-scheme and :not(.dark)', () => {
+    expect(css).toMatch(/@media\s*\(prefers-color-scheme:\s*light\)/);
+    expect(css).toMatch(/:root:not\(\.dark\)/);
+  });
+
+  describe('html.light (explicit toggle override)', () => {
+    const block = extractBlockAfter(css, 'html.light', 'the html.light override rule');
+    it.each(Object.entries(EXPECTED_TOKENS_LIGHT))('defines %s as %s', (name, hex) => {
+      const re = new RegExp(`${name}\\s*:\\s*${hex}\\b`, 'i');
+      expect(block).toMatch(re);
+    });
+  });
+
+  describe(':root:not(.dark) under @media(prefers-color-scheme: light) (system default)', () => {
+    const block = extractBlockAfter(css, ':root:not(.dark)', 'the prefers-color-scheme block');
+    it.each(Object.entries(EXPECTED_TOKENS_LIGHT))('defines %s as %s', (name, hex) => {
+      const re = new RegExp(`${name}\\s*:\\s*${hex}\\b`, 'i');
+      expect(block).toMatch(re);
+    });
   });
 });
 
@@ -158,5 +227,131 @@ describe('no un-tokenized raw zinc-* classes in migrated app dirs', () => {
       `found raw zinc class(es) ${JSON.stringify(unexpected)} in ${file} with no @theme token — ` +
         'map it to a token, or add it to RAW_ZINC_ALLOWLIST with a reason if it must stay raw',
     ).toEqual([]);
+  });
+});
+
+// D8 (light mode, W6-S1). theme.ts's resolution helpers, exercised against
+// minimal window/document stand-ins — same approach as
+// src/hooks/useOrg.test.ts's localStorage round-trip (no jsdom in this
+// project's vitest setup for plain .test.ts files).
+describe('theme resolution helpers (src/theme.ts)', () => {
+  class MemoryStorage {
+    private store = new Map<string, string>();
+    getItem(key: string) {
+      return this.store.has(key) ? this.store.get(key)! : null;
+    }
+    setItem(key: string, value: string) {
+      this.store.set(key, value);
+    }
+    removeItem(key: string) {
+      this.store.delete(key);
+    }
+    clear() {
+      this.store.clear();
+    }
+  }
+
+  class FakeClassList {
+    private names = new Set<string>();
+    contains(name: string) {
+      return this.names.has(name);
+    }
+    toggle(name: string, force?: boolean) {
+      const on = force ?? !this.names.has(name);
+      if (on) this.names.add(name);
+      else this.names.delete(name);
+      return on;
+    }
+  }
+
+  let storage: MemoryStorage;
+  let classList: FakeClassList;
+  let systemPrefersLight: boolean;
+
+  beforeEach(() => {
+    storage = new MemoryStorage();
+    classList = new FakeClassList();
+    systemPrefersLight = false;
+    (globalThis as unknown as { window: unknown }).window = {
+      localStorage: storage,
+      matchMedia: (query: string) => ({
+        get matches() {
+          // Only the one media feature theme.ts queries.
+          return query === '(prefers-color-scheme: light)' && systemPrefersLight;
+        },
+      }),
+    };
+    (globalThis as unknown as { document: unknown }).document = {
+      documentElement: { classList },
+    };
+  });
+
+  afterEach(() => {
+    delete (globalThis as unknown as { window?: unknown }).window;
+    delete (globalThis as unknown as { document?: unknown }).document;
+  });
+
+  it('getStoredTheme is null when nothing was ever stored', () => {
+    expect(getStoredTheme()).toBeNull();
+  });
+
+  it('getStoredTheme ignores a non-theme value under the key', () => {
+    storage.setItem('theme', 'purple');
+    expect(getStoredTheme()).toBeNull();
+  });
+
+  it('setStoredTheme/getStoredTheme round-trip under the documented key', () => {
+    setStoredTheme('light');
+    expect(storage.getItem('theme')).toBe('light');
+    expect(getStoredTheme()).toBe('light');
+  });
+
+  it('getSystemTheme reflects prefers-color-scheme: light', () => {
+    systemPrefersLight = true;
+    expect(getSystemTheme()).toBe('light');
+  });
+
+  it('getSystemTheme defaults to dark when the OS has no light preference', () => {
+    systemPrefersLight = false;
+    expect(getSystemTheme()).toBe('dark');
+  });
+
+  it('resolveTheme prefers the stored choice over the system preference', () => {
+    systemPrefersLight = true; // system says light...
+    setStoredTheme('dark'); // ...but the user explicitly chose dark
+    expect(resolveTheme()).toBe('dark');
+  });
+
+  it('resolveTheme falls back to the system preference with no stored choice', () => {
+    systemPrefersLight = true;
+    expect(getStoredTheme()).toBeNull();
+    expect(resolveTheme()).toBe('light');
+  });
+
+  it('applyTheme sets html.light and clears html.dark', () => {
+    classList.toggle('dark', true);
+    applyTheme('light');
+    expect(classList.contains('light')).toBe(true);
+    expect(classList.contains('dark')).toBe(false);
+  });
+
+  it('applyTheme sets html.dark and clears html.light', () => {
+    classList.toggle('light', true);
+    applyTheme('dark');
+    expect(classList.contains('dark')).toBe(true);
+    expect(classList.contains('light')).toBe(false);
+  });
+
+  it('currentTheme reads back an explicit class over the system preference', () => {
+    systemPrefersLight = true;
+    applyTheme('dark');
+    expect(currentTheme()).toBe('dark');
+  });
+
+  it('currentTheme falls back to the system preference with neither class set', () => {
+    systemPrefersLight = true;
+    expect(classList.contains('light')).toBe(false);
+    expect(classList.contains('dark')).toBe(false);
+    expect(currentTheme()).toBe('light');
   });
 });
