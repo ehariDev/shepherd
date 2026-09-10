@@ -34,8 +34,17 @@ type ServiceAccount struct {
 	Capability string `protobuf:"bytes,4,opt,name=capability,proto3" json:"capability,omitempty"`
 	CreatedBy  string `protobuf:"bytes,5,opt,name=created_by,json=createdBy,proto3" json:"created_by,omitempty"`
 	// status is "active" or "revoked", mirroring AgentToken's shape.
-	Status        string                 `protobuf:"bytes,6,opt,name=status,proto3" json:"status,omitempty"`
-	CreatedAt     *timestamppb.Timestamp `protobuf:"bytes,7,opt,name=created_at,json=createdAt,proto3" json:"created_at,omitempty"`
+	Status    string                 `protobuf:"bytes,6,opt,name=status,proto3" json:"status,omitempty"`
+	CreatedAt *timestamppb.Timestamp `protobuf:"bytes,7,opt,name=created_at,json=createdAt,proto3" json:"created_at,omitempty"`
+	// role is "editor" or "admin" (W3-1, 0018_service_account_role): the
+	// tier this credential is checked against, the same way a human
+	// session's org-editor/org-admin role is — see
+	// authorizeServiceAccountProcedure (rpc_interceptor.go). Orthogonal to
+	// capability: role decides WHICH procedures the token may reach at all,
+	// capability decides whether it may write once there. Defaults to
+	// "editor" when a CreateServiceAccountRequest does not set one; "admin"
+	// must be requested explicitly.
+	Role          string `protobuf:"bytes,8,opt,name=role,proto3" json:"role,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -117,6 +126,13 @@ func (x *ServiceAccount) GetCreatedAt() *timestamppb.Timestamp {
 		return x.CreatedAt
 	}
 	return nil
+}
+
+func (x *ServiceAccount) GetRole() string {
+	if x != nil {
+		return x.Role
+	}
+	return ""
 }
 
 type ListServiceAccountsRequest struct {
@@ -220,7 +236,11 @@ type CreateServiceAccountRequest struct {
 	OrgId string                 `protobuf:"bytes,1,opt,name=org_id,json=orgId,proto3" json:"org_id,omitempty"`
 	Name  string                 `protobuf:"bytes,2,opt,name=name,proto3" json:"name,omitempty"`
 	// capability is "propose" or "apply", required.
-	Capability    string `protobuf:"bytes,3,opt,name=capability,proto3" json:"capability,omitempty"`
+	Capability string `protobuf:"bytes,3,opt,name=capability,proto3" json:"capability,omitempty"`
+	// role is "editor" or "admin" (W3-1). Optional — an empty value defaults
+	// to "editor"; "admin" must be requested explicitly (D3), it is never
+	// inferred from capability or anything else about the request.
+	Role          string `protobuf:"bytes,4,opt,name=role,proto3" json:"role,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -276,15 +296,25 @@ func (x *CreateServiceAccountRequest) GetCapability() string {
 	return ""
 }
 
+func (x *CreateServiceAccountRequest) GetRole() string {
+	if x != nil {
+		return x.Role
+	}
+	return ""
+}
+
 // CreateServiceAccountResponse carries the one-time plaintext secret
 // alongside the account's identity, mirroring CreateAgentTokenResponse's
 // shape exactly (admin.proto) — the secret is never retrievable again.
 type CreateServiceAccountResponse struct {
-	state         protoimpl.MessageState `protogen:"open.v1"`
-	Id            string                 `protobuf:"bytes,1,opt,name=id,proto3" json:"id,omitempty"`
-	Name          string                 `protobuf:"bytes,2,opt,name=name,proto3" json:"name,omitempty"`
-	Capability    string                 `protobuf:"bytes,3,opt,name=capability,proto3" json:"capability,omitempty"`
-	Secret        string                 `protobuf:"bytes,4,opt,name=secret,proto3" json:"secret,omitempty"`
+	state      protoimpl.MessageState `protogen:"open.v1"`
+	Id         string                 `protobuf:"bytes,1,opt,name=id,proto3" json:"id,omitempty"`
+	Name       string                 `protobuf:"bytes,2,opt,name=name,proto3" json:"name,omitempty"`
+	Capability string                 `protobuf:"bytes,3,opt,name=capability,proto3" json:"capability,omitempty"`
+	Secret     string                 `protobuf:"bytes,4,opt,name=secret,proto3" json:"secret,omitempty"`
+	// role is the tier actually stored (W3-1) — "editor" when the request
+	// left role unset.
+	Role          string `protobuf:"bytes,5,opt,name=role,proto3" json:"role,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -343,6 +373,13 @@ func (x *CreateServiceAccountResponse) GetCapability() string {
 func (x *CreateServiceAccountResponse) GetSecret() string {
 	if x != nil {
 		return x.Secret
+	}
+	return ""
+}
+
+func (x *CreateServiceAccountResponse) GetRole() string {
+	if x != nil {
+		return x.Role
 	}
 	return ""
 }
@@ -439,7 +476,7 @@ var File_shepherd_mgmt_v1_service_account_proto protoreflect.FileDescriptor
 
 const file_shepherd_mgmt_v1_service_account_proto_rawDesc = "" +
 	"\n" +
-	"&shepherd/mgmt/v1/service_account.proto\x12\x10shepherd.mgmt.v1\x1a\x1fgoogle/protobuf/timestamp.proto\"\xdd\x01\n" +
+	"&shepherd/mgmt/v1/service_account.proto\x12\x10shepherd.mgmt.v1\x1a\x1fgoogle/protobuf/timestamp.proto\"\xf1\x01\n" +
 	"\x0eServiceAccount\x12\x0e\n" +
 	"\x02id\x18\x01 \x01(\tR\x02id\x12\x15\n" +
 	"\x06org_id\x18\x02 \x01(\tR\x05orgId\x12\x12\n" +
@@ -451,25 +488,28 @@ const file_shepherd_mgmt_v1_service_account_proto_rawDesc = "" +
 	"created_by\x18\x05 \x01(\tR\tcreatedBy\x12\x16\n" +
 	"\x06status\x18\x06 \x01(\tR\x06status\x129\n" +
 	"\n" +
-	"created_at\x18\a \x01(\v2\x1a.google.protobuf.TimestampR\tcreatedAt\"3\n" +
+	"created_at\x18\a \x01(\v2\x1a.google.protobuf.TimestampR\tcreatedAt\x12\x12\n" +
+	"\x04role\x18\b \x01(\tR\x04role\"3\n" +
 	"\x1aListServiceAccountsRequest\x12\x15\n" +
 	"\x06org_id\x18\x01 \x01(\tR\x05orgId\"k\n" +
 	"\x1bListServiceAccountsResponse\x126\n" +
 	"\x05items\x18\x01 \x03(\v2 .shepherd.mgmt.v1.ServiceAccountR\x05items\x12\x14\n" +
-	"\x05total\x18\x02 \x01(\x05R\x05total\"h\n" +
+	"\x05total\x18\x02 \x01(\x05R\x05total\"|\n" +
 	"\x1bCreateServiceAccountRequest\x12\x15\n" +
 	"\x06org_id\x18\x01 \x01(\tR\x05orgId\x12\x12\n" +
 	"\x04name\x18\x02 \x01(\tR\x04name\x12\x1e\n" +
 	"\n" +
 	"capability\x18\x03 \x01(\tR\n" +
-	"capability\"z\n" +
+	"capability\x12\x12\n" +
+	"\x04role\x18\x04 \x01(\tR\x04role\"\x8e\x01\n" +
 	"\x1cCreateServiceAccountResponse\x12\x0e\n" +
 	"\x02id\x18\x01 \x01(\tR\x02id\x12\x12\n" +
 	"\x04name\x18\x02 \x01(\tR\x04name\x12\x1e\n" +
 	"\n" +
 	"capability\x18\x03 \x01(\tR\n" +
 	"capability\x12\x16\n" +
-	"\x06secret\x18\x04 \x01(\tR\x06secret\"D\n" +
+	"\x06secret\x18\x04 \x01(\tR\x06secret\x12\x12\n" +
+	"\x04role\x18\x05 \x01(\tR\x04role\"D\n" +
 	"\x1bRevokeServiceAccountRequest\x12\x15\n" +
 	"\x06org_id\x18\x01 \x01(\tR\x05orgId\x12\x0e\n" +
 	"\x02id\x18\x02 \x01(\tR\x02id\"\x1e\n" +

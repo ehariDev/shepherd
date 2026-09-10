@@ -12,7 +12,7 @@ import type { Message } from "@bufbuild/protobuf";
  * Describes the file shepherd/mgmt/v1/service_account.proto.
  */
 export const file_shepherd_mgmt_v1_service_account: GenFile = /*@__PURE__*/
-  fileDesc("CiZzaGVwaGVyZC9tZ210L3YxL3NlcnZpY2VfYWNjb3VudC5wcm90bxIQc2hlcGhlcmQubWdtdC52MSKiAQoOU2VydmljZUFjY291bnQSCgoCaWQYASABKAkSDgoGb3JnX2lkGAIgASgJEgwKBG5hbWUYAyABKAkSEgoKY2FwYWJpbGl0eRgEIAEoCRISCgpjcmVhdGVkX2J5GAUgASgJEg4KBnN0YXR1cxgGIAEoCRIuCgpjcmVhdGVkX2F0GAcgASgLMhouZ29vZ2xlLnByb3RvYnVmLlRpbWVzdGFtcCIsChpMaXN0U2VydmljZUFjY291bnRzUmVxdWVzdBIOCgZvcmdfaWQYASABKAkiXQobTGlzdFNlcnZpY2VBY2NvdW50c1Jlc3BvbnNlEi8KBWl0ZW1zGAEgAygLMiAuc2hlcGhlcmQubWdtdC52MS5TZXJ2aWNlQWNjb3VudBINCgV0b3RhbBgCIAEoBSJPChtDcmVhdGVTZXJ2aWNlQWNjb3VudFJlcXVlc3QSDgoGb3JnX2lkGAEgASgJEgwKBG5hbWUYAiABKAkSEgoKY2FwYWJpbGl0eRgDIAEoCSJcChxDcmVhdGVTZXJ2aWNlQWNjb3VudFJlc3BvbnNlEgoKAmlkGAEgASgJEgwKBG5hbWUYAiABKAkSEgoKY2FwYWJpbGl0eRgDIAEoCRIOCgZzZWNyZXQYBCABKAkiOQobUmV2b2tlU2VydmljZUFjY291bnRSZXF1ZXN0Eg4KBm9yZ19pZBgBIAEoCRIKCgJpZBgCIAEoCSIeChxSZXZva2VTZXJ2aWNlQWNjb3VudFJlc3BvbnNlMv8CChVTZXJ2aWNlQWNjb3VudFNlcnZpY2USdAoTTGlzdFNlcnZpY2VBY2NvdW50cxIsLnNoZXBoZXJkLm1nbXQudjEuTGlzdFNlcnZpY2VBY2NvdW50c1JlcXVlc3QaLS5zaGVwaGVyZC5tZ210LnYxLkxpc3RTZXJ2aWNlQWNjb3VudHNSZXNwb25zZSIAEncKFENyZWF0ZVNlcnZpY2VBY2NvdW50Ei0uc2hlcGhlcmQubWdtdC52MS5DcmVhdGVTZXJ2aWNlQWNjb3VudFJlcXVlc3QaLi5zaGVwaGVyZC5tZ210LnYxLkNyZWF0ZVNlcnZpY2VBY2NvdW50UmVzcG9uc2UiABJ3ChRSZXZva2VTZXJ2aWNlQWNjb3VudBItLnNoZXBoZXJkLm1nbXQudjEuUmV2b2tlU2VydmljZUFjY291bnRSZXF1ZXN0Gi4uc2hlcGhlcmQubWdtdC52MS5SZXZva2VTZXJ2aWNlQWNjb3VudFJlc3BvbnNlIgBCJlokc2hlcGhlcmQvZ2VuL3NoZXBoZXJkL21nbXQvdjE7bWdtdHYxYgZwcm90bzM", [file_google_protobuf_timestamp]);
+  fileDesc("CiZzaGVwaGVyZC9tZ210L3YxL3NlcnZpY2VfYWNjb3VudC5wcm90bxIQc2hlcGhlcmQubWdtdC52MSKwAQoOU2VydmljZUFjY291bnQSCgoCaWQYASABKAkSDgoGb3JnX2lkGAIgASgJEgwKBG5hbWUYAyABKAkSEgoKY2FwYWJpbGl0eRgEIAEoCRISCgpjcmVhdGVkX2J5GAUgASgJEg4KBnN0YXR1cxgGIAEoCRIuCgpjcmVhdGVkX2F0GAcgASgLMhouZ29vZ2xlLnByb3RvYnVmLlRpbWVzdGFtcBIMCgRyb2xlGAggASgJIiwKGkxpc3RTZXJ2aWNlQWNjb3VudHNSZXF1ZXN0Eg4KBm9yZ19pZBgBIAEoCSJdChtMaXN0U2VydmljZUFjY291bnRzUmVzcG9uc2USLwoFaXRlbXMYASADKAsyIC5zaGVwaGVyZC5tZ210LnYxLlNlcnZpY2VBY2NvdW50Eg0KBXRvdGFsGAIgASgFIl0KG0NyZWF0ZVNlcnZpY2VBY2NvdW50UmVxdWVzdBIOCgZvcmdfaWQYASABKAkSDAoEbmFtZRgCIAEoCRISCgpjYXBhYmlsaXR5GAMgASgJEgwKBHJvbGUYBCABKAkiagocQ3JlYXRlU2VydmljZUFjY291bnRSZXNwb25zZRIKCgJpZBgBIAEoCRIMCgRuYW1lGAIgASgJEhIKCmNhcGFiaWxpdHkYAyABKAkSDgoGc2VjcmV0GAQgASgJEgwKBHJvbGUYBSABKAkiOQobUmV2b2tlU2VydmljZUFjY291bnRSZXF1ZXN0Eg4KBm9yZ19pZBgBIAEoCRIKCgJpZBgCIAEoCSIeChxSZXZva2VTZXJ2aWNlQWNjb3VudFJlc3BvbnNlMv8CChVTZXJ2aWNlQWNjb3VudFNlcnZpY2USdAoTTGlzdFNlcnZpY2VBY2NvdW50cxIsLnNoZXBoZXJkLm1nbXQudjEuTGlzdFNlcnZpY2VBY2NvdW50c1JlcXVlc3QaLS5zaGVwaGVyZC5tZ210LnYxLkxpc3RTZXJ2aWNlQWNjb3VudHNSZXNwb25zZSIAEncKFENyZWF0ZVNlcnZpY2VBY2NvdW50Ei0uc2hlcGhlcmQubWdtdC52MS5DcmVhdGVTZXJ2aWNlQWNjb3VudFJlcXVlc3QaLi5zaGVwaGVyZC5tZ210LnYxLkNyZWF0ZVNlcnZpY2VBY2NvdW50UmVzcG9uc2UiABJ3ChRSZXZva2VTZXJ2aWNlQWNjb3VudBItLnNoZXBoZXJkLm1nbXQudjEuUmV2b2tlU2VydmljZUFjY291bnRSZXF1ZXN0Gi4uc2hlcGhlcmQubWdtdC52MS5SZXZva2VTZXJ2aWNlQWNjb3VudFJlc3BvbnNlIgBCJlokc2hlcGhlcmQvZ2VuL3NoZXBoZXJkL21nbXQvdjE7bWdtdHYxYgZwcm90bzM", [file_google_protobuf_timestamp]);
 
 /**
  * ServiceAccount mirrors internal/store/sqlc.ServiceAccount
@@ -60,6 +60,20 @@ export type ServiceAccount = Message<"shepherd.mgmt.v1.ServiceAccount"> & {
    * @generated from field: google.protobuf.Timestamp created_at = 7;
    */
   createdAt?: Timestamp | undefined;
+
+  /**
+   * role is "editor" or "admin" (W3-1, 0018_service_account_role): the
+   * tier this credential is checked against, the same way a human
+   * session's org-editor/org-admin role is — see
+   * authorizeServiceAccountProcedure (rpc_interceptor.go). Orthogonal to
+   * capability: role decides WHICH procedures the token may reach at all,
+   * capability decides whether it may write once there. Defaults to
+   * "editor" when a CreateServiceAccountRequest does not set one; "admin"
+   * must be requested explicitly.
+   *
+   * @generated from field: string role = 8;
+   */
+  role: string;
 };
 
 /**
@@ -128,6 +142,15 @@ export type CreateServiceAccountRequest = Message<"shepherd.mgmt.v1.CreateServic
    * @generated from field: string capability = 3;
    */
   capability: string;
+
+  /**
+   * role is "editor" or "admin" (W3-1). Optional — an empty value defaults
+   * to "editor"; "admin" must be requested explicitly (D3), it is never
+   * inferred from capability or anything else about the request.
+   *
+   * @generated from field: string role = 4;
+   */
+  role: string;
 };
 
 /**
@@ -164,6 +187,14 @@ export type CreateServiceAccountResponse = Message<"shepherd.mgmt.v1.CreateServi
    * @generated from field: string secret = 4;
    */
   secret: string;
+
+  /**
+   * role is the tier actually stored (W3-1) — "editor" when the request
+   * left role unset.
+   *
+   * @generated from field: string role = 5;
+   */
+  role: string;
 };
 
 /**
