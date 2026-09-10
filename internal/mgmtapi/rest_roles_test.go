@@ -87,4 +87,46 @@ var _ = Describe("REST shim — org-editor may author, org-reader may not", Labe
 		defer resp.Body.Close() //nolint:errcheck // test cleanup
 		Expect(resp.StatusCode).To(Equal(http.StatusForbidden))
 	})
+
+	// W3-3: pipeline writes/validate and WizardService follow the same
+	// org-editor floor over REST that Connect already enforces.
+	It("lets an org editor validate a pipeline over REST", func() {
+		resp := postJSON(server, "/orgs/"+orgID+"/pipelines/validate",
+			map[string]any{"name": "p", "contents": ""}, editorCookie)
+		defer resp.Body.Close() //nolint:errcheck // test cleanup
+		Expect(resp.StatusCode).NotTo(Equal(http.StatusForbidden))
+	})
+
+	It("denies pipelines/validate over REST for an org reader", func() {
+		resp := postJSON(server, "/orgs/"+orgID+"/pipelines/validate",
+			map[string]any{"name": "p", "contents": ""}, readerCookie)
+		defer resp.Body.Close() //nolint:errcheck // test cleanup
+		Expect(resp.StatusCode).To(Equal(http.StatusForbidden))
+	})
+
+	It("lets an org editor list wizards over REST", func() {
+		resp := getRequest(server, "/orgs/"+orgID+"/wizards", editorCookie)
+		defer resp.Body.Close() //nolint:errcheck // test cleanup
+		Expect(resp.StatusCode).NotTo(Equal(http.StatusForbidden))
+	})
+
+	It("denies GET /wizards over REST for an org reader", func() {
+		resp := getRequest(server, "/orgs/"+orgID+"/wizards", readerCookie)
+		defer resp.Body.Close() //nolint:errcheck // test cleanup
+		Expect(resp.StatusCode).To(Equal(http.StatusForbidden))
+	})
+
+	// W3-3: VisualService (except GraphView, already org-reader) follows
+	// the org-editor floor too.
+	It("lets an org editor validate a visual graph over REST", func() {
+		resp := postJSON(server, "/orgs/"+orgID+"/visual/validate", map[string]any{}, editorCookie)
+		defer resp.Body.Close() //nolint:errcheck // test cleanup
+		Expect(resp.StatusCode).NotTo(Equal(http.StatusForbidden))
+	})
+
+	It("denies visual/validate over REST for an org reader", func() {
+		resp := postJSON(server, "/orgs/"+orgID+"/visual/validate", map[string]any{}, readerCookie)
+		defer resp.Body.Close() //nolint:errcheck // test cleanup
+		Expect(resp.StatusCode).To(Equal(http.StatusForbidden))
+	})
 })
