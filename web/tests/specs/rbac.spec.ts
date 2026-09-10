@@ -212,23 +212,48 @@ test('local admin can reach the single sign-on admin page', async ({ page, api }
   await expect(page.getByRole('heading', { name: 'Single sign-on' })).toBeVisible();
 });
 
-test('orgEditor cannot reach the single sign-on admin page content', async ({ page, api }) => {
-  // AdminAuthPage gates its whole body on isAppAdmin (not org role) and
-  // shows a forbidden state otherwise — org-independent, so safe for a
-  // persona with no org membership too, and a distinct control from the
-  // adminOnly nav-link tests above (this checks the page itself, reached by
-  // direct navigation, not just the link's absence from the sidebar).
+test('orgEditor is denied the single sign-on admin page by direct navigation', async ({
+  page,
+  api,
+}) => {
+  // W6-S7: routeManifest's requiredRole ('app-admin' for admin/*) denies the
+  // direct navigation before AdminAuthPage ever mounts, so its own
+  // 'sso-forbidden' banner is unreachable now — the guard redirects to '/'
+  // (and shows a route-denied element on the way) and the page's privileged
+  // RPC never fires, org-independent so safe for a persona with no org
+  // membership too. Distinct from the adminOnly nav-link tests above (this
+  // checks the page itself, not just the link's absence from the sidebar).
+  // See route-guard.spec.ts for the full persona x route denial matrix.
   await api.loginAs(orgEditor);
   const s = basicScenario();
   api.seed({ orgs: [s.org] });
   await page.goto('/admin/auth');
-  await expect(page.getByTestId('sso-forbidden')).toBeVisible();
+  await expect(async () => {
+    const onRoot = new URL(page.url()).pathname === '/';
+    const hasDeniedBanner = await page
+      .getByTestId('route-denied')
+      .isVisible()
+      .catch(() => false);
+    expect(onRoot || hasDeniedBanner).toBe(true);
+  }).toPass({ timeout: 5000 });
+  expect(api.calls('AdminService/GetOidcSettings')).toHaveLength(0);
 });
 
-test('reader cannot reach the single sign-on admin page content', async ({ page, api }) => {
+test('reader is denied the single sign-on admin page by direct navigation', async ({
+  page,
+  api,
+}) => {
   await api.loginAs(reader);
   const s = basicScenario();
   api.seed({ orgs: [s.org] });
   await page.goto('/admin/auth');
-  await expect(page.getByTestId('sso-forbidden')).toBeVisible();
+  await expect(async () => {
+    const onRoot = new URL(page.url()).pathname === '/';
+    const hasDeniedBanner = await page
+      .getByTestId('route-denied')
+      .isVisible()
+      .catch(() => false);
+    expect(onRoot || hasDeniedBanner).toBe(true);
+  }).toPass({ timeout: 5000 });
+  expect(api.calls('AdminService/GetOidcSettings')).toHaveLength(0);
 });
