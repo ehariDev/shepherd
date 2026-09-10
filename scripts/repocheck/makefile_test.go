@@ -54,3 +54,15 @@ var _ = Describe("the smoke target", func() {
 		), "smoke should depend on the docker-build-local/docker-build-init targets to build its images")
 	})
 })
+
+// Red run, 2026-09-10: `make tools` installs the standalone gofumpt binary,
+// but `make fmt` runs `golangci-lint fmt ./...` (its gofumpt formatter,
+// module-aware) and the comment at Makefile:540-541 explains that the
+// standalone binary mis-groups the dot-less `shepherd` module path and must
+// NOT be used — so `make tools` installs a CLI that reformats the repo into
+// a state `make lint` then refuses.
+var _ = Describe("the tools target", func() {
+	It("does not install the standalone gofumpt make fmt must not use", func() {
+		Expect(makeRecipe("tools")).NotTo(ContainSubstring("gofumpt"))
+	})
+})

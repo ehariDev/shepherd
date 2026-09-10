@@ -67,9 +67,11 @@ help: ## List targets and the env knobs the test suites honor
 # job. protoc-gen-es comes from web/node_modules (buf.gen.yaml points there), so
 # `make generate` also needs a `pnpm install` in web/ — scripts/build-web.sh or
 # the web job's install both provide it.
+# No standalone gofumpt here: `make fmt` runs `golangci-lint fmt` (its
+# module-aware gofumpt formatter), never the standalone binary — see the
+# comment at the `fmt` target for why.
 tools: ## Install the Go-installable CLIs the targets here shell out to
 	go install github.com/onsi/ginkgo/v2/ginkgo@$$(go list -m -f '{{.Version}}' github.com/onsi/ginkgo/v2)
-	go install mvdan.cc/gofumpt@v0.11.0
 	go install github.com/sqlc-dev/sqlc/cmd/sqlc@v1.31.1
 	go install github.com/bufbuild/buf/cmd/buf@v1.72.0
 	go install google.golang.org/protobuf/cmd/protoc-gen-go@$$(go list -m -f '{{.Version}}' google.golang.org/protobuf)
