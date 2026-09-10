@@ -54,8 +54,6 @@ type Preset struct {
 
 // Presets is the built-in provider catalogue, ordered for display: the
 // providers most likely to be in front of an operator first, generic last.
-//
-//nolint:gochecknoglobals // static catalogue, read-only after init
 var Presets = []Preset{
 	{
 		Key:                 ProviderEntra,

@@ -26,7 +26,7 @@ import (
 // GetServedConfigResponse.computed_at on a cache miss) — those responses
 // must render through writeProtoJSONOmit (below), naming the fields that
 // need `,omitempty` semantics restored, not through MarshalOpts directly.
-var MarshalOpts = protojson.MarshalOptions{ //nolint:gochecknoglobals // shared, read-only marshal config
+var MarshalOpts = protojson.MarshalOptions{
 	UseProtoNames:   true,
 	EmitUnpopulated: true,
 }
@@ -223,6 +223,10 @@ func ConnectCodeStatus(code connect.Code) int {
 		return http.StatusUnprocessableEntity
 	case connect.CodeUnavailable:
 		return http.StatusServiceUnavailable
+	case connect.CodeCanceled, connect.CodeUnknown, connect.CodeDeadlineExceeded,
+		connect.CodeResourceExhausted, connect.CodeAborted, connect.CodeOutOfRange,
+		connect.CodeUnimplemented, connect.CodeInternal, connect.CodeDataLoss:
+		return http.StatusInternalServerError
 	default:
 		return http.StatusInternalServerError
 	}

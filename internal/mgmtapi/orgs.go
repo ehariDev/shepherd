@@ -47,7 +47,7 @@ func NewOrgsHandler(st *store.Store, logger *slog.Logger) *OrgsHandler {
 // shim.go's MarshalOpts (used elsewhere in this package), which always
 // emits every field. See collectors_metadata_test.go for the exact
 // presence/absence assertions this preserves.
-var fleetListMarshalOpts = protojson.MarshalOptions{UseProtoNames: true} //nolint:gochecknoglobals // shared, read-only marshal config
+var fleetListMarshalOpts = protojson.MarshalOptions{UseProtoNames: true}
 
 // writeFleetJSON renders a proto message as the shim's HTTP response body,
 // using WriteConnectError's status-mapping conventions for the (practically

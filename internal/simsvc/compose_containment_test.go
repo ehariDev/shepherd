@@ -80,6 +80,8 @@ func (n *composeNetworks) UnmarshalYAML(value *yaml.Node) error {
 		}
 		*n = attachments
 		return nil
+	case yaml.DocumentNode, yaml.ScalarNode, yaml.AliasNode:
+		return fmt.Errorf("composeNetworks: unsupported YAML node kind %v for networks", value.Kind)
 	default:
 		return fmt.Errorf("composeNetworks: unsupported YAML node kind %v for networks", value.Kind)
 	}

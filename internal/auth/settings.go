@@ -308,8 +308,6 @@ func (s *Settings) Validate() error {
 
 // graphHosts is every host Microsoft actually serves Graph on: the global
 // endpoint plus the sovereign clouds.
-//
-//nolint:gochecknoglobals // static allowlist, read-only after init
 var graphHosts = []string{
 	"graph.microsoft.com",             // global
 	"graph.microsoft.us",              // US Gov (GCC High)

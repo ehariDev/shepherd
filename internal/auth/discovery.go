@@ -109,8 +109,6 @@ func blockedIP(ip net.IP) bool {
 // offerings put pod IPs; 192.0.0.0/24 is IETF protocol assignments. Both are
 // reachable from inside a cluster and neither is a place a real OIDC issuer
 // lives.
-//
-//nolint:gochecknoglobals // parsed-once constant table, read-only after init
 var extraBlockedV4 = func() []*net.IPNet {
 	out := make([]*net.IPNet, 0, 2)
 	for _, cidr := range []string{"100.64.0.0/10", "192.0.0.0/24"} {
@@ -157,8 +155,6 @@ func newDiscoveryClient(guardAddresses bool) *http.Client {
 
 // The clients are shared: each holds a connection pool, and building one per
 // probe would discard it. They are stateless and safe for concurrent use.
-//
-//nolint:gochecknoglobals // shared HTTP clients with connection pools, immutable after init
 var (
 	// discoveryClient is the guarded client, used for every issuer an app
 	// admin can influence.
