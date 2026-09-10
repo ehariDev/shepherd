@@ -725,7 +725,8 @@ export const SimulateRunSchema: GenMessage<SimulateRun> = /*@__PURE__*/
 /**
  * SimulateService covers /api/orgs/{org}/simulate/*: deterministic S2
  * stage-trace evaluation, and S3 sandboxed runs (VB-1 §6.4). All methods
- * require org-admin.
+ * require org-editor (D6): simulation authors what the org runs, the same
+ * ceiling WizardService and VisualService's authoring surfaces hold.
  *
  * @generated from service shepherd.mgmt.v1.SimulateService
  */
