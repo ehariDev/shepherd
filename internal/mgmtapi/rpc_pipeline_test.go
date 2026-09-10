@@ -326,4 +326,61 @@ var _ = Describe("PipelineService Connect RPC", Label("integration"), func() {
 		Expect(payload.Code).To(Equal("not_found"))
 		Expect(payload.Message).To(Equal("pipeline not found"))
 	})
+
+	// W2-S7b red run: loadPipeline used to treat ANY GetPipelineByID failure
+	// as a missing row (blanket not_found), so a real lookup failure (a
+	// connection error, a canceled backend, anything that is not
+	// pgx.ErrNoRows) was misreported as 404 instead of the 500 it actually
+	// is. Mirrors rpc_destination_test.go's "maps a real lookup failure on
+	// GetDestination to Internal, not a false Not Found".
+	It("maps a real lookup failure on GetPipeline to Internal, not a false Not Found", func() {
+		p, err := st.Queries.CreatePipeline(ctx, sqlc.CreatePipelineParams{
+			OrgID: orgUUID(orgID), Name: "lookup-fault-pipe", Contents: "// v1\n",
+			Matchers: json.RawMessage(`[]`), Enabled: false, Source: "ui",
+			WizardState: json.RawMessage(`{}`), CreatedBy: "test", UpdatedBy: "test",
+		})
+		Expect(err).NotTo(HaveOccurred())
+		cookie := sessionCookie(true)
+
+		// Hold an ACCESS EXCLUSIVE lock on pipelines from a separate connection
+		// so loadPipeline's plain SELECT (which a row-level FOR UPDATE lock
+		// cannot block) blocks on it, then cancel that backend -- forcing a
+		// real, non-ErrNoRows failure deterministically, without a
+		// fault-injection seam in store.go.
+		lockConn, err := st.Pool().Acquire(ctx)
+		Expect(err).NotTo(HaveOccurred())
+		defer lockConn.Release()
+		lockTx, err := lockConn.Begin(ctx)
+		Expect(err).NotTo(HaveOccurred())
+		defer func() { _ = lockTx.Rollback(ctx) }() //nolint:errcheck // best-effort cleanup; explicit Rollback below is the real one
+		_, err = lockTx.Exec(ctx, `LOCK TABLE pipelines IN ACCESS EXCLUSIVE MODE`)
+		Expect(err).NotTo(HaveOccurred())
+
+		respCh := make(chan *http.Response, 1)
+		go func() {
+			defer GinkgoRecover()
+			respCh <- postConnect("/shepherd.mgmt.v1.PipelineService/GetPipeline", map[string]any{
+				"org_id": orgID, "id": p.ID.String(),
+			}, cookie)
+		}()
+
+		var pid int
+		Eventually(func() error {
+			return st.Pool().QueryRow(ctx,
+				`SELECT pid FROM pg_stat_activity
+				 WHERE datname = current_database() AND wait_event_type = 'Lock' AND query ILIKE '%GetPipelineByID%'`,
+			).Scan(&pid)
+		}, "5s", "20ms").Should(Succeed(), "GetPipeline's lookup never blocked on the held table lock")
+		_, err = st.Pool().Exec(ctx, `SELECT pg_cancel_backend($1)`, pid)
+		Expect(err).NotTo(HaveOccurred())
+
+		resp := <-respCh
+		var payload struct {
+			Code string `json:"code"`
+		}
+		decodeBody(resp, &payload)
+		Expect(payload.Code).To(Equal("internal"), "a real lookup failure must not be reported as not_found")
+
+		Expect(lockTx.Rollback(ctx)).To(Succeed())
+	})
 })
