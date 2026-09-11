@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"io"
+	"os"
 	"strings"
 	"testing"
 	"time"
@@ -48,6 +49,19 @@ var giteaContainer testcontainers.Container
 var giteaSkipReason string
 
 var _ = BeforeSuite(func() {
+	// Isolate $HOME from whatever the ambient environment happens to have
+	// (or lack) under ~/.ssh: F9-a (ledger) was an SSH auth path that
+	// silently depended on the real $HOME's known_hosts files even though
+	// SSHAuth.KnownHosts is documented as the sole, mandatory source of
+	// trust. Pointing HOME at a throwaway empty directory for the whole
+	// suite makes that dependency permanently visible — a regression
+	// reintroducing it fails here every run, not just when some engineer's
+	// machine happens to lack ~/.ssh/known_hosts.
+	homeDir, err := os.MkdirTemp("", "shepherd-gitrepo-suite-home-*")
+	Expect(err).NotTo(HaveOccurred())
+	DeferCleanup(func() { _ = os.RemoveAll(homeDir) }) //nolint:errcheck // best-effort cleanup of a throwaway suite-scoped HOME dir
+	Expect(os.Setenv("HOME", homeDir)).To(Succeed())
+
 	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Minute)
 	defer cancel()
 

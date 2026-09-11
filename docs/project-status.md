@@ -279,13 +279,28 @@ Empty means "no recorded order" and falls back to schema order, so graphs saved 
 render byte-identically. Red-proved in both languages, confirmed to load in a real `alloy run`, and
 checked through the live API in all three cases (both authored orders and the fallback).
 
-### F9-a — `ssh` auth kind fails in the compose stack · **medium**
+### F9-a — `ssh` auth kind fails in the compose stack · **FIXED 2026-09-10, pending the e2e gate**
 
-Works in `internal/gitrepo`'s own suite (real ssh handshakes against Gitea, covering wrong-host-key
-and wrong-passphrase negatives). In the e2e compose stack it fails with go-git's "unable to find
-any valid known_hosts file" — the per-credential `HostKeyCallback` is not reaching the transport
-even though `ssh_known_hosts` is populated. The e2e case is skipped with that reason.
-**Host-key verification must NOT be relaxed to make it pass.** `pat` and `github_app` pass end to end.
+Root cause (confirmed by reading go-git v6's ssh transport, not just its symptom): the
+per-credential `HostKeyCallback` built from `ssh_known_hosts` *was* reaching the transport, but
+go-git's `ssh.Transport.connect` separately derives `ssh.ClientConfig.HostKeyAlgorithms` by
+scanning the OS-default `~/.ssh/known_hosts` locations whenever the caller leaves that field
+empty — which the go-git `PublicKeys` auth type always does. On any host (or isolated test run)
+without a populated `~/.ssh/known_hosts`, that unrelated fallback failed with "unable to find any
+valid known_hosts file" before the correct, already-wired `HostKeyCallback` ever got a chance to
+verify anything.
+
+Fixed in `internal/gitrepo/transport.go`: `sshClientConfig` now fills `HostKeyAlgorithms` from the
+same known_hosts-backed callback already built from `SSHAuth.KnownHosts`, via go-git's own
+`knownhosts.HostKeyAlgorithms` helper — no file I/O, no `$HOME` dependency. Host-key verification
+itself is unchanged and was not relaxed; the wrong-host-key negative in `internal/gitrepo`'s own
+suite (real ssh handshakes against Gitea) still fails loudly. `internal/gitrepo`'s suite now also
+runs with `$HOME` pointed at a throwaway temp dir for its entire `BeforeSuite`, so this class of
+bug fails on every run rather than only on a machine that happens to lack `~/.ssh/known_hosts`.
+
+The e2e `ssh` auth-kind scenario's permanent skip has been removed (`e2e/gitops_test.go`) so the
+compose stack proves the fix for real; this row moves to fully FIXED once that e2e run is green in
+the wave 3 gate. `pat` and `github_app` already pass end to end.
 
 ---
 
