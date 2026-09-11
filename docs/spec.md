@@ -472,6 +472,15 @@ handler declares exactly one.
 
 Agents authenticate `collector.v1` calls with HTTP Basic auth: username = token UUID, password = 32-byte random secret (base64url). Store only `sha256(secret)`; compare with `crypto/subtle.ConstantTimeCompare`. App Admin creates/revokes tokens via API/UI; the secret is displayed exactly once. Implement as a Connect interceptor. (v1 tokens are global-authN only; tenancy comes from cluster claiming.)
 
+### 7.3a Service accounts (machine callers of the management API)
+
+A separate machine-identity path from agent tokens above: `service_accounts` (migration 0012) are org-scoped credentials for automation that calls `shepherd.mgmt.v1` itself (CI, an MCP agent's on-behalf-of proposals, …), not the agent protocol. A service account is described by two independent axes:
+
+- **Capability** — `propose` or `apply`: whether it may write at all (0012, gateway-tier W10).
+- **Role tier** — `editor` or `admin` (migration 0018), mirroring the human org-editor/org-admin ladder: what it may *reach* once capability allows a write. `role` defaults to `editor`; `admin` is never assigned implicitly — `CreateServiceAccount` only sets it when the request explicitly asks (D3: "admin explicit at creation"), the same way 0015/0016 never implicitly promote a human to org-admin.
+
+Before the role column existed, `authorizeServiceAccountProcedure` (`internal/mgmtapi/rpc_interceptor.go`) checked only `sa.OrgID == orgID` for every non-app-admin requirement, so an apply-capability service account reached every org-admin procedure (`RotateTenantRoute`, `DeleteTeam`, `AddTeamMember`, `DeleteCredential`, `ListAudit`, `ListTeamMembers`, …) it was never explicitly granted. The interceptor now checks the procedure's minimum role against the service account's `role` tier the same way it checks a human session's rank (§7.2) — **with one absolute floor**: a service account never satisfies an app-admin requirement, regardless of `role`; app-admin procedures are refused to every machine caller unconditionally. An `admin`-tier service account therefore reaches the same org-scoped ceiling an org admin does, never the application-admin surface.
+
 ### 7.4 Secret encryption at rest
 
 `internal/crypto`: AES-256-GCM with key from viper `security.encryption_key` (32 bytes, base64; from env/k8s Secret). Random 12-byte nonce prepended to ciphertext. Used for `ado_credentials.client_secret_enc`. Refuse to boot without a valid key.
@@ -531,7 +540,7 @@ Git pipelines are **read-only in the UI** (view + revision history only; edits h
 
 ## 11. Wizards (`internal/wizard`)
 
-A wizard is a typed, versioned generator: input schema (zod on the client, mirrored Go struct with validation on the server) → rendered Alloy pipeline(s) via `text/template` templates embedded in the binary. Saving a wizard result creates normal `pipelines` rows with `source='wizard'`, `wizard_kind`, and `wizard_state` (the raw input JSON) so it can be re-opened, edited in the wizard, and re-rendered (creating a new revision). Org Admins may also "detach" a wizard pipeline (converts to `source='ui'`, freeing raw editing, one-way).
+A wizard is a typed, versioned generator: input schema (zod on the client, mirrored Go struct with validation on the server) → rendered Alloy pipeline(s) via `text/template` templates embedded in the binary. Saving a wizard result creates normal `pipelines` rows with `source='wizard'`, `wizard_kind`, and `wizard_state` (the raw input JSON) so it can be re-opened, edited in the wizard, and re-rendered (creating a new revision). Org Editors may also "detach" a wizard pipeline (converts to `source='ui'`, freeing raw editing, one-way) — the same tier that authors pipelines, wizards, visual builder graphs and simulations (§7.2).
 
 ### 11.1 Wizard #1 (v1 scope): **Application Observability**
 
@@ -693,25 +702,33 @@ Full-height flex layout, no page scroll except the content area:
 
 ### 13.4 Route tree
 
+21 routes (`web/src/routes/router.tsx`; role floors mirror `internal/mgmtapi/rpc_interceptor.go`'s per-procedure requirement — see `web/src/routes/routeManifest.ts`):
+
 ```
 /login                      — sign-in page
 /                           — Overview
 /collectors                 — Collectors list
 /collectors/:id             — Collector detail (tabs: Instances | Served Config | Pipelines | Access)
 /pipelines                  — Pipelines list
-/pipelines/new              — Editor (create)
+/pipelines/new              [org-editor] — Editor (create)
 /pipelines/:id              — Editor (view/edit; read-only for readers & git-sourced)
-/wizards                    — Wizard gallery (cards, one per registered wizard)
-/wizards/{kind}             — Wizard stepper (one generic runner for every registered wizard)
-/destinations               — Destinations list + create/edit dialogs
-/git                        — Tabs: Repo links | Credentials
-/admin/orgs                 — [app admin] Orgs
-/admin/clusters             — [app admin] Cluster claiming
-/admin/tokens               — [app admin] Agent tokens
-/audit                      — Audit log (org-scoped)
+/pipelines/:id/visual       — Visual builder graph editor
+/pipelines/:id/graph        — Graph view (read-only)
+/pipelines/visual/new       — Visual builder (create)
+/wizards                    [org-editor] — Wizard gallery (cards, one per registered wizard kind)
+/wizards/:kind              [org-editor] — Wizard stepper (one generic runner for every registered wizard)
+/destinations                — Destinations list + create/edit dialogs
+/teams                       [org-reader] — Teams (membership, local + IdP-group-backed)
+/git                          [org-admin] — Tabs: Repo links | Credentials
+/admin/orgs                    [app-admin] — Orgs
+/admin/clusters                 [app-admin] — Cluster claiming
+/admin/tokens                    [app-admin] — Agent tokens
+/admin/users                      [app-admin] — Local users
+/admin/auth                        [app-admin] — Single sign-on (§7.1b)
+/audit                              [org-admin] — Audit log (org-scoped)
 ```
 
-Role-based rendering: admin routes and every write affordance (buttons, switches, menu items) are hidden — not disabled — for users lacking the role; the server still enforces.
+Unmarked routes carry no floor beyond an authenticated session with some access to the current org. Role-based rendering: every write affordance (buttons, switches, menu items) is hidden — not disabled — for users lacking the role; admin routes and the routes above tagged with a floor additionally redirect to `/` with a toast and a `[data-testid="route-denied"]` element on direct navigation (client-side guard, `RequireRole`) — the server remains the actual enforcement in both cases.
 
 ### 13.5 Screen-by-screen specification
 
@@ -724,10 +741,10 @@ Role-based rendering: admin routes and every write affordance (buttons, switches
 **Collector detail**: header block: `text-xl` "`{cluster}` / `{role}`" with role icon, org Badge, status Badge, and assigned-group chips (Badge outline with `Users` icon). Tabs (shadcn Tabs, underline style):
 - *Instances*: table — Instance ID (mono, copyable), Name, Version, OS, Status badge, Error (`AlertTriangle` amber icon with Tooltip showing `remote_config_error`), Last seen. Rows with `unregistered_at` set render at 50% opacity with an "Unregistered" badge.
 - *Served Config*: meta row (hash copyable, generated-at, "Built from n pipelines" where each pipeline name links to its editor) above a read-only editor (§13.6) filling remaining height.
-- *Pipelines*: compact table of currently-matching pipelines: Name (link), Source badge, Enabled switch (org admin only; flipping calls enable/disable and refetches), Revision, Updated.
+- *Pipelines*: compact table of currently-matching pipelines: Name (link), Source badge, Enabled switch (org editor+; flipping calls enable/disable and refetches), Revision, Updated.
 - *Access* (visible to org admin): current assignments as a list of rows (group name, GUID mono, remove `X` button w/ confirm); "Assign group" opens a Combobox dialog backed by `GET /api/admin/groups/search` (debounced 300ms, min 2 chars, shows name + GUID).
 
-**Pipelines list**: filter bar (search name; Source Select; Enabled Select). Columns: Name, Source badge, Matchers (each matcher as a mono chip, max 3 shown then "+n"), Enabled (switch, org admin), Revision, Updated by/at. Primary action "New pipeline"; secondary ghost "Open wizard" → `/wizards`. Empty state: `Workflow` icon, "No pipelines", "Create a pipeline by hand or start from a wizard.", two buttons.
+**Pipelines list**: filter bar (search name; Source Select; Enabled Select). Columns: Name, Source badge, Matchers (each matcher as a mono chip, max 3 shown then "+n"), Enabled (switch, org editor+), Revision, Updated by/at. Primary action "New pipeline"; secondary ghost "Open wizard" → `/wizards`. Empty state: `Workflow` icon, "No pipelines", "Create a pipeline by hand or start from a wizard.", two buttons.
 
 **Pipeline editor** (`/pipelines/new`, `/pipelines/:id`): full-height two-pane split (left `w-[380px] shrink-0 border-r overflow-y-auto p-6`, right flex-1 editor column).
 - Left pane, top→bottom: Name input; **Matcher builder** — vertical list of rows [key Combobox | operator Select (`=`,`!=`,`=~`,`!~`) | value Combobox | remove ghost `X`], "+ Add matcher" ghost button; key/value comboboxes are fed by `GET /api/orgs/{org}/attributes` (§12) and remain free-text-capable; beneath it a live **match preview** card: "Matches **n** collectors" + up to 5 `cluster/role` mono lines + "+n more" (calls preview endpoint, 500ms debounce; n=0 renders the count in amber with caption "This pipeline currently matches nothing."). Then: Enabled switch with caption "Enabling validates against every affected collector."; Source badge; Revision Select (rev list w/ author+time) — selecting an old revision switches the right pane to a **diff view** (CodeMirror merge view, old vs current) with a "Restore this revision" button (creates a new revision). Danger zone card at bottom: Delete (AlertDialog w/ typed confirm).
@@ -786,6 +803,9 @@ shepherd migrate up|down|status
 shepherd token create --name X | revoke <id> | list      # direct-DB agent token mgmt (bootstrap)
 shepherd validate <file.alloy> # run stages 1–2 locally
 shepherd version
+shepherd healthcheck [--addr host:port]   # curl /healthz and exit 0/1 — container HEALTHCHECK, no curl/wget in the distroless image
+shepherd dev seed                          # developer-only, direct DB, never exposed over HTTP (§ amendments)
+shepherd dev create-session --persona X    # developer-only, direct DB, never exposed over HTTP (§ amendments)
 ```
 
 Viper: config file `shepherd.yaml` (path via `--config`), env override prefix `SHEPHERD_` (dots→underscores). Full schema with defaults:
@@ -847,33 +867,43 @@ Chart `apiVersion: v2`, `name: shepherd`; `appVersion` tracks the image tag. She
 
 | Template | Requirements |
 |---|---|
-| `deployment.yaml` | RollingUpdate (maxUnavailable 0, maxSurge 1). Container args `["serve"]`. Config mounted from the ConfigMap at `/etc/shepherd/shepherd.yaml`, passed via `--config`. Secrets injected as env vars via `envFrom.secretRef` (viper env override handles the rest). Probes: liveness `GET /healthz`, readiness `GET /readyz` (readiness must check DB connectivity + pending-migration state). `securityContext`: runAsNonRoot, readOnlyRootFilesystem, drop ALL caps; an `emptyDir` at `/tmp` (needed by the `alloy validate` temp files, §8). Standard passthroughs: `resources`, `nodeSelector`, `tolerations`, `affinity`, `priorityClassName`, `topologySpreadConstraints`, `podAnnotations`, `extraEnv`. |
-| `configmap.yaml` | Renders `shepherd.yaml` from `.Values.config` (§14 schema) via `toYaml` — the values structure IS the config structure. Secret-bearing fields (`database.url`, `oidc.client_secret`, `graph.client_secret`, `security.encryption_key`) must NOT appear here; they arrive only as env vars. Checksum annotation on the Deployment pod template (`checksum/config`) to roll pods on config change. |
-| `secret.yaml` | Only rendered when `existingSecret` is empty AND `.Values.secrets.*` provided (dev convenience). Production path: `existingSecret: <name>` referencing a secret with keys `SHEPHERD_DATABASE_URL`, `SHEPHERD_OIDC_CLIENT_SECRET`, `SHEPHERD_GRAPH_CLIENT_SECRET`, `SHEPHERD_SECURITY_ENCRYPTION_KEY` — designed to be populated by External Secrets Operator. |
-| `migrate-job.yaml` | Helm hook Job (`pre-install,pre-upgrade`, `hook-delete-policy: before-hook-creation,hook-succeeded`, hook-weight `-5`) running `["migrate", "up"]` with the same image/env. Toggle `migrations.job.enabled` (default `true`). When disabled, users may set `--auto-migrate` via `extraArgs` instead — document both, default to the Job. |
-| `service.yaml` | ClusterIP, port 8080 → `http`. **`appProtocol: kubernetes.io/h2c`** on the port so Envoy/kgateway negotiates HTTP/2 cleartext to the pod — required for agents using the gRPC/Connect+proto path. |
+| `deployment.yaml` | RollingUpdate (maxUnavailable 0, maxSurge 1). Container args `["serve"]`. Config mounted from the ConfigMap at `/etc/shepherd/shepherd.yaml`, passed via `--config`. Secrets injected as env vars via `envFrom.secretRef` (viper env override handles the rest). Probes: liveness `GET /healthz`, readiness `GET /readyz` (readiness must check DB connectivity + pending-migration state) — both invoked via `shepherd healthcheck` (§14), not `wget`/`curl`, since the distroless image has neither. `securityContext`: runAsNonRoot, readOnlyRootFilesystem, drop ALL caps; an `emptyDir` at `/tmp` (needed by the `alloy validate` temp files, §8). Standard passthroughs: `resources`, `nodeSelector`, `tolerations`, `affinity`, `priorityClassName`, `topologySpreadConstraints`, `podAnnotations`, `extraEnv`. |
+| `configmap.yaml` / `configmap-migrate.yaml` | Renders `shepherd.yaml` from `.Values.config` (§14 schema) via a shared `shepherd.configYaml` helper — the values structure IS the config structure. Secret-bearing fields (`database.url`, `oidc.client_secret`, `graph.client_secret`, `security.encryption_key`) must NOT appear here; they arrive only as env vars. Checksum annotation on the Deployment pod template (`checksum/config`) to roll pods on config change. **As of chart 0.9.0 the runtime ConfigMap/Secret/ServiceAccount are ordinary tracked resources, not Helm hooks** (an earlier hook design destroyed the database on `helm uninstall`, since a hook resource is not tracked); the migration Job — which still runs as a `pre-install,pre-upgrade` hook and therefore predates the tracked resources existing — gets its own `-migrate` copies of the ConfigMap, Secret and ServiceAccount instead, built from the identical helper so the two cannot drift. `upgrade-guard.yaml` renders no object; it exists only to turn the one-time hook→tracked migration into a named error instead of a silent resource-adoption conflict. |
+| `secret.yaml` | Only rendered when `existingSecret` is empty, `externalSecrets.enabled` is false, AND `.Values.secrets.*` is provided (dev convenience — least private of the three options: values stay readable via `helm get values` for the life of the release). Production path: `existingSecret: <name>` referencing a secret with keys `SHEPHERD_DATABASE_URL`, `SHEPHERD_OIDC_CLIENT_SECRET`, `SHEPHERD_GRAPH_CLIENT_SECRET`, `SHEPHERD_SECURITY_ENCRYPTION_KEY`, `SHEPHERD_BOOTSTRAP_ADMIN_PASSWORD` — populated by hand or by an operator you manage yourself. |
+| `externalsecret.yaml` | Toggle `externalSecrets.enabled` (default off), mutually exclusive with both `existingSecret` and `.Values.secrets` (the chart `fail`s rather than pick a winner). Renders ESO Password generators plus an ExternalSecret so the encryption key and the bootstrap admin password are generated in-cluster and never pass through a shell or values file. `refreshInterval` MUST stay `"0"` — these are not rotatable; a re-generated encryption key orphans every already-encrypted secret in the database with no error at the moment it happens. |
+| `cnpg-cluster.yaml` | Toggle `cnpg.enabled` (default off): optionally renders a CloudNativePG `Cluster` for the chart to own end-to-end. `cnpg.render: auto\|always\|never` controls a `lookup`-based skip so `helm upgrade` never re-renders (and under GitOps, never destroys) an existing Cluster; requires the CloudNativePG operator, which this chart does not install. |
+| `migrate-job.yaml` | Helm hook Job (`pre-install,pre-upgrade`, `hook-delete-policy: before-hook-creation,hook-succeeded`, hook-weight `-5`) running `["migrate", "up"]` with the same image/env, reading its own `-migrate`-suffixed ConfigMap/Secret/ServiceAccount above. Toggle `migrations.job.enabled` (default `true`). When disabled, users may set `--auto-migrate` via `extraArgs` instead — document both, default to the Job. |
+| `service.yaml` / `service-metrics.yaml` | `service.yaml`: ClusterIP, port 8080 → `http`. **`appProtocol: kubernetes.io/h2c`** on the port so Envoy/kgateway negotiates HTTP/2 cleartext to the pod — required for agents using the gRPC/Connect+proto path. `service-metrics.yaml`: a second, always-ClusterIP Service (toggle `metrics.enabled`) exposing only the metrics port — deliberately not a port on the main Service, since `service.type` is operator-configurable and adding metrics there would publish it however the main Service is exposed. |
 | `httproute.yaml` | Gateway API HTTPRoute (primary ingress mechanism, toggle `route.enabled`): `hostnames`, `parentRefs` (name/namespace/sectionName) from values. Single route for both UI/API and the agent path (`/collector.v1.CollectorService` is just a path prefix on the same server). |
 | `ingress.yaml` | Classic Ingress alternative, toggle `ingress.enabled`, mutually exclusive with `route.enabled` in `values.schema.json`. |
-| `serviceaccount.yaml`, `hpa.yaml`, `pdb.yaml` | Standard. HPA on CPU (default off). PDB `minAvailable: 1` when replicas > 1. |
-| `servicemonitor.yaml` | Toggle `metrics.serviceMonitor.enabled`; scrapes `/metrics` on the http port; configurable labels for Prometheus-operator selector matching. |
-| `networkpolicy.yaml` | Toggle, default off: ingress from gateway namespace label selector + egress to Postgres, `login.microsoftonline.com`/`graph.microsoft.com`/`dev.azure.com` (documented as "allow-all egress unless your CNI does FQDN policies"). |
+| `serviceaccount.yaml`, `hpa.yaml`, `pdb.yaml` | Standard. HPA on CPU, toggle `autoscaling.enabled` (default off), min/max replicas + target CPU% configurable. PDB `minAvailable: 1` when replicas > 1. |
+| `servicemonitor.yaml` | Toggle `metrics.serviceMonitor.enabled`; scrapes `/metrics` on the metrics port; configurable labels for Prometheus-operator selector matching. |
+| `networkpolicy.yaml` | Toggle `networkPolicy.enabled` (default off — only meaningful on a CNI that enforces policies): ingress from any namespace to the API and metrics ports, egress unrestricted (Shepherd's database/IdP/git remotes are operator-supplied and not something the chart can enumerate; restrict at the CNI level for FQDN policies). |
+| `deployment-simulator.yaml`, `service-simulator.yaml`, `serviceaccount-simulator.yaml`, `networkpolicy-simulator.yaml`, `secret-simulator-token.yaml` | S3 sandbox simulator (VB-1 §6.4), toggle `simulator.enabled` (**default `true` since v0.0.1** — see F5, `docs/project-status.md`). Every one of these is load-bearing and asserted by `deploy/helm/chart_test.go`: `automountServiceAccountToken: false` on the ServiceAccount (defense in depth — `internal/simsvc.Config.SATokenPath` also refuses to start if a token is mounted anyway); a bearer token on the control API from one of three sources in precedence order — `simulator.token.existingSecret`, else `externalSecrets.enabled`, else the chart's own generated Secret (`value` pins a literal, empty generates one random token reused across upgrades via `lookup`); a **default-deny egress** NetworkPolicy scoped to this Pod's own harness ports only — no cluster DNS, no rest-of-cluster, no internet, since the sandboxed Alloy is a child process of shepherd-simulator (not a sibling container), so this Pod's network boundary IS the sandbox boundary; non-root, all capabilities dropped, read-only rootfs, CPU/memory limits. What the chart cannot set: a per-Pod PID limit (no PodSpec field exists for one — it is a kubelet `podPidsLimit`/`--pod-max-pids` setting). |
 
 ### 17.2 `values.yaml` shape (top level)
 
 ```yaml
 image: { registry: "", repository: shepherd, tag: "", pullPolicy: IfNotPresent, pullSecrets: [] }
 replicas: 2
+service: { ... }
 config: { ... }            # mirrors §14 exactly, minus secret fields
+cnpg: { enabled: false, render: auto, instances: 2, storage: { size: 10Gi }, database: shepherd, owner: shepherd, extraSpec: {} }
+externalSecrets: { enabled: false, render: auto, refreshInterval: "0", encryptionKey: { length: 32 }, bootstrapAdmin: { enabled: true, length: 24, login: admin } }
 existingSecret: ""
-secrets: {}                # dev-only inline secrets
+secrets: {}                # dev-only inline secrets — mutually exclusive with existingSecret and externalSecrets.enabled
 migrations: { job: { enabled: true } }
 route: { enabled: true, hostnames: [], parentRefs: [] }
 ingress: { enabled: false, className: "", hosts: [], tls: [] }
-metrics: { serviceMonitor: { enabled: false, labels: {} } }
-resources: {}, nodeSelector: {}, tolerations: [], affinity: {}, priorityClassName: ""
+metrics: { enabled: true, serviceMonitor: { enabled: false, labels: {} } }
+serviceAccount: { ... }
+resources: {}, nodeSelector: {}, tolerations: [], affinity: {}, priorityClassName: "", podAnnotations: {}, extraEnv: []
+autoscaling: { enabled: false, minReplicas: 2, maxReplicas: 10, targetCPUUtilizationPercentage: 80 }
+networkPolicy: { enabled: false }
+simulator: { enabled: true, image: { ... }, replicas: 1, resources: { ... }, allowedHosts: [], token: { value: "", existingSecret: "", key: token }, networkPolicy: { extraEgress: [] } }
 ```
 
-Provide `values.schema.json` validating the above (required fields, enum checks, route/ingress mutual exclusion). Provide `ci/default-values.yaml` and `ci/full-values.yaml`; `make helm-lint` runs `helm lint` plus `helm template` against both and fails on any error. Include `NOTES.txt` printing the URL and a ready-to-paste spoke `remoteConfig:` snippet (from §1) with the chart's hostname substituted.
+Provide `values.schema.json` validating the above (required fields, enum checks, route/ingress mutual exclusion). Provide `ci/default-values.yaml`, `ci/full-values.yaml`, `ci/ingress-values.yaml`, `ci/generated-secrets-values.yaml`; `make helm-lint` runs `helm lint` plus `helm template` against them and fails on any error. Include `NOTES.txt` printing the URL and a ready-to-paste spoke `remoteConfig:` snippet (from §1) with the chart's hostname substituted.
 
 ---
 
@@ -892,11 +922,11 @@ The e2e suite proves the full loop **locally with no cloud dependencies**: a gen
 | Service | Image / notes |
 |---|---|
 | `postgres` | `postgres:16-alpine`, healthcheck `pg_isready`. |
-| `oidc` | `ghcr.io/navikt/mock-oauth2-server:2.1.x` — a mock OIDC provider with full discovery/JWKS and an interactive login form that accepts a JSON claims blob as the "username", letting each test log in with arbitrary `oid`, `email`, and `groups` claims. Shepherd's `oidc.issuer` points here. |
+| `oidc` | `ghcr.io/navikt/mock-oauth2-server:6.0.1` (pinned in both compose files; §D.6 requires an explicit tag, never `latest`) — a mock OIDC provider with full discovery/JWKS and an interactive login form that accepts a JSON claims blob as the "username", letting each test log in with arbitrary `oid`, `email`, and `groups` claims. Shepherd's `oidc.issuer` points here. |
 | `mockmsft` | Built from `e2e/mockmsft/` — one small Go server with two route groups: **Graph**: `GET /v1.0/me/transitiveMemberOf/microsoft.graph.group` (returns groups based on a header/token the suite controls; include one paginated response with `@odata.nextLink` to exercise paging) and `GET /v1.0/groups?$filter=...`; **ADO**: the four endpoints from §10 backed by an in-memory fake repo whose files/commits the suite mutates via a `/__fixture` control endpoint. Also serves the mock token endpoint for the SP client-credentials grant. |
 | `shepherd-init` | The shepherd image, one-shot: waits for postgres, runs `migrate up`, then `token create --name e2e --secret <fixed>` with the dev env var set. |
 | `shepherd` | The locally built image (`make docker-build` first), `depends_on: shepherd-init: service_completed_successfully`. Config via env: mock issuer, mock graph/ado base URLs, `auth.app_admin_group_ids: ["11111111-...-appadmins"]`, encryption key, `gitsync.tick: 2s`. |
-| `alloy` | `grafana/alloy:latest` (pin ≥ v1.12 — needed for `remote_config_status` reporting). Command `run /etc/alloy/config.alloy --storage.path=/tmp/alloy --server.http.listen-addr=0.0.0.0:12345 --disable-reporting`. `e2e/alloy/config.alloy` contains ONLY a `remotecfg` block: url `http://shepherd:8080`, basic_auth with the fixed token, `poll_frequency = "10s"` (the enforced minimum), attributes `cluster = "e2e-cluster"`, `role = "metrics"`. |
+| `alloy` | `grafana/alloy:v1.18.1` (`ALLOY_IMAGE`/`ALLOY_VERSION` in `deploy/versions.env` — the single pin every Dockerfile and compose file consumes; needed for `remote_config_status` reporting, never `latest` per §D.6). Command `run /etc/alloy/config.alloy --storage.path=/tmp/alloy --server.http.listen-addr=0.0.0.0:12345 --disable-reporting`. `e2e/alloy/config.alloy` contains ONLY a `remotecfg` block: url `http://shepherd:8080`, basic_auth with the fixed token, `poll_frequency = "10s"` (the enforced minimum), attributes `cluster = "e2e-cluster"`, `role = "metrics"`. |
 
 ### 18.3 Suite mechanics
 
@@ -922,7 +952,9 @@ The e2e suite proves the full loop **locally with no cloud dependencies**: a gen
 
 ## 19. Explicit non-goals for v1 (do not build)
 
-Per-org agent tokens; webhook-triggered git sync; OpAMP support; editing git-sourced pipelines in the UI; multi-wizard framework beyond the one wizard (but keep `internal/wizard` pluggable: a registry keyed by `wizard_kind`); Alloy binary version matrix testing; SSO logout (front-channel); horizontal-scale coordination beyond stateless replicas + Postgres (singleflight is per-replica — acceptable).
+Per-org agent tokens; webhook-triggered git sync; OpAMP support; editing git-sourced pipelines in the UI; Alloy binary version matrix testing; SSO logout (front-channel); horizontal-scale coordination beyond stateless replicas + Postgres (singleflight is per-replica — acceptable).
+
+**No longer a non-goal, SUPERSEDED:** "multi-wizard framework beyond the one wizard" — `internal/wizard`'s registry (keyed by `wizard_kind`) now backs six wizards (`appobservability`, `blackbox`, `clustermetrics`, `database`, `podlogs`, `selfmonitoring`; `docs/gateway-tier-plan.md` W8), each registering itself via `wizard.Register` exactly as v1's pluggability note anticipated.
 
 ---
 
@@ -1304,8 +1336,12 @@ What carried over unchanged:
 - **`user_oid` convention:** local sessions still store
   `user_oid = "local:" + login`.
 - **Password hashing:** argon2id, time=1, memory=64MiB, threads=4, salt=16B,
-  key=32B, standard `$argon2id$v=19$...` encoding. `shepherd hash-password`
-  remains.
+  key=32B, standard `$argon2id$v=19$...` encoding, via `internal/auth.HashPassword`.
+  **Correction:** `shepherd hash-password` does not exist — there is no such
+  CLI command in `internal/cli`. Hashing happens server-side only: on
+  bootstrap-admin creation, on `shepherd dev seed`'s local users, and on a
+  password change through the API. There has never been a supported way to
+  hand the server a pre-hashed password from outside it.
 - **Endpoints:** `GET /auth/methods` (no auth, no CSRF,
   `{"oidc":bool,"local_admin":bool}`, `Cache-Control: max-age=60`) and
   `POST /api/auth/local/login` (through CSRFMiddleware, constant-shaped
@@ -1371,12 +1407,15 @@ Use `?unclaimed=true` to filter to unclaimed only. The old behaviour of returnin
 Three Playwright layers:
 1. **Mocked suite** (`make test-ui`, `playwright.config.ts`): full network mock at API boundary. Scope: UI behaviour, component contracts, loading/error states, mock-state flows. No real backend.
 2. **Fullstack suite** (`make test-fullstack`, `playwright.fullstack.config.ts`): REAL backend at `:8080`, NO `page.route()` interception. Scope: UI-API contract correctness, RBAC enforcement, real CRUD persistence, real recompute path. `workers: 1`, fresh DB per suite.
-3. **E2E suite** (`make e2e`): Alloy agent protocol (remotecfg polling, GetConfig RPC, hash/not-modified). Merge queue only.
+3. **E2E suite** (`make e2e`): Alloy agent protocol (remotecfg polling, GetConfig RPC, hash/not-modified).
 
 **CI ordering:**
 ```
-[lint ∥ build ∥ guards ∥ generated-drift ∥ test ∥ web ∥ test-ui ∥ test-fullstack] → (merge queue) e2e
+PR:      [lint ∥ build ∥ guards ∥ generated-drift ∥ test ∥ web ∥ test-ui ∥ test-fullstack]
+push main: same set, path-filtered (see below) → e2e (D11, path-filtered on e2e/agentapi/gitsync/auth/Dockerfile/versions.env)
+merge_group / workflow_dispatch: → e2e (currently dormant — this repo has no merge queue configured)
 ```
+`e2e.yml` is no longer merge-queue-only as originally specified: it also runs post-merge on every qualifying push to `main`, path-filtered to what the suite actually exercises, because `merge_group` never fires without a configured merge queue and the agent-protocol suite otherwise never ran at all (D11). `workflow_dispatch` remains available on demand.
 
 One documented exception: `.github/workflows/e2e.yml`'s `e2e-egress` job (`make e2e-sim`) also
 runs on any PR touching the S3 sandbox containment surface. Its first ginkgo pass is the egress
@@ -1456,5 +1495,8 @@ Corrections applied in place above, recorded here so the history is legible:
   unit/integration split never existed. `make test` runs all Go tests and requires Docker
   (testcontainers Postgres, docker-shimmed `alloy validate`). CI now runs
   lint/build/guards/generated-drift/test/web/test-ui/test-fullstack in parallel on every PR;
-  e2e-egress paths-filtered and e2e on the merge queue (`e2e.yml`); e2e-k8s nightly; schema-verify
-  weekly. `make smoke` remains unwired (tracked follow-up in `ci.yml`'s header).
+  e2e-egress paths-filtered on PRs touching the sandbox containment surface; e2e runs post-merge
+  on push to main, path-filtered (D11), plus on `merge_group`/`workflow_dispatch`; e2e-k8s and
+  schema-verify both run weekly (not nightly — cron budget, see `docs/project-status.md` §6).
+  `make smoke` is wired into CI's `test-fullstack` job (S20) — it shares that job's already-built
+  images, so it costs only the ~30-60s smoke run itself.
