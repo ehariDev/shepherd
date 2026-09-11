@@ -1,7 +1,8 @@
 # Shepherd — project ledger
 
-> **The single live status document.** Baseline re-verified 2026-08-20 by running everything below,
-> not by reading a summary. Completed rounds live in `docs/archive/` — do not start a second ledger.
+> **The single live status document.** Baseline re-verified 2026-09-11 by the wave orchestrator
+> running everything in §1 below, not by reading a summary. Completed rounds live in
+> `docs/archive/` — do not start a second ledger.
 
 ## Document map
 
@@ -9,21 +10,48 @@
 |---|---|
 | `docs/project-status.md` | this ledger — verified baseline, open bugs, unbuilt features |
 | `docs/spec.md` | authoritative product/build specification (§ numbers referenced below) |
-| `docs/visual-builder-design-VB1.md` | visual builder design — M1–M8 built; §6.4 (S3) is the live spec for the disabled sandbox feature |
-| `docs/reviews/` | **live findings only**: S3 containment criticals, and the canvas decision record |
+| `docs/visual-builder-design-VB1.md` | visual builder design — M1–M8 built; §6.4 (S3) is the live spec for the sandbox feature (enabled by default in the Helm chart since v0.0.1 — see F5) |
+| `docs/reviews/` | **live findings and decision records only**: `canvas-framework-evaluation.md` (the React Flow decision) and this session's own `2026-09-09-remediation.md`; closed reviews move to `docs/archive/reviews/` |
 | `docs/dev-guide.md` | running the dev stack |
 | `docs/frontend-testing.md` | three-layer frontend test strategy |
 | `docs/platform-monitoring-architecture.md` | target-fleet reference notes |
-| `docs/kind-test-environment-plan.md` | **steps 1–3 in progress, §5 Layer B done**: kind-based Kubernetes test environment — NetworkPolicy enforcement (probed), Helm deploy, LGTM delivery |
+| `docs/kind-test-environment-plan.md` | kind-based Kubernetes test environment (`make e2e-k8s`, weekly + path-filtered on qualifying PRs): chart deploy, Gateway API route conformance + live attachment verification, §5 Layer B NetworkPolicy/simulator containment (all seven probes + the kill probe), install/upgrade repeatability. See the plan's own status header for the current step/feature count |
 | `docs/gateway-tier-plan.md` | **in progress** (all 11 workstreams built as of 2026-08-22; W1–W3 done, the rest awaiting review gates R1/R2/R3/R6 — R5 was resolved 2026-08-22 — see its §9): multi-session plan for the tenant-aware gateway tier, the beacon and outcome verification, signal/role enforcement, the chart-values generator, teams/scoped identity and the agent (MCP) interface — 11 workstreams with its own step ledger (§9), 15 conformance gates (§6), review gates (§7) and the actor model (§3a) |
 | `docs/proofs/` | red–green proofs for current work |
 | `docs/archive/` | finished work, kept as the record of why things are the way they are |
 
 ---
 
-## 1. Verified baseline (2026-08-20)
+## 1. Verified baseline (2026-09-11)
 
-Every line re-run today.
+Re-baselined at the head of the 2026-09 remediation branch (`remediation/2026-09`, base
+`39f724f`). Every row below is the wave orchestrator's own run, not a docker-running local repeat
+of it (this docs pass does not run Docker) — command and date are on every row so the claim is
+checkable against a fresh run at any time.
+
+| Check | Command | Result (2026-09-11) |
+|---|---|---|
+| Go build | `go build ./...` | clean |
+| Go vet | `go vet ./...` | clean |
+| golangci-lint | `golangci-lint run ./...` | **0 issues** |
+| `make lint` | `make lint` | 0 issues — all ten `guards` targets plus `golangci-lint` config verify |
+| repocheck guards suite | `go test ./scripts/repocheck/ -count=1` | green |
+| Go test suite | `go test ./...` | **41 packages ok.** One rerun in progress: `internal/agentapi`'s testcontainers Postgres died when `make smoke` built images concurrently on the same run — a resource contention artifact of the orchestrator's parallel verification, not a code defect; tracked, not yet re-confirmed green as its own line |
+| Frontend typecheck | `cd web && pnpm typecheck` | clean |
+| Frontend lint | `pnpm lint` (Biome check — the read-only pass CI runs) | clean |
+| Vitest (unit + jsdom component) | `cd web && pnpm test` (`vitest run`) | **564/564** |
+| Mocked Playwright | `make test-ui` | **254/254** |
+| Container smoke | `make smoke` | **PASSED** |
+| Compose e2e (agent protocol) | `make e2e` | gate running at baseline time — not yet reported |
+| Sandbox e2e (containment + run lifecycle) | `make e2e-sim` | pending |
+| Kubernetes e2e (kind) | `make e2e-k8s` | pending |
+
+The three e2e rows are marked pending/running rather than assumed green: this docs pass does not
+run Docker (ground rule for this session), and the orchestrator's own e2e passes had not reported
+back as of 2026-09-11. Update them from the orchestrator's next report rather than inferring a
+result from the rest of the table being green.
+
+### Superseded — 2026-08-20 baseline (kept for history, not current state)
 
 | Check | Result |
 |---|---|
@@ -46,14 +74,18 @@ Verified on the running stack and in the browser, not inferred:
   matchers resolving against real collector labels
 - **Management API** — `shepherd.mgmt.v1` Connect contract generated for Go and TypeScript; every
   legacy REST route preserved as a wire-compatible shim; fail-closed per-procedure authz
-- **All 12 SPA routes** as of this baseline — walked in Chrome with a console/network collector: zero console errors,
-  zero JS exceptions, zero failed requests
+- **All 12 SPA routes** as of this 2026-08-20 baseline — walked in Chrome with a console/network collector: zero console errors,
+  zero JS exceptions, zero failed requests. (The route count has since grown to 21 —
+  `/teams`, `/admin/users`, `/admin/auth`, the three visual-builder canvas routes — per
+  `web/src/routes/router.tsx`; those additions are covered by `route-guard.spec.ts` and the
+  mocked suite, not by a repeat of this specific browser walk.)
 - **Visual builder** — schema-driven palette (184 components, 314 named ports, 0 unnamed),
   draw.io-style connection dragging, delete/undo/redo, minimap, save/load with matchers
 - **GitOps** — Gitea credential + repo link syncing, status `ok` (F9 shipped)
 - **Wizard, audit, overview, admin CRUD, org switcher** — all functional
 - **S3 sandbox run** — a live run completes in ~20s with 21 captured series and 3/3 healthy
-  components. **Disabled by default** — see F5 below.
+  components. **Enabled by default in the Helm chart since v0.0.1** (both containment gates
+  closed 2026-08-21) — see F5 below; the compose stacks keep their own opt-in `sim` profile.
 
 ### 2026-08-21 — signal derivation + role enforcement (W1)
 
@@ -106,7 +138,9 @@ Details live in each item's own section; the short form:
   egress, which the ingress-only negative control had never established.
 - **B-CONCAT fixed** — `array.concat`-of-pure-references carve-out in `CheckEndpoints`, plus the
   renderer↔guard cross-test that was missing.
-- F5's defaults remain off; enabling is now a product decision (see F5).
+- Both gates being closed is what made the F5 enablement decision possible: the Helm chart now
+  ships `simulator.enabled: true` (product decision, same day — see F5). Compose keeps its own
+  opt-in `sim` profile regardless, by design, not because a gate is still open.
 
 ### 2026-08-21 — health-remediation pass
 
@@ -163,6 +197,77 @@ suites never ran):
 
 All four workflows (CI incl. test-fullstack, E2E, E2E K8s, Schema Verify) are green on this
 branch as of 2026-08-21 — each earned its first-ever green during this pass.
+
+### 2026-09-11 — 2026-09 remediation
+
+Opened from the 2026-09-09 review (`docs/reviews/2026-09-09-remediation.md`), seven parallel
+workstreams (W1-W7) plus this docs pass (W8), on `remediation/2026-09` off `39f724f`. Full
+per-commit detail is `git log --oneline 95f82a0..HEAD`; this is the summary.
+
+**Settled decisions D1-D14** (recorded in full in the wave-0 commit, `git show 0d0669d`):
+D1 merge PR #5 (grpc 1.83.1) + the x/crypto v0.56.0 bump (closes GO-2026-6354/6355, reachable
+through `internal/gitrepo`'s SSH transport); D2 `@testing-library/react` + `jsdom` as frontend
+devDependencies, enabling jsdom component tests; D3 service accounts get a configurable role
+tier (editor/admin), default editor, existing rows backfilled editor; D4 local sign-in throttled
+via `x/time/rate`, per login and per source IP; D5 the REST shim's pipeline-write/validate/
+wizard/visual groups require org-editor; D6 simulate is org-editor everywhere (Connect, REST,
+proto comments); D7 OIDC sessions additionally end at `id_token_expires`; D8 light mode
+(`prefers-color-scheme` default, toggle stores an override); D9 simulator bearer token sourced
+from `existingSecret`, then External Secrets, then a chart-generated Secret; D10 sandbox
+NetworkPolicy drops cluster DNS egress, harness endpoints dialled at loopback; D11 `make e2e`
+runs on push to main, path-filtered, since `merge_group` never fires without a configured merge
+queue; D12 provenance attestation on release archives/images; D13 the sandbox fullstack spec
+stays local-only (Docker-gated) rather than joining CI; D14 app `v0.4.0`, chart `0.10.0`.
+
+**By workstream:** W1 rebuilt the CI/build surface around ten Makefile `guards`, `govulncheck`,
+a `release.yml` verify job, and every workflow Action SHA-pinned. W2 made gitsync fail closed
+with a Stage-3 merge dry-run on every synced file, extracted `internal/serve.ComputeServed` so
+both agentapi and mgmtapi recompute paths share one code path (hash-identical, proven), and
+converted three more raw-SQL sites to sqlc. W3 added the org-editor tier throughout (service
+accounts, REST shim, proto), throttled local login, bound OIDC sessions to the ID token's own
+expiry, and gave local team members the same reader floor OIDC team members already had — see
+§7.2/§7.3a of `docs/spec.md`. W4 hardened the sandbox (minimal child-process env, rune-safe
+stderr truncation, the chart's three-source token precedence, loopback-only harness egress) and
+proved NetworkPolicy enforcement in a real cluster. W5 shipped nested secret bindings via a
+picker, scalar fan-in with an Undo toast, `edge.order`-stamped reordering, IndexedDB draft
+autosave, and moved the visual corpus to be read directly from `internal/visual/testdata`. W6
+built out `components/ui` (Modal, DataTable, Field, …), light mode, route-level `requiredRole`
+guards enforced client-side (server remains authoritative), and split three 500+-line admin
+pages. W7 added a jsdom component-test harness, seeded deterministic local editor/viewer users
+in the dev stack, a persona-floor guard so appAdmin cannot dominate the mocked suite by default,
+a `waitForTimeout` budget guard, and fixed the SSH known-hosts `$HOME` dependency that had been
+failing the compose GitOps scenario (F9-a, below).
+
+**Orchestrator-verified results:** §1's 2026-09-11 table above. **Open follow-ups, not yet
+built:**
+
+- **Typed `Role`/`Source` enums.** `internal/auth`'s role constants (`RoleOrgAdmin` etc.,
+  `internal/auth/authz.go`) and `pipelines.source` are plain `string`-typed constants, not a
+  distinct Go type — the `exhaustive` linter (§20) cannot check a switch over either for
+  completeness the way it now can for the four enums W2-S5 closed.
+- **Remaining `mgmtapi` `mapError` sites.** `mapError` now backs `rpc_pipeline.go`,
+  `rpc_admin.go`, `rpc_destination.go`, `toConnectError`, and `oidcSettingsError` (W2-S7/S7b/S7c).
+  At least one hand-rolled `pgx.ErrNoRows` → `CodeNotFound`/`CodeInternal` mapping remains outside
+  that set: `rpc_user.go`'s `UpdateUser`.
+- **Retiring the REST shim.** `docs/gateway-tier-plan.md` W10's review already found the REST
+  shim "cannot carry a service-account identity at all" (recorded stricter-not-looser in
+  `router.go`) — a real capability gap, not yet a scheduled removal. No decision has been made to
+  retire it; callers still depend on it.
+- **`gochecknoglobals`.** W2-S10 removed 18 stale `nolint:gochecknoglobals` directives — the
+  linter itself was never enabled (not present in `.golangci.yml`'s §20 list), so the directives
+  suppressed nothing. Undecided: enable the linter for real, or drop the vocabulary.
+- **Nested `bindings[]` entries are unrenderable** — a known, accepted gap in
+  `web/src/visual/bindings.ts` (W5-01/W5-02): a binding at a nested block's prop path (e.g.
+  `endpoint[0].basic_auth.password`) writes correctly into `props` and renders, but pushing that
+  same path into the separate `GraphBinding`/`doc.bindings[]` channel would emit invalid Alloy —
+  that channel stays flat-top-level-prop-only by design, not yet extended.
+- **Canvas keyboard wiring is partial.** Delete/undo/redo/copy-paste and re-focus-on-drop work
+  (`web/src/visual/components/CanvasPane.tsx`); the a11y pass `docs/visual-builder-design-VB1.md`
+  §8 calls for — keyboard node navigation, a focus ring on ports — is not built.
+- **Fullstack Playwright specs pending wave 3.** `web/tests/fullstack/` covers auth, admin CRUD,
+  org data, pipelines, protected routes, the walkthrough, wizard commit, and two visual round-trip
+  specs (10 files). Still not written: roles, rollout, wizard-commit-depth, matcher-edit, and
+  sandbox-run fullstack coverage — needs the dev stack running, out of scope for a docs-only pass.
 
 ---
 
@@ -439,8 +544,10 @@ logout; horizontal-scale coordination beyond stateless replicas + Postgres.
 - **Frontend**: Vitest units; Playwright mocked suite (route interception, no MSW); Playwright
   fullstack suite against the real dev stack (`make test-fullstack`), including `walkthrough.spec.ts`
   which walks every route asserting no console errors, failed requests or blank pages
-- **Cross-cutting**: shared Go↔TS golden corpus (`internal/visual/testdata/corpus/` mirrored to
-  `web/src/visual/__fixtures__/corpus/`, `make generate-corpus`); Makefile guards
+- **Cross-cutting**: shared Go↔TS golden corpus, read directly from `internal/visual/testdata/corpus/`
+  by both sides (W5-07 dropped the synced `web/src` copy `make generate-corpus` used to produce —
+  `web/src/visual/renderTS.test.ts` resolves the Go directory by relative path instead, so the two
+  cannot drift out of sync by construction); Makefile guards
 - **CI**: lint, build, guards (incl. helm-lint), generated-drift, test, web, test-ui,
   test-fullstack, e2e-egress (containment probes, paths-filtered on PRs); scheduled: schema-verify
   (weekly), e2e-k8s (weekly)
