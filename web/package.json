@@ -7,7 +7,8 @@
   "scripts": {
     "dev": "vite",
     "build": "tsc && vite build",
-    "lint": "biome lint --write .",
+    "lint": "biome check .",
+    "lint:fix": "biome lint --write .",
     "fmt": "biome format --write .",
     "check": "biome check --write .",
     "check:ci": "biome check .",
