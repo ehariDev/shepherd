@@ -1,5 +1,5 @@
 import { basicScenario } from '../fixtures/factories';
-import { appAdmin } from '../fixtures/personas';
+import { appAdmin, orgAdmin, orgEditor, reader } from '../fixtures/personas';
 import { expect, test } from '../fixtures/test';
 
 /*
@@ -54,4 +54,53 @@ test('created destination appears in the list', async ({ page, api }) => {
   await page.getByRole('button', { name: /save|create/i }).click();
 
   await expect(page.getByText('new-destination')).toBeVisible();
+});
+
+// /destinations carries no requiredRole (routeManifest.ts) — any
+// authenticated org member reaches it — but write access is gated by
+// useCanAdminister (appAdmin or org role "admin"), so an org admin sees
+// the same write affordance an app admin does, while an editor and a
+// reader see the list but not the button (W7-08: real, positive coverage
+// for the roles this route actually ships, not just appAdmin).
+test('an org admin, not just an app admin, can create a destination', async ({ page, api }) => {
+  await api.loginAs(orgAdmin);
+  const s = basicScenario();
+  api.seed({ orgs: [s.org], destinations: [] });
+  await page.goto('/destinations');
+
+  await expect(page.getByRole('button', { name: /new|create|add destination/i })).toBeVisible();
+  await page.getByRole('button', { name: /new|create|add destination/i }).click();
+  await page.getByLabel(/name/i).fill('org-admin-destination');
+  await page.getByLabel(/url/i).fill('https://org-admin.example.com');
+  await page.getByRole('button', { name: /save|create/i }).click();
+
+  await expect(page.getByText('org-admin-destination')).toBeVisible();
+});
+
+test('orgEditor sees the destinations list but not the New destination button', async ({
+  page,
+  api,
+}) => {
+  await api.loginAs(orgEditor);
+  const s = basicScenario();
+  api.seed({ orgs: [s.org], destinations: s.destinations });
+  await page.goto('/destinations');
+
+  // Positive control first: the page actually rendered seeded data, so the
+  // absence check below is not vacuous.
+  await expect(page.getByText('prom-prod')).toBeVisible();
+  await expect(page.getByRole('button', { name: /new|create|add destination/i })).toHaveCount(0);
+});
+
+test('reader sees the destinations list but not the New destination button', async ({
+  page,
+  api,
+}) => {
+  await api.loginAs(reader);
+  const s = basicScenario();
+  api.seed({ orgs: [s.org], destinations: s.destinations });
+  await page.goto('/destinations');
+
+  await expect(page.getByText('prom-prod')).toBeVisible();
+  await expect(page.getByRole('button', { name: /new|create|add destination/i })).toHaveCount(0);
 });

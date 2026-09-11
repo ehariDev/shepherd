@@ -97,3 +97,25 @@ test('an org admin, not just an app admin, can view the audit log', async ({ pag
   await page.goto('/audit');
   await expect(page.locator('tbody tr')).toHaveCount(1);
 });
+
+// W7-08: /audit requires org-admin (routeManifest.ts) — an org admin's
+// access is the whole feature, not just the ability to land on the page,
+// so its write/filter affordances need their own positive control too.
+test('an org admin can also filter the audit log by actor', async ({ page, api }) => {
+  await api.loginAs(orgAdmin);
+  api.seed({
+    orgs: [org({ id: 'org-0001' })],
+    auditRows: [
+      auditRow({ id: 1, actor: 'alice@example.com', action: 'pipeline.update' }),
+      auditRow({ id: 2, actor: 'bob@example.com', action: 'pipeline.delete' }),
+    ],
+  });
+  await page.goto('/audit');
+  await expect(page.locator('tbody tr')).toHaveCount(2);
+
+  await page.getByLabel('Actor').fill('bob');
+  await page.getByRole('button', { name: 'Filter' }).click();
+
+  await expect(page.locator('tbody tr')).toHaveCount(1);
+  await expect(page.locator('tbody tr')).toContainText('bob@example.com');
+});

@@ -1,5 +1,5 @@
 import { basicScenario } from '../fixtures/factories';
-import { appAdmin } from '../fixtures/personas';
+import { appAdmin, orgAdmin, orgEditor, reader } from '../fixtures/personas';
 import { expect, test } from '../fixtures/test';
 
 /*
@@ -76,4 +76,50 @@ test('teams page keeps its teams-error testid after moving onto QueryError', asy
   await page.goto('/teams');
 
   await expect(page.getByTestId('teams-error')).toBeVisible({ timeout: 5000 });
+});
+
+// W7-08: real, positive coverage of the query-error pattern for the roles
+// each route actually admits (routeManifest.ts), not just appAdmin.
+
+test('teams page shows the error state for an org admin too (org-reader floor)', async ({
+  page,
+  api,
+}) => {
+  await api.loginAs(orgAdmin);
+  const s = basicScenario();
+  api.seed({ orgs: [s.org] });
+  api.failNext('POST', '/shepherd.mgmt.v1.TeamService/ListTeams', 503, 'unavailable');
+  await page.goto('/teams');
+
+  await expect(page.getByTestId('teams-error')).toBeVisible({ timeout: 5000 });
+});
+
+test('collectors list shows an alert for a reader too (no elevated requirement)', async ({
+  page,
+  api,
+}) => {
+  await api.loginAs(reader);
+  const s = basicScenario();
+  api.seed({ orgs: [s.org] });
+  api.failNext('POST', '/shepherd.mgmt.v1.FleetService/ListCollectors', 503, 'unavailable');
+  await page.goto('/collectors');
+
+  const alert = page.getByRole('alert');
+  await expect(alert).toBeVisible({ timeout: 5000 });
+  await expect(alert).toContainText(/fail|error|retry|permission/i);
+});
+
+test('wizards list shows an alert for an org editor too (org-editor floor)', async ({
+  page,
+  api,
+}) => {
+  await api.loginAs(orgEditor);
+  const s = basicScenario();
+  api.seed({ orgs: [s.org] });
+  api.failNext('POST', '/shepherd.mgmt.v1.WizardService/ListWizards', 503, 'unavailable');
+  await page.goto('/wizards');
+
+  const alert = page.getByRole('alert');
+  await expect(alert).toBeVisible({ timeout: 5000 });
+  await expect(alert).toContainText(/fail|error|retry|permission/i);
 });

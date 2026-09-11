@@ -167,7 +167,11 @@ test.describe('visual upgrade', () => {
     await page.keyboard.press('Control+z');
     await expect(page.locator('.react-flow__node')).toHaveCount(0);
     await expect(page.getByTestId('upgrade-review')).toBeVisible();
-    await page.waitForTimeout(300);
+    // Give a wrongly-refired UpgradeCheck a chance to actually reach the
+    // network before asserting it didn't (W7-13: api.idle() waits for no
+    // in-flight request for 100ms, rather than a flat page.waitForTimeout
+    // regardless of what the network is doing).
+    await api.idle();
     expect(api.calls('UpgradeCheck')).toHaveLength(1);
   });
 

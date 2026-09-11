@@ -1,16 +1,48 @@
 // visual-drafts.spec.ts — W5-05: IndexedDB draft autosave and the
 // restore-or-discard banner (design §4.4).
-import { expect } from '@playwright/test';
+import { expect, type Page } from '@playwright/test';
 import { basicScenario } from '../fixtures/factories';
 import { appAdmin } from '../fixtures/personas';
 import { schemaFixture } from '../fixtures/schema-fixture';
 import { test } from '../fixtures/test';
 
-// subscribeDraftAutosave's production delayMs default (VisualBuilderPage.tsx)
-// is 500ms; wait comfortably past it before relying on the draft having
-// landed in IndexedDB. Generous margin because this fires a real setTimeout
-// in the browser, which a loaded CI/dev machine can delay well past 500ms.
-const AUTOSAVE_SETTLE_MS = 1500;
+/**
+ * Polls for the debounced IndexedDB autosave (subscribeDraftAutosave,
+ * draft.ts, production delayMs default 500ms) actually landing for
+ * `pipelineId`, instead of a flat page.waitForTimeout comfortably past the
+ * debounce (W7-13: waitForTimeout is real-time and either flaky or padded).
+ * expect.poll moves on the moment the write lands and still tolerates a
+ * loaded CI/dev machine delaying well past 500ms. Reads idb-keyval's
+ * default store directly (DB 'keyval-store', object store 'keyval') since
+ * that's the actual thing under test — the store instance itself, not a
+ * proxy for it.
+ */
+async function waitForDraftSaved(page: Page, pipelineId: string): Promise<void> {
+  await expect
+    .poll(
+      () =>
+        page.evaluate(
+          (key) =>
+            new Promise<boolean>((resolve) => {
+              const openReq = indexedDB.open('keyval-store');
+              openReq.onerror = () => resolve(false);
+              openReq.onsuccess = () => {
+                const db = openReq.result;
+                if (!db.objectStoreNames.contains('keyval')) {
+                  resolve(false);
+                  return;
+                }
+                const getReq = db.transaction('keyval', 'readonly').objectStore('keyval').get(key);
+                getReq.onsuccess = () => resolve(getReq.result !== undefined);
+                getReq.onerror = () => resolve(false);
+              };
+            }),
+          `vb:draft:${pipelineId}`,
+        ),
+      { timeout: 5000 },
+    )
+    .toBe(true);
+}
 
 test.describe('visual builder drafts', () => {
   test.beforeEach(async ({ page, api }) => {
@@ -25,7 +57,7 @@ test.describe('visual builder drafts', () => {
   test('a draft survives a reload and is offered for restore', async ({ page }) => {
     await page.click('[data-testid="palette-item-prometheus.remote_write"]');
     await expect(page.locator('.react-flow__node')).toHaveCount(1);
-    await page.waitForTimeout(AUTOSAVE_SETTLE_MS);
+    await waitForDraftSaved(page, 'new');
 
     // The existing beforeunload handler (VisualBuilderPage.tsx) turns
     // page.reload() into a confirm dialog since the graph is non-empty;
@@ -49,7 +81,7 @@ test.describe('visual builder drafts', () => {
   test('a draft can be discarded, and no longer offers itself after', async ({ page }) => {
     await page.click('[data-testid="palette-item-prometheus.remote_write"]');
     await expect(page.locator('.react-flow__node')).toHaveCount(1);
-    await page.waitForTimeout(AUTOSAVE_SETTLE_MS);
+    await waitForDraftSaved(page, 'new');
 
     page.on('dialog', (d) => {
       void d.accept();
@@ -79,7 +111,7 @@ test.describe('visual builder drafts', () => {
     });
     await page.click('[data-testid="palette-item-prometheus.remote_write"]');
     await expect(page.locator('.react-flow__node')).toHaveCount(1);
-    await page.waitForTimeout(AUTOSAVE_SETTLE_MS);
+    await waitForDraftSaved(page, 'new');
 
     await page.locator('[data-testid="toolbar-name"]').fill('checkout-metrics');
     const input = page.locator('[data-testid="matcher-input"]');
