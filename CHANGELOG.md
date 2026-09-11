@@ -800,3 +800,8 @@ first.
 ## v0.0.1
 
 Initial release.
+
+- Shipped: the S3 sandbox simulator is `simulator.enabled: true` by default in
+  the Helm chart (`git show v0.0.1:deploy/helm/shepherd/values.yaml`), behind
+  a default-deny NetworkPolicy proven with in-cluster containment probes; set
+  `simulator.enabled=false` per-deployment to turn it off.
