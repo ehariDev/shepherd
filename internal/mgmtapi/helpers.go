@@ -1,4 +1,4 @@
-// Package mgmtapi implements the JSON REST management API (/api).
+// Package doc lives in doc.go; this file holds shared REST-shim helpers.
 package mgmtapi
 
 import (
