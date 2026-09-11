@@ -474,6 +474,13 @@ the contributing set.
 
 ## 4. Smaller follow-ups
 
+- [x] **CodeMirror behind a lazy boundary (done 2026-09-11).** `src/editor/LazyAlloyEditor`
+  wraps `AlloyEditor` in `lazyNamed` (now shared from `src/lib/lazyNamed`, typed by the target
+  component's props) + Suspense; the two consumers (pipeline editor, wizard preview) import the
+  wrapper. Entry chunk 894 kB → 688 kB (gzip 274 → 200 kB); CodeMirror + Lezer + the Alloy
+  language sources are a 383 kB chunk fetched on first editor mount. A failed editor chunk lands
+  in the same `RouteErrorFallback` as a failed page chunk (`tests/specs/states.spec.ts`).
+  `chunkSizeWarningLimit` lowered to 750 so a static re-import of the editor trips the warning.
 - [x] **Authentication as a Connect request gate (done 2026-09-11).** connect-go 1.21's
   `WithRequestGate` runs on the headers alone, before the body is decompressed or decoded and
   before any interceptor. Both header-only authenticators moved there: `agentapi.NewAuthGate`
