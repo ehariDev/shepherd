@@ -49,7 +49,7 @@ collectors:
 
 The chart-generated collector ID is `grafana-k8s-monitoring-$(CLUSTER_NAME)-$(NAMESPACE)-$(POD_NAME)` — pod-scoped and ephemeral. Shepherd therefore models a **logical collector** as the tuple `(cluster, role)` and treats individual pods as ephemeral *instances* of it. Resolution is done ONLY from the `cluster` and `role` attributes, never by parsing the ID string.
 
-**Role is a signal contract, not just a label.** Each role in `metrics | logs | singleton | receiver` has a fixed set of observability signals (metrics/logs/traces/profiles) it is allowed to serve — `role=metrics` only ever gets a pipeline that carries metrics, `role=logs` only logs, `role=receiver` carries metrics/logs/traces (OTLP + Faro ingest) but not profiles, and `role=singleton` is unrestricted (self-monitoring legitimately mixes signal kinds). `internal/signals` is the source of truth: `internal/signals.Derive` reads a pipeline's Alloy syntax against the schema artifact's wire types to compute its signal set, and `internal/signals.Policies`/`Enforce` hold the role → allowed-signals table. `internal/merge.WithRoleEnforcement` applies it at config-assembly time — a pipeline whose signals the target role's policy does not allow is excluded from that collector's assembled config rather than served silently mismatched (docs/gateway-tier-plan.md W1; excludes are recorded in `AssembleResult.Exclusions` and the generated config's header comment). As of this writing enforcement covers `internal/mgmtapi`'s write-time paths (validate/preview/recompute-on-save); see `docs/project-status.md` F-SIGNAL-SERVE for the one path it does not yet cover.
+**Role is a signal contract, not just a label.** Each role in `metrics | logs | singleton | receiver` has a fixed set of observability signals (metrics/logs/traces/profiles) it is allowed to serve — `role=metrics` only ever gets a pipeline that carries metrics, `role=logs` only logs, `role=receiver` carries metrics/logs/traces (OTLP + Faro ingest) but not profiles, and `role=singleton` is unrestricted (self-monitoring legitimately mixes signal kinds). `internal/signals` is the source of truth: `internal/signals.Derive` reads a pipeline's Alloy syntax against the schema artifact's wire types to compute its signal set, and `internal/signals.Policies`/`Enforce` hold the role → allowed-signals table. `internal/merge.WithRoleEnforcement` applies it at config-assembly time — a pipeline whose signals the target role's policy does not allow is excluded from that collector's assembled config rather than served silently mismatched (docs/gateway-tier-plan.md W1; excludes are recorded in `AssembleResult.Exclusions` and the generated config's header comment). Enforcement covers both `internal/mgmtapi`'s write-time paths (validate/preview/recompute-on-save) and `internal/agentapi`'s lazy recompute — the path a real collector's `GetConfig` poll takes when `serve_cache` is dirty. The gap that once existed between the two (`internal/agentapi.Service` assembling without `WithRoleEnforcement`) was closed 2026-08-22; see `docs/project-status.md` F-SIGNAL-SERVE (closed).
 
 Spoke clusters already run local chart-generated config (clusterMetrics, podLogs, etc.). Alloy runs remote config in an **isolated component controller** — remote pipelines cannot reference local components. Consequence: **every remote pipeline must be self-contained**, including its own destination components (`prometheus.remote_write`, `loki.write`, `otelcol.exporter.*`). Credentials inside remote pipelines are never inlined; they use the `remote.kubernetes.secret` component to read secrets that already exist on the spoke cluster (§11.4).
 
@@ -63,7 +63,7 @@ Spoke clusters already run local chart-generated config (clusterMetrics, podLogs
 | CLI | `github.com/spf13/cobra` |
 | Config | `github.com/spf13/viper` (file + env, prefix `SHEPHERD_`) |
 | Agent API | `connectrpc.com/connect` (Connect protocol, h2c via `golang.org/x/net/http2/h2c`) |
-| Management API | REST/JSON with `github.com/go-chi/chi/v5` |
+| Management API | Connect `shepherd.mgmt.v1` services (`internal/mgmtapi`), primary contract for Go and TypeScript, plus a `github.com/go-chi/chi/v5`-mounted legacy REST shim kept wire-compatible for existing callers |
 | DB | PostgreSQL 16 |
 | DB access | `github.com/jackc/pgx/v5` pool + `sqlc` generated queries |
 | Migrations | `github.com/golang-migrate/migrate/v4` (embedded, run via CLI subcommand) |
@@ -86,30 +86,52 @@ Spoke clusters already run local chart-generated config (clusterMetrics, podLogs
 
 ```
 shepherd/
-├── cmd/shepherd/main.go            # cobra root
+├── cmd/
+│   ├── shepherd/main.go            # cobra root — the fleet manager itself
+│   ├── shepherd-mcp/main.go        # MCP agent-interface server (stdio), §22 gateway-tier W11
+│   └── shepherd-simulator/main.go  # S3 sandbox-run service (VB-1 §6.4)
 ├── internal/
-│   ├── cli/                        # cobra commands: serve, migrate, validate, token, version
+│   ├── cli/                        # cobra commands: serve, migrate, validate, token, version, healthcheck, dev
 │   ├── config/                     # viper loading + typed Config struct + validation
 │   ├── server/                     # http server assembly, middleware, embedded SPA
 │   ├── agentapi/                   # collector.v1 Connect service implementation
-│   ├── mgmtapi/                    # chi REST handlers (one file per resource)
-│   ├── auth/                       # OIDC flow, sessions, RBAC middleware
+│   ├── mgmtapi/                    # shepherd.mgmt.v1 Connect services + the chi-mounted legacy REST shim
+│   ├── auth/                       # OIDC flow, local users, sessions, RBAC middleware
 │   ├── graph/                      # Microsoft Graph client (user groups, group search)
-│   ├── ado/                        # Azure DevOps client (SP token, git items API)
+│   ├── ado/                        # Entra service-principal token provider (ADO auth kind only; see the git-provider amendment)
+│   ├── gitrepo/                    # go-git transport: clone/ls-remote, SSH/HTTPS auth kinds, host-key verification
 │   ├── gitsync/                    # repo-link polling reconciler
 │   ├── store/                      # sqlc output + thin repository wrappers
 │   ├── merge/                      # pipeline matching + declare-wrap merge + hashing
+│   ├── serve/                      # ComputeServed: the merge→append-baseline→hash→Stage-1 pipeline shared by agentapi's lazy recompute and mgmtapi's eager one
 │   ├── validate/                   # 3-stage validation gate
-│   ├── wizard/                     # wizard definitions + template rendering
+│   ├── signals/                    # derives a pipeline's signal set (metrics/logs/traces/profiles) and the role→allowed-signals policy table
+│   ├── reconcile/                  # declared vs served vs observed three-way reconciliation (gateway-tier W6)
+│   ├── beacon/                     # ingest for the beacon's projected component inventory (gateway-tier W5)
+│   ├── gateway/                    # Gateway API HTTPRoute renderer + tenant-route apply/verify (gateway-tier W3/W4)
+│   ├── grafana/                    # optional Grafana service-account client, outcome verification (gateway-tier D7)
+│   ├── chartvalues/                # k8s-monitoring Helm values-layer generator (gateway-tier W9)
+│   ├── receiver/                   # receiver-tier Alloy pipeline renderer (role=receiver, gateway-tier W4)
+│   ├── onboarding/                 # "connect an app" artifacts — endpoint, env vars, IaC/SDK snippets (gateway-tier W7)
+│   ├── netshape/                   # recognises host-name shapes a string literal could steer a connection to (sandbox containment)
+│   ├── simulate/                   # S3 sandbox run client + worker (DB-free; internal/simulate/worker holds RunWorker)
+│   ├── simsvc/                     # shepherd-simulator's own service: capture harness, synthetic sources, endpoint containment guard
+│   ├── visual/                     # visual-builder graph model, Go/TS parity renderer, corpus (VB-1)
+│   ├── schema/                     # extracted Alloy component schema artifact + embed
+│   ├── mcp/                        # MCP agent-interface backend (read-plus-propose slice of shepherd.mgmt.v1)
+│   ├── wizard/                     # wizard registry + six wizard kinds' template rendering
 │   ├── crypto/                     # AES-GCM secret encryption helpers
+│   ├── metrics/                    # Prometheus metrics registration for Shepherd itself
+│   ├── telemetry/                  # Connect interceptor / instrumentation plumbing
+│   ├── spa/                        # embeds and serves the compiled React SPA
 │   └── testutil/                   # testcontainers Postgres harness, fixtures
 ├── proto/collector/v1/collector.proto   # vendored (§4)
 ├── gen/                            # buf output (committed)
-├── internal/migrations/sql/        # 0001_init.up.sql / .down.sql, ...
+├── internal/migrations/sql/        # 0001_init.up.sql / .down.sql, ... 0018 (§5)
 ├── sqlc.yaml
 ├── buf.yaml / buf.gen.yaml
 ├── web/                            # React app (Vite root)
-│   └── src/{routes,components,lib,api,editor}
+│   └── src/{routes,components,lib,api,editor,visual,wizard}
 ├── deploy/
 │   ├── Dockerfile.local
 │   └── helm/shepherd/              # full chart, see §17
@@ -117,12 +139,15 @@ shepherd/
 │   ├── docker-compose.e2e.yaml
 │   ├── mockmsft/                   # small Go server mocking Graph + ADO REST endpoints
 │   ├── alloy/config.alloy          # real Alloy agent config used in e2e
+│   ├── k8s/                        # kind-based Kubernetes test environment: NetworkPolicy/containment probes, chart deploy, upgrade, LGTM delivery (docs/kind-test-environment-plan.md)
 │   └── e2e_suite_test.go ...       # Ginkgo, build tag `e2e`
 ├── .golangci.yml                   # golangci-lint v2 config, verbatim from §20
 ├── .goreleaser.yaml                # GoReleaser v2 config per §21
 ├── Makefile                        # build, generate, test, lint, dev, helm-lint, e2e, release-snapshot targets
 └── README.md
 ```
+
+Every directory above is real as of this writing (`ls -d internal/*/ cmd/*/`); a package with no design note here earns one only if it stops being self-explanatory from its name and `doc.go`.
 
 ---
 
@@ -225,9 +250,25 @@ Migration `0001_init` creates (all `id` are `uuid DEFAULT gen_random_uuid()` unl
 orgs(id, name text UNIQUE, display_name text,
      admin_group_id text,          -- group whose members are Org Admins
      reader_group_id text NULL)    -- optional org-wide reader group
--- amended: 0016 adds orgs.editor_group_id text NULL (optional org-wide editor
--- group); 0015 adds the users / org_members tables and sessions.user_id for
--- local, non-OIDC identity. See §7.2.
+-- Migration ledger, 0002-0018 (0001 above is the initial schema):
+--   0002 sanitized_name generated column (declare-wrap name collision check)
+--   0003 sessions.source + nullable id_token_expires (local sessions)
+--   0004 collector_instances(collector_id, last_seen) index
+--   0005 'visual' added as a valid pipelines.source
+--   0006 git_credentials/repo_links generalized off ado_credentials — any git
+--        host, pluggable auth kind (F9, docs/git-provider-design.md)
+--   0007 simulate_runs — S3 sandbox run storage (VB-1 §6.4)
+--   0008 destination templates + credential-free tenant bindings (gateway-tier W2)
+--   0009 tenant_routes — storage above internal/gateway's HTTPRoute renderer (W4)
+--   0010 beacon_inventory — the ONLY table the beacon ingest path may write (W5)
+--   0011 grafana_connections — optional outcome-verification token (D7)
+--   0012 teams + service_accounts — scoped write, capability-scoped machine actors (W10)
+--   0013 orgs.tenant_id — app-admin-set only, closes the caller-supplied-tenant gap
+--   0014 oidc_settings — UI-configurable OIDC, second choice after chart/env (§7.1b)
+--   0015 users / org_members — local, non-OIDC identity. See §7.2
+--   0016 orgs.editor_group_id text NULL (optional org-wide editor group, OIDC path)
+--   0017 team_members — explicit local team membership, extends 0012's model
+--   0018 service_accounts.role ('editor'|'admin' tier, orthogonal to capability; §7.3)
 
 clusters(id, name text UNIQUE, org_id uuid NULL REFERENCES orgs)  -- NULL = unclaimed
 
