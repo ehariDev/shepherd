@@ -195,7 +195,7 @@ func (s *UserService) UpdateUser(ctx context.Context, req *connect.Request[mgmtv
 			return nil, connect.NewError(connect.CodeNotFound, errors.New("no such user"))
 		}
 		s.logger.Error("updating user", "err", err)
-		return nil, connect.NewError(connect.CodeInternal, errors.New("failed to update user"))
+		return nil, mapError(err)
 	}
 	// Losing app-admin or being disabled must take effect now, not whenever
 	// the cookie happens to expire. A role change alone does not need this:
