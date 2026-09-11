@@ -9,6 +9,7 @@ import (
 	"strings"
 
 	"connectrpc.com/connect"
+	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/jackc/pgx/v5/pgtype"
 	"github.com/prometheus/alertmanager/pkg/labels"
@@ -228,7 +229,12 @@ func (s *PipelineService) checkVisualRenderMatch(_ context.Context, clientConten
 
 // loadPipeline fetches a pipeline by id, mapping an unparsable id to
 // InvalidArgument (400) and a missing row to NotFound (404) — the same two
-// distinct statuses PipelinesHandler.loadPipeline produced.
+// distinct statuses PipelinesHandler.loadPipeline produced. Any OTHER lookup
+// failure (a connection error, a canceled query, anything that is not
+// pgx.ErrNoRows) goes through mapError instead of being folded into the same
+// NotFound — W2-S7b's fix for the "blanket NotFound regardless of actual
+// error" pattern this used to have, mirroring loadOwnedDestination
+// (rpc_destination.go).
 //
 // It also enforces that the pipeline belongs to orgIDStr. The authz interceptor
 // only proves the caller may act on the org NAMED IN THE REQUEST; without this
@@ -246,7 +252,10 @@ func (s *PipelineService) loadPipeline(ctx context.Context, orgIDStr, idStr stri
 	}
 	p, err := s.store.Queries.GetPipelineByID(ctx, id)
 	if err != nil {
-		return sqlc.Pipeline{}, connect.NewError(connect.CodeNotFound, errPipelineNotFound)
+		if errors.Is(err, pgx.ErrNoRows) {
+			return sqlc.Pipeline{}, connect.NewError(connect.CodeNotFound, errPipelineNotFound)
+		}
+		return sqlc.Pipeline{}, mapError(err)
 	}
 	if p.OrgID != orgID {
 		return sqlc.Pipeline{}, connect.NewError(connect.CodeNotFound, errPipelineNotFound)
@@ -757,7 +766,12 @@ func (s *PipelineService) PreviewMatches(ctx context.Context, req *connect.Reque
 
 	matched, matchErr := s.previewMatchedCollectors(ctx, mp, orgID)
 	if matchErr != nil {
-		return nil, connect.NewError(connect.CodeInternal, matchErr)
+		// previewMatchedCollectors returns the raw store error from
+		// ListCollectorsByOrg unwrapped; wrapping it directly in
+		// connect.NewError put that error's text (e.g. a connection string)
+		// on the wire. mapError classifies it and, for the unrecognized
+		// default case, substitutes its own message instead.
+		return nil, mapError(matchErr)
 	}
 	items := make([]*mgmtv1.MatchedCollector, len(matched))
 	for i, m := range matched {

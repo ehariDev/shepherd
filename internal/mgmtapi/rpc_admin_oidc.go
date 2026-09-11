@@ -262,16 +262,21 @@ func (s *AdminService) toOidcSettingsProto(in *auth.Settings) *mgmtv1.OidcSettin
 	return out
 }
 
-// oidcSettingsError maps the auth package's sentinels onto Connect codes. A
-// validation message is InvalidArgument so the settings form can render it
-// against the field the admin got wrong, rather than as an opaque failure.
+// oidcSettingsError maps the auth package's sentinels onto Connect codes. It
+// delegates to the merged mapError (rpc_errors.go) — which already carries
+// the auth.ErrHelmManaged/ErrEncryptionUnavailable/ErrNoSettings cases this
+// function used to duplicate in its own partial sentinel table (W2-S7c) —
+// with one deliberate override: mapError's default is CodeInternal, but a
+// SaveSettings/DeleteSettings failure that isn't one of those three
+// sentinels is a plain validation message (e.g. "issuer must use https"),
+// and InvalidArgument is what lets the settings form render it against the
+// field the admin got wrong, rather than as an opaque failure.
 func oidcSettingsError(err error) error {
-	switch {
-	case errors.Is(err, auth.ErrHelmManaged):
-		return connect.NewError(connect.CodeFailedPrecondition, err)
-	case errors.Is(err, auth.ErrEncryptionUnavailable), errors.Is(err, auth.ErrNoSettings):
-		return connect.NewError(connect.CodeFailedPrecondition, err)
-	default:
-		return connect.NewError(connect.CodeInvalidArgument, err)
+	if err == nil {
+		return nil
 	}
+	if mapped := mapError(err); connect.CodeOf(mapped) != connect.CodeInternal {
+		return mapped
+	}
+	return connect.NewError(connect.CodeInvalidArgument, err)
 }
