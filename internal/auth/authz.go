@@ -219,8 +219,10 @@ func RoleSatisfies(have, need string) bool {
 
 // ResolveOrgRole reports the UI-facing role a session holds in org, or "" if
 // none: OrgRoleAdmin/OrgRoleEditor/OrgRoleViewer for a local session (read
-// straight off org_members), or the same three names for an OIDC session
-// resolved from its groups claim against the org's
+// straight off org_members, falling back to OrgRoleViewer when there is no
+// org_members row but the user is a member of a team in the org — W3-7b,
+// mirroring authorizeOrgAccess's own W3-7 fallback), or the same three names
+// for an OIDC session resolved from its groups claim against the org's
 // admin/editor/reader_group_id, in that priority order.
 //
 // It is the GetMe-facing counterpart to authorizeOrgAccess: that function
@@ -239,10 +241,24 @@ func RoleSatisfies(have, need string) bool {
 func ResolveOrgRole(ctx context.Context, st *store.Store, sess *Session, org sqlc.Org) string {
 	if sess.Source == SourceLocal && sess.UserID.Valid {
 		role, err := st.Queries.GetOrgMemberRole(ctx, sqlc.GetOrgMemberRoleParams{OrgID: org.ID, UserID: sess.UserID})
-		if err != nil {
+		switch {
+		case err == nil:
+			return role
+		case !errors.Is(err, pgx.ErrNoRows):
 			return ""
 		}
-		return role
+
+		// W3-7b: mirrors authorizeOrgAccess's own W3-7 team fallback -- a
+		// local user with no org_members row but who is a member of a team
+		// in this org already clears the reader floor there, so this must
+		// report the matching viewer role rather than "", or the UI hides
+		// an org the server is already granting reads under.
+		isMember, err := st.Queries.IsUserMemberOfAnyTeamInOrg(ctx,
+			sqlc.IsUserMemberOfAnyTeamInOrgParams{OrgID: org.ID, UserID: sess.UserID})
+		if err != nil || !isMember {
+			return ""
+		}
+		return OrgRoleViewer
 	}
 
 	hasGroup := func(candidate string) bool {
