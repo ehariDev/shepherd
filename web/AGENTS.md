@@ -22,14 +22,15 @@ React 19 + TypeScript + Vite SPA, embedded into the Go binary via `go:embed`.
   ```
   If your registry doesn't have v11, use the brew install (`brew install pnpm`) and add `~/bin/pnpm` wrapper pointing to `/opt/homebrew/bin/pnpm`.
 - **Linter/formatter**: Biome (`biome.json`) — replaces ESLint + Prettier entirely
-- **Build**: Vite 8 (rolldown bundler) with `@tailwindcss/vite` plugin
+- **Build**: Vite 8 (rolldown bundler) with `@tailwindcss/vite` plugin. Heavy code is behind lazy boundaries — the visual builder and graph view as routes (`src/routes/router.tsx`), CodeMirror behind `src/editor/LazyAlloyEditor.tsx` — all through `src/lib/lazyNamed.ts`, which rejects readably when a chunk lacks its export. `chunkSizeWarningLimit` in `vite.config.ts` sits just above the measured entry so a new static import trips it
 - **Registry**: public npm by default; configure a mirror in `web/.npmrc` if your organisation uses one
+- **Lockfile**: `pnpm-lock.yaml` only — `scripts/repocheck` fails CI if `package-lock.json`, `yarn.lock` or `npm-shrinkwrap.json` is ever tracked
 
 ## Conventions
 - Single quotes, 2-space indent, 100-char line width, LF — enforced by Biome
 - No `any` in production code (warning); `any` allowed in test files
 - All imports organised by Biome assist (auto on save)
-- `pnpm check --write .` before committing
+- `pnpm check` before committing (it is `biome check --write .`)
 - The Shell (`web/src/components/Shell.tsx`, `flex h-screen overflow-hidden`) is a desktop-only
   layout — nothing collapses navigation or reflows for a small viewport. A couple of pages use
   Tailwind's `sm:`/`lg:` grid-column variants to add columns on a wider desktop window, but that
@@ -39,4 +40,5 @@ React 19 + TypeScript + Vite SPA, embedded into the Go binary via `go:embed`.
 - **If a bug or failing test takes more than 3 rounds of attempts to fix, stop and get an independent adversarial review before continuing** — a fresh reviewer with no stake in the current theory. Give it the exact symptom, the failing code, everything already tried, and the exact error output. Act on its findings before making further changes.
 - Always run `pnpm ci` before finishing a task — it is exactly the CI web job. `pnpm lint` (== `check:ci`, Biome's read-only check) skips typecheck, tests and the build, so a type error or a failing test can pass `pnpm lint` and still fail CI.
 - make test-ui always rebuilds dist/ then kills any stale vite preview (reuseExistingServer=false) — no manual pkill needed.
-- Single-spec runs (`pnpm exec playwright test tests/specs/<name>.spec.ts`) do NOT rebuild — run `pnpm build` first.
+- Single-spec runs rebuild too — `playwright.config.ts`'s webServer runs `pnpm run build` before `vite preview`, and `reuseExistingServer: false` means it always does. No manual `pnpm build` needed. The build writes to `../internal/spa/dist`; discard that after a test run (`git checkout -- internal/spa/dist && git clean -f internal/spa/dist/assets`) — the committed bundle is rebuilt deliberately at release time through `scripts/build-web.sh`.
+- Canvas specs that drive React Flow with raw mouse events read positions through `tests/fixtures/canvas.ts` (`settledBox`, `waitForViewportSettled`): placing a node re-fits the viewport a tick later, and a drag built from a pre-fit box pans the canvas instead of moving the node.

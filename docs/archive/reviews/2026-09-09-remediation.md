@@ -1,5 +1,13 @@
 # 2026-09 remediation — review, plan, and what actually happened
 
+> **Archived 2026-09-11.** Every deferred item below has since closed: the `UPGRADING.md`
+> 0.9.x → 0.10.0 section exists; the fullstack roles/rollout/wizard-commit/matcher-edit/sandbox-run
+> specs are written (`web/tests/fullstack/`); the React 19 / TypeScript 7 / Vite 8 migrations, the
+> request-gate authentication and the lazy editor chunk shipped in v0.5.0 (PRs #43, #45, #46, #48,
+> #50, #51). Still open, and tracked in `docs/project-status.md` rather than here: the kind
+> suite's G10 and previous-version upgrade spec, and the gateway plan's review gates R2/R3/R6. This
+> file is the record of how the 2026-09 remediation ran; it is not maintained.
+
 The 2026-09-09 review found gaps across the whole repository — CI gates that ran nowhere, RBAC
 holes, stale docs contradicting shipped behavior, unadopted libraries still documented as adopted.
 This session (branch `remediation/2026-09`, opened 2026-09-10) fixed what the review found. This

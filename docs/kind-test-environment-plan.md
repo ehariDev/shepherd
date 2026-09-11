@@ -1,6 +1,7 @@
 # Kubernetes test environment — plan
 
-> Status (2026-08-22, re-checked 2026-09-11 — no code change to this suite this session): **steps
+> Status (2026-08-22, re-checked 2026-09-11 — no code change to this suite this session; the suite
+> ran green on the v0.5.0 release PR, #52, `e2e-k8s.yml` run 34614691090): **steps
 > 1–2 implemented** (`e2e/k8s/`, `make e2e-k8s`); **step 3 partially done** (default-values Helm
 > install, `chart_deps_test.go`'s own-dependencies check, and repeatability specs in
 > `e2e/k8s/helm_install_test.go` and `helm_repeatable_test.go`; full-values install and true

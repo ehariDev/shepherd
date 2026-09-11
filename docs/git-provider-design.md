@@ -4,7 +4,7 @@
 > This document stays live because it is the normative reference for the credential model —
 > 34 source files, including the generated GitOps contract, cite its § numbers for the six auth
 > kinds (§3.2), the rename semantics (§3.4) and the clone limits (§3.6).
-> One item remains open: `ssh` in the e2e compose stack (F9-a in the ledger).
+> The one item that stayed open after shipping — `ssh` in the e2e compose stack (F9-a) — was fixed 2026-09-10 (go-git's `HostKeyAlgorithms` fallback, `internal/gitrepo/transport.go`) and runs green in `make e2e`.
 > Requirement: GitOps must work against **any standard git server**, as broadly as possible.
 > Provider-specific work is confined to **authentication**: Azure DevOps needs Entra service
 > principals, GitHub needs GitHub Apps; everything else is ordinary git credentials.

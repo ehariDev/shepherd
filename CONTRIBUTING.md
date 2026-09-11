@@ -23,6 +23,7 @@ Helm. `make tools` installs the Go-side generators at their pinned versions.
 ```bash
 make lint         # golangci-lint (v2 config) + the repo guards; make helm-lint for the chart
 make test         # the whole Go suite; spins up real Postgres via testcontainers
+go test ./scripts/repocheck/   # if you touched the Makefile, a workflow, dependabot.yml or a lockfile — CI's guards job runs it, make lint does not
 make web-ci       # typecheck, vitest, biome check, build — CI's exact web job
 ```
 

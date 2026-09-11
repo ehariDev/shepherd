@@ -73,9 +73,9 @@ Spoke clusters already run local chart-generated config (clusterMetrics, podLogs
 | Backend tests | Ginkgo v2 + Gomega; `testcontainers-go` (Postgres module) for integration |
 | Frontend | React 19 + TypeScript + Vite |
 | Frontend routing/data | TanStack Router + TanStack Query |
-| UI kit | shadcn/ui + Tailwind CSS |
+| UI kit | hand-rolled primitives in `web/src/components/ui/` (Modal, DataTable, Field, Banner, Section) + Tailwind CSS — no shadcn, Radix or class-variance-authority |
 | Code editor | CodeMirror 6 with a custom Alloy language mode (§12.6) |
-| Forms | react-hook-form + zod |
+| Forms | plain React state with the `Field`/`Input` primitives — no react-hook-form, no zod |
 | Frontend tests | Vitest + React Testing Library |
 | Frontend serving | Built SPA embedded in the Go binary via `go:embed` |
 | Container | Distroless-style multi-stage Dockerfile; MUST also copy the `grafana/alloy` binary into the image at `/usr/local/bin/alloy` (needed for validation) |
@@ -384,11 +384,11 @@ hash := hex(sha256(content))
 ### 7.1 OIDC (human users) — standard BFF code flow
 
 - Shepherd is a **confidential client** at a spec-compliant OIDC issuer. Entra ID is the reference deployment, but any provider that serves a discovery document works — see §7.1a for the per-provider knobs and §7.1b for where the configuration comes from.
-- Viper config: `oidc.issuer` (Entra: `https://login.microsoftonline.com/<tenant>/v2.0`), `oidc.client_id`, `oidc.client_secret`, `oidc.redirect_url`, `oidc.scopes` (default `openid profile email offline_access GroupMember.Read.All`).
+- Viper config: `oidc.issuer` (Entra: `https://login.microsoftonline.com/<tenant>/v2.0`), `oidc.client_id`, `oidc.client_secret`, `oidc.redirect_url`, `oidc.scopes` (default `openid profile email`; the Entra preset adds `GroupMember.Read.All` only when it falls back to Graph group lookup — `offline_access` is deliberately not requested, see `internal/config/config.go`).
 - `GET /auth/login` → generate `state` + PKCE verifier, store in a short-lived httpOnly cookie, redirect to the authorize endpoint.
 - `GET /auth/callback` → verify state, exchange code (with PKCE) for tokens, verify ID token with go-oidc. Resolve the user's groups per §7.1a. Store the session row (§5) with `group_ids`, set session cookie: httpOnly, `Secure`, `SameSite=Lax`, name `shepherd_session`. Session TTL: `auth.session_ttl` (default 8h; the row's `expires_at` is fixed at creation and does not extend on activity). An OIDC session additionally ends at the ID token's own expiry (`sessions.id_token_expires`, typically ~1h for Entra/Okta) even if the row's TTL has not elapsed yet: `SessionMiddleware` rejects it and deletes the row on the next request past that point, since there is no refresh-token flow to silently extend it.
 - Local sign-in (`POST /api/auth/local/login`, §7.2) is throttled per account and per source IP by an in-process token bucket, to blunt password guessing against the argon2id-hashed local credential store.
-- `GET /auth/me` → current user profile + computed roles. `POST /auth/logout` → delete session.
+- `GET /api/me` → current user profile + computed roles. `GET /auth/logout` → delete session (the SPA's Sign out button calls it with GET).
 - `GET /auth/methods` → which sign-in methods the login page should offer, plus the label for the OIDC button. It reports whether OIDC is **live** (a discovered provider is loaded), not merely whether one is configured: a saved-but-undiscoverable provider must not render a button that can only dead-end.
 - All `/api/*` routes require a valid session (middleware). CSRF: require header `X-Requested-With: XMLHttpRequest` on mutating requests (sufficient with SameSite=Lax).
 
@@ -470,7 +470,7 @@ handler declares exactly one.
 
 ### 7.3 Agent tokens (machine auth)
 
-Agents authenticate `collector.v1` calls with HTTP Basic auth: username = token UUID, password = 32-byte random secret (base64url). Store only `sha256(secret)`; compare with `crypto/subtle.ConstantTimeCompare`. App Admin creates/revokes tokens via API/UI; the secret is displayed exactly once. Implement as a Connect interceptor. (v1 tokens are global-authN only; tenancy comes from cluster claiming.)
+Agents authenticate `collector.v1` calls with HTTP Basic auth: username = token UUID, password = 32-byte random secret (base64url). Store only `sha256(secret)`; compare with `crypto/subtle.ConstantTimeCompare`. App Admin creates/revokes tokens via API/UI; the secret is displayed exactly once. Implement as a Connect request gate (`connect.WithRequestGate`, `internal/agentapi/auth.go`): the decision happens on the headers, before the body is decompressed or decoded, and a refused call is still counted by `telemetry.RequestGate`. (v1 tokens are global-authN only; tenancy comes from cluster claiming.)
 
 ### 7.3a Service accounts (machine callers of the management API)
 
@@ -636,9 +636,9 @@ POST   /api/orgs/{org}/pipelines/validate        [orgeditor] stages 1–2, retur
 GET    /api/orgs/{org}/pipelines/{id}/preview-matches [reader] collectors a matcher set hits
 GET    /api/orgs/{org}/attributes                [reader] distinct attribute keys → sorted distinct values across the org's collector instances (incl. built-ins cluster/role); feeds matcher autocomplete
 CRUD   /api/orgs/{org}/destinations              [orgadmin write, reader read]
-CRUD   /api/orgs/{org}/git-credentials           [orgadmin]  (secret write-only; the ADO-specific route name from the amendment below was renamed here, matching the Connect-side AdoCredential -> GitCredential rename)
+list/create/delete (+ /test)   /api/orgs/{org}/git-credentials   [orgadmin]  (secret write-only; the ADO-specific route name from the amendment below was renamed here, matching the Connect-side AdoCredential -> GitCredential rename)
 POST   /api/orgs/{org}/git-credentials/{id}/test [orgadmin]  verifies token + org access
-CRUD   /api/orgs/{org}/repo-links                [orgadmin]
+list/create/delete   /api/orgs/{org}/repo-links   [orgadmin]
 GET    /api/orgs/{org}/wizards                   [orgeditor]
 GET    /api/orgs/{org}/wizards/{kind}            [orgeditor] schema for one wizard kind
 POST   /api/orgs/{org}/wizards/render            [orgeditor] input -> rendered configs + diagnostics + match preview, nothing persisted
@@ -662,7 +662,7 @@ This section is prescriptive. Do not restyle, do not pick different components, 
 
 ### 13.1 Design system (fixed tokens)
 
-- **Theme**: dark mode is the DEFAULT; light mode available via a toggle in the user menu (persist in `localStorage`, apply via the `class` strategy on `<html>`). All colors below are Tailwind palette names — implement both modes with shadcn's CSS-variable theming; do not hand-pick hex values elsewhere.
+- **Theme**: follows the OS `prefers-color-scheme` until the user toggles (D8, 2026-09-11 — `web/src/theme.ts`); the topbar toggle stores an explicit override in `localStorage`, applied via the `class` strategy on `<html>`; dark is the fallback when no preference is readable. All colors below are Tailwind palette names — implement both modes with CSS-variable theming; do not hand-pick hex values elsewhere.
 - **Neutrals**: `zinc`. Dark mode: page background `zinc-950`, surface/card `zinc-900`, subtle borders `zinc-800`, primary text `zinc-100`, secondary text `zinc-400`. Light mode: `white` / `zinc-50` / `zinc-200` / `zinc-900` / `zinc-500`.
 - **Accent**: `indigo-500` (hover `indigo-400` dark / `indigo-600` light). Used ONLY for: primary buttons, active nav item indicator, focused inputs, links, active stepper step, selected tabs. Nothing else is indigo.
 - **Status colors** (used ONLY in badges, dots, and diagnostic text): success `emerald-500`, warning `amber-500`, error `red-500`, info `sky-500`, neutral/unknown `zinc-500`.
@@ -686,18 +686,18 @@ Full-height flex layout, no page scroll except the content area:
 ```
 
 - **Sidebar** (`w-60`, collapsible to `w-14` icon-only via a chevron button at its bottom; persist state): top = product mark — `Shield` icon in indigo + wordmark "Shepherd" (`text-sm font-semibold tracking-tight`). Nav groups with `text-xs uppercase text-zinc-500` group labels: *(no label)*: Overview; **Fleet**: Collectors, Pipelines, Wizards; **Delivery**: Destinations, Git; **Admin** (App Admin only): Orgs, Clusters, Agent Tokens; *(bottom, above collapse)*: Audit. Items: `h-9 rounded-md px-3 text-sm` with icon; active item `bg-zinc-800/60 text-zinc-100` (dark) plus a `w-0.5` indigo bar on the left edge; inactive `text-zinc-400 hover:text-zinc-100 hover:bg-zinc-800/40`.
-- **Topbar**: left = breadcrumbs (shadcn Breadcrumb, auto-derived from the route). Right, in order: **org switcher** (shadcn Combobox button showing current org `display_name` with `Building2` icon; App Admin additionally has an "All orgs" pseudo-entry on Collectors/Audit), theme toggle (`Sun`/`Moon` ghost icon button), user menu (Avatar with initials → dropdown: name + email header, role badges — "App Admin" indigo / "Org Admin" emerald / "Reader" zinc — then Log out).
+- **Topbar**: left = breadcrumbs (auto-derived from the route, `web/src/components/breadcrumb.ts`). Right, in order: **org switcher** (a plain `<select>` of the user's orgs, rendered only when they have more than one; App Admin additionally has an "All orgs" pseudo-entry on Collectors/Audit), theme toggle (`Sun`/`Moon` ghost icon button), **Sign out** button. As built there is no avatar, user dropdown or role badge — the persona's roles show on the pages they gate, not in the chrome.
 - Selected org is part of the URL state via a `?org=` search param managed by TanStack Router; switching org preserves the current route.
 
 ### 13.3 Shared patterns (use everywhere, never ad-hoc)
 
-- **Tables**: shadcn Table + TanStack Table v8. Sticky header row (`bg` = surface), sortable columns show `ArrowUpDown`, hover row `bg-zinc-900/60`, whole row clickable when a detail page exists (`cursor-pointer`, plus an explicit chevron cell). Column of actions = right-aligned ghost `MoreHorizontal` dropdown. Pagination footer: "1–25 of 214" + Prev/Next, page size fixed 25.
+- **Tables**: the `DataTable` primitive in `web/src/components/ui/` (no TanStack Table). Sticky header row (`bg` = surface), sortable columns show `ArrowUpDown`, hover row `bg-zinc-900/60`, whole row clickable when a detail page exists (`cursor-pointer`, plus an explicit chevron cell). Column of actions = right-aligned ghost `MoreHorizontal` dropdown. Pagination footer: "1–25 of 214" + Prev/Next, page size fixed 25.
 - **Filter bar** above every table: left-aligned row of controls `gap-2` — a `w-64` search Input with `Search` icon, then Select/Combobox filters, then active filter chips (dismissible Badge), right-aligned primary action Button (e.g. "New pipeline"). Filters sync to URL search params.
 - **Loading**: shadcn Skeleton — tables render 5 skeleton rows; cards render skeleton blocks. Never a full-page spinner.
 - **Empty states**: centered in the content card, `py-16`: muted icon (size 32), one bold line, one `text-zinc-400` line, one primary action. Exact copy per screen is given in §13.5.
 - **Errors**: query errors render an inline Alert (destructive) with the server `error.message` and a Retry button — never a toast for load failures. Mutation results DO use toasts (shadcn `sonner`): success = short confirmation; failure = error message. Validation failures render inline (§13.6), not as toasts.
 - **Dialogs**: shadcn Dialog for create/edit forms (`max-w-lg`); AlertDialog for destructive confirms — title "Delete <name>?", body states blast radius, confirm button destructive variant, and for high-risk actions (unclaim cluster, delete pipeline, revoke token) require typing the resource name into an input to enable the button.
-- **Forms**: react-hook-form + zod + shadcn Form primitives; labels above inputs, `text-xs text-zinc-400` help text below, field errors in red-500 `text-xs`. Submit = primary right-aligned; Cancel = ghost left of it.
+- **Forms**: the `Field`/`Input` primitives with hand-written state (no react-hook-form, no zod); labels above inputs, `text-xs text-zinc-400` help text below, field errors in red-500 `text-xs`. Submit = primary right-aligned; Cancel = ghost left of it.
 - **Timestamps**: always relative ("4m ago") with absolute ISO on hover (Tooltip). **Hashes/IDs**: JetBrains Mono, first 10 chars + copy-on-click button (`Copy` icon, toast "Copied").
 
 ### 13.4 Route tree
@@ -747,13 +747,13 @@ Unmarked routes carry no floor beyond an authenticated session with some access 
 **Pipelines list**: filter bar (search name; Source Select; Enabled Select). Columns: Name, Source badge, Matchers (each matcher as a mono chip, max 3 shown then "+n"), Enabled (switch, org editor+), Revision, Updated by/at. Primary action "New pipeline"; secondary ghost "Open wizard" → `/wizards`. Empty state: `Workflow` icon, "No pipelines", "Create a pipeline by hand or start from a wizard.", two buttons.
 
 **Pipeline editor** (`/pipelines/new`, `/pipelines/:id`): full-height two-pane split (left `w-[380px] shrink-0 border-r overflow-y-auto p-6`, right flex-1 editor column).
-- Left pane, top→bottom: Name input; **Matcher builder** — vertical list of rows [key Combobox | operator Select (`=`,`!=`,`=~`,`!~`) | value Combobox | remove ghost `X`], "+ Add matcher" ghost button; key/value comboboxes are fed by `GET /api/orgs/{org}/attributes` (§12) and remain free-text-capable; beneath it a live **match preview** card: "Matches **n** collectors" + up to 5 `cluster/role` mono lines + "+n more" (calls preview endpoint, 500ms debounce; n=0 renders the count in amber with caption "This pipeline currently matches nothing."). Then: Enabled switch with caption "Enabling validates against every affected collector."; Source badge; Revision Select (rev list w/ author+time) — selecting an old revision switches the right pane to a **diff view** (CodeMirror merge view, old vs current) with a "Restore this revision" button (creates a new revision). Danger zone card at bottom: Delete (AlertDialog w/ typed confirm).
-- Right pane: toolbar row (`h-11 border-b px-3` flex): left = validation status — live-region text: spinner+"Validating…", or `CheckCircle2` emerald "No problems", or `XCircle` red "n problems"; right = ghost "Format" (disabled placeholder, tooltip "Coming soon"), outline "Validate", primary "Save". Below: the editor (§13.6) `flex-1`. Bottom: collapsible **Problems panel** (`max-h-40`, monospace rows `line:col  message`, click scrolls editor to the position).
+- Left pane, top→bottom: Name input; **Matcher builder** — vertical list of rows [key Combobox | operator Select (`=`,`!=`,`=~`,`!~`) | value Combobox | remove ghost `X`], "+ Add matcher" ghost button; key/value comboboxes are fed by `GET /api/orgs/{org}/attributes` (§12) and remain free-text-capable; beneath it a live **match preview** card: "Matches **n** collectors" + up to 5 `cluster/role` mono lines + "+n more" (calls preview endpoint, 500ms debounce; n=0 renders the count in amber with caption "This pipeline currently matches nothing."). Then: Enabled switch with caption "Enabling validates against every affected collector."; Source badge; Revision Select (rev list w/ author+time) — selecting an old revision loads it read-only with a "Restore this revision" button — **not buildable yet**: `PipelineRevision` carries no contents (F-REVISIONS in the ledger), so there is no diff view and the button currently reports that. No CodeMirror merge view is built. Danger zone card at bottom: Delete (AlertDialog w/ typed confirm).
+- Right pane: toolbar row (`h-11 border-b px-3` flex): left = validation status — live-region text: spinner+"Validating…", or `CheckCircle2` emerald "No problems", or `XCircle` red "n problems"; right = primary "Save" only; validation runs on an idle debounce (no Format or Validate buttons as built). Below: the editor (§13.6) `flex-1`. Bottom: collapsible **Problems panel** (`max-h-40`, monospace rows `line:col  message`, click scrolls editor to the position).
 - Save with stage-3 failure → Dialog "Validation failed on n collectors": Accordion per collector containing its diagnostics; single button "Back to editing".
 - Git-sourced pipelines: entire left pane read-only, editor read-only, and a violet banner across the top: `GitBranch` icon + "Managed in Git — {project}/{repo} @ {branch}{path}" with an external link to ADO and a "Last synced 2m ago · ok" caption.
 - Readers see the same screen fully read-only with no Save/Delete/switch affordances.
 
-**Wizard gallery**: grid of cards `grid-cols-3`; v1 card: `AppWindow` icon, title "Application observability", description "Scrape logs and metrics from selected namespaces and ship them to your org's destinations.", "Start" button. A disabled ghost card "More wizards coming" (`border-dashed`, no action).
+**Wizard gallery**: grid of cards `grid-cols-3`, one card per registered wizard kind (`internal/wizard` — six today: application observability, cluster metrics, pod logs, database, blackbox, self-monitoring), each with icon, title, description and a "Start" button. No placeholder card.
 
 **Wizard stepper** (`/wizards/{kind}`): one generic runner renders whatever `GetWizardSchema` returns for that kind, so steps and fields are backend-defined — the step list below describes the *intended* app-observability flow, not a UI contract (as shipped it is: 1 Scrape targets, 2 Log collection, 3 Destinations, 4 Collector matching, then Review). Left vertical stepper rail (`w-56`): numbered circles (active = indigo filled, done = emerald check, upcoming = zinc outline) + step labels exactly: 1 Scope, 2 Namespaces, 3 Metrics, 4 Logs, 5 Destinations, 6 Review. Steps 3/4 auto-skip (rendered struck-through) when their signal isn't selected. Right: step content card `max-w-2xl` with footer Back (ghost) / Continue (primary; disabled until the step's zod schema passes). Step specifics: 1 — cluster multi-select (Combobox multi with checkboxes, claimed clusters only) + signal RadioGroup (Metrics / Logs / Both); 2 — namespace chips input (Enter adds; invalid RFC1123 chips render red with tooltip) + include/exclude RadioGroup; 3/4 — the option forms from §11.1; 5 — destination Selects filtered by type, each rendering a summary line (url host, tenant) under the control, plus an inline "New destination" ghost button opening the destinations dialog; 6 Review — for each generated pipeline: name, matcher chips, match-preview line, and a read-only editor with live stage-1/2 diagnostics; footer swaps to "Save as disabled" (outline) + "Save & enable" (primary). Success → toast + navigate to `/pipelines`.
 
@@ -773,7 +773,7 @@ Unmarked routes carry no floor beyond an authenticated session with some access 
 
 ### 13.6 Editor: Alloy syntax highlighting, autocompletion, and diagnostics
 
-All editors are ONE shared component `web/src/editor/AlloyEditor.tsx` (props: `value`, `onChange?`, `readOnly`, `diagnostics`, `height`). Packages: `@codemirror/state`, `@codemirror/view`, `@codemirror/language`, `@codemirror/autocomplete`, `@codemirror/lint`, `@codemirror/search`, `@codemirror/merge` (diff view), `@lezer/highlight`. Theme: build ONE custom `EditorView.theme` matching §13.1 (zinc backgrounds, JetBrains Mono 13px, active-line `zinc-900/60`, selection indigo at 25% opacity, gutter text `zinc-600`) — do not import a stock theme; derive the light variant from the same definition.
+All editors are ONE shared component `web/src/editor/AlloyEditor.tsx` (props: `value`, `onChange?`, `readOnly`, `diagnostics`, `height`). Packages: `@codemirror/state`, `@codemirror/view`, `@codemirror/language`, `@codemirror/autocomplete`, `@codemirror/lint`, `@codemirror/search`, `@lezer/highlight` (no `@codemirror/merge` — there is no diff view). The component is code-split behind `web/src/editor/LazyAlloyEditor.tsx` and fetched on first editor mount. Theme: build ONE custom `EditorView.theme` matching §13.1 (zinc backgrounds, JetBrains Mono 13px, active-line `zinc-900/60`, selection indigo at 25% opacity, gutter text `zinc-600`) — do not import a stock theme; derive the light variant from the same definition.
 
 **Highlighting** — `web/src/editor/alloyLanguage.ts` via `StreamLanguage` (a full Lezer grammar is NOT required for v1). Token rules: `//` line + `/* */` block comments → `tags.comment`; double-quoted strings with escapes → `tags.string`; numbers incl. floats and duration/size suffixes (`10s`, `5m`, `512MiB`) → `tags.number`; `true|false|null` → `tags.bool`; dotted identifier chains in block-header position (start of statement, followed by optional quoted label then `{`) → `tags.keyword`; identifier before `=` at statement start → `tags.propertyName`; function-style calls (`convert.nonsensitive(`, `env(`, `sys.env(`) → `tags.function(tags.variableName)`; member expressions referencing components (`prometheus.remote_write.dest.receiver`) → `tags.variableName`; operators/braces/brackets → `tags.operator`/`tags.brace`. Enable bracket matching, `foldGutter` on braces, line numbers, `highlightActiveLine`.
 
@@ -813,14 +813,14 @@ Viper: config file `shepherd.yaml` (path via `--config`), env override prefix `S
 ```yaml
 server:    { listen: ":8080", base_url: "https://shepherd.example.internal" }
 database:  { url: "postgres://...", max_conns: 20 }
-oidc:      { issuer: "", client_id: "", client_secret: "", redirect_url: "", scopes: [openid, profile, email, offline_access, GroupMember.Read.All],
+oidc:      { issuer: "", client_id: "", client_secret: "", redirect_url: "", scopes: [openid, profile, email],
              provider: "entra", display_name: "Microsoft",              # preset key (§7.1a); sets the use_graph_groups default
              subject_claim: "oid", email_claim: "email", name_claim: "name", groups_claim: "groups",
              use_graph_groups: true }                                    # default: true iff provider == "entra"
              # issuer: "" does NOT mean "no SSO" — it hands configuration to app admins via the UI (§7.1b).
 auth:      { app_admin_group_ids: [], session_ttl: "8h" }
 graph:     { tenant_id: "", client_id: "", client_secret: "" }   # app-mode Graph; may reuse oidc app
-agent:     { inactive_after: "3h", delete_after: "720h" }
+agent:     { inactive_after: "", delete_after: "" }   # no viper default; the chart supplies 5m / 24h (values.yaml)
 validate:  { alloy_binary: "/usr/local/bin/alloy", stability_level: "experimental", timeout: "10s" }
 gitsync:   { tick: "15s", default_poll_interval: "3m" }
 security:  { encryption_key: "" }        # base64 32 bytes, REQUIRED
@@ -893,7 +893,7 @@ externalSecrets: { enabled: false, render: auto, refreshInterval: "0", encryptio
 existingSecret: ""
 secrets: {}                # dev-only inline secrets — mutually exclusive with existingSecret and externalSecrets.enabled
 migrations: { job: { enabled: true } }
-route: { enabled: true, hostnames: [], parentRefs: [] }
+route: { enabled: false, hostnames: [], parentRefs: [] }   # off by default — an HTTPRoute on a cluster without Gateway API CRDs breaks the install
 ingress: { enabled: false, className: "", hosts: [], tls: [] }
 metrics: { enabled: true, serviceMonitor: { enabled: false, labels: {} } }
 serviceAccount: { ... }
@@ -923,7 +923,7 @@ The e2e suite proves the full loop **locally with no cloud dependencies**: a gen
 |---|---|
 | `postgres` | `postgres:16-alpine`, healthcheck `pg_isready`. |
 | `oidc` | `ghcr.io/navikt/mock-oauth2-server:6.0.1` (pinned in both compose files; §D.6 requires an explicit tag, never `latest`) — a mock OIDC provider with full discovery/JWKS and an interactive login form that accepts a JSON claims blob as the "username", letting each test log in with arbitrary `oid`, `email`, and `groups` claims. Shepherd's `oidc.issuer` points here. |
-| `mockmsft` | Built from `e2e/mockmsft/` — one small Go server with two route groups: **Graph**: `GET /v1.0/me/transitiveMemberOf/microsoft.graph.group` (returns groups based on a header/token the suite controls; include one paginated response with `@odata.nextLink` to exercise paging) and `GET /v1.0/groups?$filter=...`; **ADO**: the four endpoints from §10 backed by an in-memory fake repo whose files/commits the suite mutates via a `/__fixture` control endpoint. Also serves the mock token endpoint for the SP client-credentials grant. |
+| `mockmsft` | Built from `e2e/mockmsft/` — one small Go server with two route groups: **Graph**: `GET /v1.0/me/transitiveMemberOf/microsoft.graph.group` (returns groups based on a header/token the suite controls; include one paginated response with `@odata.nextLink` to exercise paging) and `GET /v1.0/groups?$filter=...`; **token exchange**: a mock Entra token endpoint (SP client-credentials) and a GitHub-App installation-token endpoint; `/__fixture` parks a Gitea PAT for the suite. There is no ADO repository fake — real git comes from the `gitea` + `gitea-init` compose services, alongside `shepherd-token`, `simulator` (profile `sim`) and the `egress-canary` probe helper. |
 | `shepherd-init` | The shepherd image, one-shot: waits for postgres, runs `migrate up`, then `token create --name e2e --secret <fixed>` with the dev env var set. |
 | `shepherd` | The locally built image (`make docker-build` first), `depends_on: shepherd-init: service_completed_successfully`. Config via env: mock issuer, mock graph/ado base URLs, `auth.app_admin_group_ids: ["11111111-...-appadmins"]`, encryption key, `gitsync.tick: 2s`. |
 | `alloy` | `grafana/alloy:v1.18.1` (`ALLOY_IMAGE`/`ALLOY_VERSION` in `deploy/versions.env` — the single pin every Dockerfile and compose file consumes; needed for `remote_config_status` reporting, never `latest` per §D.6). Command `run /etc/alloy/config.alloy --storage.path=/tmp/alloy --server.http.listen-addr=0.0.0.0:12345 --disable-reporting`. `e2e/alloy/config.alloy` contains ONLY a `remotecfg` block: url `http://shepherd:8080`, basic_auth with the fixed token, `poll_frequency = "10s"` (the enforced minimum), attributes `cluster = "e2e-cluster"`, `role = "metrics"`. |
@@ -1174,7 +1174,7 @@ snapshot:
 Supporting rules:
 
 - **`deploy/Dockerfile.goreleaser`** (separate from the dev Dockerfile): does NOT compile Go — it copies the GoReleaser-built binary. Two stages: `FROM grafana/alloy:<pinned> AS alloy` (the exact fleet version, from `deploy/versions.env`) to source `/bin/alloy`, then `FROM gcr.io/distroless/base-nossl-debian12:nonroot` — **base, not static**: alloy is dynamically linked and distroless/static carries no dynamic loader, so on `static` the binary lands in the image unrunnable and `alloy validate` (Stage 2) dies silently. `nossl` because alloy links glibc only. `make check-alloy-runnable` guards this, `COPY --from=alloy /bin/alloy /usr/local/bin/alloy`, `COPY shepherd /usr/local/bin/shepherd`, `USER nonroot`, `ENTRYPOINT ["/usr/local/bin/shepherd"]`. Because `alloy validate` needs `/tmp`, the chart's emptyDir (§17.1) covers it — no shell, no package manager in the final image.
-- **`internal/version`**: tiny package with `Version`, `Commit`, `Date` string vars (defaults `"dev"`), printed by `shepherd version` and exposed as a `shepherd_build_info` gauge metric (labels `version`, `commit`) — mirroring `alloy_build_info` so the fleet manager is monitorable the same way as its fleet.
+- **`internal/version`**: tiny package with `Version`, `Commit`, `Date` string vars (defaults `"dev"`), printed by `shepherd version` and returned by `GET /api/version` (binary and SPA build SHAs). A `shepherd_build_info` gauge mirroring `alloy_build_info` was specified here and is **not built** — `internal/metrics` registers no such metric.
 - **Commit convention**: Conventional Commits (`feat:`, `fix:`, `chore:`, …) — required, since the changelog groups depend on it.
 - **Make targets**: `make release-snapshot` = `goreleaser release --snapshot --clean --skip=publish` (must succeed locally and in CI on every milestone from milestone 1 onward — this keeps the embed/codegen hooks honest); `make release` = `goreleaser release --clean`, run only on tags by the pipeline, with `IMAGE_REGISTRY`, `SOURCE_URL`, and registry credentials provided by CI (Azure DevOps: a service connection performing `docker login` before the GoReleaser step).
 - **Helm chart versioning**: the chart is NOT released by GoReleaser. Chart `version` is bumped manually per chart change; `appVersion` is set to the app tag. CI packages and pushes the chart as OCI (`helm push` to `{{ IMAGE_REGISTRY }}/charts`) in a separate pipeline step triggered by the same tag.
@@ -1183,7 +1183,7 @@ Supporting rules:
 
 ## 22. AGENTS.md — agent instruction files (create exactly these)
 
-The repo ships instruction files for AI coding agents that will maintain it after v1. These are **always-on context** injected into every future agent turn, so they are deliberately terse: they carry only what an agent cannot cheaply discover from the code, and they reference this spec by path instead of duplicating it. Do NOT expand them with content generated from the codebase, restate linter-enforced style, or add narrative — every extra line taxes future agents' instruction budget. Hard ceiling: root file ≤ 60 lines; subtree files ≤ 25.
+The repo ships instruction files for AI coding agents that will maintain it after v1. These are **always-on context** injected into every future agent turn, so they are deliberately terse: they carry only what an agent cannot cheaply discover from the code, and they reference this spec by path instead of duplicating it. Do NOT expand them with content generated from the codebase, restate linter-enforced style, or add narrative — every extra line taxes future agents' instruction budget. Ceiling (aspirational, not enforced — the root file is ~95 lines and `web/AGENTS.md` ~45 as of v0.5.0): root file ≤ 100 lines; subtree files ≤ 50.
 
 Create THREE files. Root `AGENTS.md`, verbatim (substitute the real module path):
 
@@ -1207,7 +1207,7 @@ React 19/TS/Vite SPA embedded via go:embed, PostgreSQL 16. Spec: docs/spec.md (a
 - `internal/agentapi/` — collector.v1 Connect service (the protocol Alloy polls)
 - `internal/mgmtapi/` — REST handlers · `internal/auth/` — OIDC BFF + RBAC middleware
 - `internal/merge/` — matcher eval + declare-wrap merge + hashing · `internal/validate/` — 3-stage gate
-- `internal/store/` — sqlc output + repositories · `migrations/` — golang-migrate SQL
+- `internal/store/` — sqlc output + repositories · `internal/migrations/sql/` — golang-migrate SQL
 - `internal/graph/`, `internal/ado/`, `internal/gitsync/` — Entra Graph, Azure DevOps, repo sync
 - `web/` — SPA (own AGENTS.md) · `e2e/` — compose-based e2e (own AGENTS.md)
 
@@ -1250,7 +1250,7 @@ Stage 3 assembles the merged config for every affected collector — affected = 
 The OIDC code flow MUST use PKCE (S256). All auth/session cookies set `Secure: true`; config `auth.insecure_cookies: true` (default false) may disable this for non-TLS local dev only. CSRF: require `X-Requested-With: XMLHttpRequest` on mutating requests.
 
 ### §D.3 — §12 (amended)
-Add under pipelines: `GET /api/orgs/{org}/pipelines/{id}/revisions` [reader] and `GET /api/orgs/{org}/pipelines/{id}/revisions/{rev}` [reader].
+Add under pipelines: `GET /api/orgs/{org}/pipelines/{id}/revisions` [reader] (list only — there is no single-revision route; see F-REVISIONS in the ledger).
 
 ### §D.4 — §13.6 (amended)
 There is no machine-readable upstream Alloy schema; `alloySchema.ts` is hand-curated from each component's page under `grafana.com/docs/alloy/latest/reference/components/`. A Vitest drift test asserts every §13.6-listed component is present.
@@ -1397,7 +1397,7 @@ Use `?unclaimed=true` to filter to unclaimed only. The old behaviour of returnin
 
 `shepherd dev seed` and `shepherd dev create-session` are developer-only CLI commands:
 - Direct DB access — no HTTP flow, no auth required.
-- `dev seed`: idempotent, ON CONFLICT DO NOTHING, creates 2 orgs/clusters/collectors/pipelines/token.
+- `dev seed`: idempotent, ON CONFLICT DO NOTHING, creates 2 orgs, 3 clusters (`prod-eu-1`, `staging-eu-1`, `data-eng-eu-1`), collectors, pipelines and a token.
 - `dev create-session`: inserts session row with `source='dev'`, prints session ID to stdout.
 - Both commands must NEVER be exposed via HTTP and are not to be called in production.
 - `shepherd dev create-session --persona` supports: `appadmin`, `orgadmin-platform`, `reader-platform`, `nobody`.

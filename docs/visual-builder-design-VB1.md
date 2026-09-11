@@ -65,11 +65,11 @@ Pipeline save/enable endpoints are UNCHANGED — the client calls `render`, then
 
 | Package | Version pin | Role | Why this one / rules |
 |---|---|---|---|
-| `@xyflow/react` | `^12.8` | The canvas (React Flow v12) | The de-facto standard; v12 package name (NOT the legacy `reactflow`). Use: custom node/edge components, `isValidConnection`, `onDrop`, minimap, controls. Do NOT import its stock CSS theme wholesale — import `@xyflow/react/dist/base.css` only and style via our tokens. |
+| `@xyflow/react` | `^12.11` | The canvas (React Flow v12) | The de-facto standard; v12 package name (NOT the legacy `reactflow`). Use: custom node/edge components, `isValidConnection`, `onDrop`, minimap, controls. Do NOT import its stock CSS theme wholesale — import `@xyflow/react/dist/base.css` only and style via our tokens. |
 | ~~`@dagrejs/dagre`~~ | ~~`^1.1`~~ | ~~User-invoked auto-layout~~ | **Not adopted** (verified 2026-09-11: absent from `web/package.json`). No auto-layout button or `dagre`/`elkjs` import exists anywhere under `web/src/visual/`; `PipelineNode.tsx`'s port ordering (`wireOrient.ts`) is a different, narrower thing — per-node port placement, not graph layout. Pasted/imported messes are arranged by hand today. |
 | `zustand` | `^5` | Graph document store | One store per open editor; the graph doc (§1.1) is the state shape verbatim — no derived duplication. |
 | `zundo` | `^2.3` | Undo/redo middleware over zustand | `partialize` to `{nodes, edges, bindings}` ONLY (viewport/selection excluded per §2.3); `limit: 100`; `equality: deepEqual` on the partialized slice to collapse no-op sets. |
-| `nanoid` | `^5` | Node/edge ids | `nanoid(8)` with prefix `n_`/`e_`. Never `Math.random` (determinism grep applies). |
+| `nanoid` | `^6` | Node/edge ids | `nanoid(8)` with prefix `n_`/`e_`. Never `Math.random` (determinism grep applies). |
 | `idb-keyval` | `^6` | Draft autosave + schema-artifact cache | Keys: `vb:draft:<pipelineId>`, `vb:schema:<version>`. Tiny (<1KB); a full Dexie is unjustified. |
 | ~~`fuse.js`~~ | ~~`^7`~~ | ~~Palette fuzzy search~~ | **Not adopted** (verified 2026-09-11: absent from `web/package.json`). `Palette.tsx` filters with a plain case-insensitive substring match (`.name.toLowerCase().includes(q)` / `.doc?.toLowerCase().includes(q)`) over name and doc text — no keyword/category weighting, no fuzzy threshold. |
 | `fast-deep-equal` | `^3` | zundo equality + graph-diff leaf compare | |
@@ -97,7 +97,7 @@ Toolbar row above all (h-11): name input · matcher summary chip (opens the stan
 ## 2.2 Palette (left)
 
 - Search input (fuzzy over component name + overlay keywords), then category accordions from the overlay: **Sources** (discovery.*, loki.source.*, otelcol.receiver.*, prometheus.exporter.*), **Transform** (discovery.relabel, prometheus.relabel, loki.process, otelcol.processor.*), **Destinations** (prometheus.remote_write, loki.write, otelcol.exporter.*), **Config** (remote.kubernetes.secret, local.file — the non-wire nodes, §3.4), **Advanced** (everything else).
-- Palette item: component icon (overlay), short name, stability badge — GA nothing, `preview` sky, `experimental` amber. Experimental items HIDDEN unless the org toggle `allow_experimental_components` is on AND the user is org admin (server enforces at render: an experimental node with the toggle off is an L2 error, not just hidden UI).
+- Palette item: component icon (overlay), short name, stability badge — GA nothing, `preview` sky, `experimental` amber. Experimental items are hidden by a client-side flag (`store.allowExperimental`, currently always `false`) that drives the palette filter and an L1 diagnostic — **there is no org toggle and no server-side gate** (the `allow_experimental_components` org setting this section once specified was never built).
 - Drag onto canvas (React Flow `onDrop`) or click-to-place. Dragging onto an EDGE splices the node in when port types are compatible on both sides (the Node-RED insert gesture) — otherwise the edge rejects with a shake animation.
 - Bottom of palette: "Destination presets" — the org's `destinations` rendered as one-drag composite nodes (drops the write component pre-bound to the destination's secret, §3.4).
 
@@ -193,7 +193,7 @@ Input: graph doc. Output: Alloy text + `node_map`. Algorithm (identical client a
 
 ## 4.4 Persistence & lifecycle
 
-Autosave: local draft (IndexedDB via `idb-keyval`, key `vb:draft:<pipelineId>` — `web/src/visual/draft.ts`), **500ms-debounced from the last graph mutation**, not on every keystroke; explicit **Save** writes the pipeline (render → gate → revision) — the standard model, drafts are only crash insurance. Reopening offers a restore banner via `shouldOfferRestore`, which compares the draft to what's already loaded with the viewport excluded (panning/zooming alone must not make an identical draft look different). Save & Enable adds the enable step (L4). Revisions: restoring an old revision restores its `wizard_state` graph; the diff view for visual revisions shows BOTH the text diff (existing) and a graph diff tab (nodes/edges added/removed/changed, computed structurally — colored badges on a merged canvas render).
+Autosave: local draft (IndexedDB via `idb-keyval`, key `vb:draft:<pipelineId>` — `web/src/visual/draft.ts`), **500ms-debounced from the last graph mutation**, not on every keystroke; explicit **Save** writes the pipeline (render → gate → revision) — the standard model, drafts are only crash insurance. Reopening offers a restore banner via `shouldOfferRestore`, which compares the draft to what's already loaded with the viewport excluded (panning/zooming alone must not make an identical draft look different). Save & Enable adds the enable step (L4). Revisions: restoring an old revision restores its `wizard_state` graph. The diff view this section specified (text diff plus a structural graph-diff tab) is **not built** — neither `@codemirror/merge` nor any graph diff exists, and revision contents are not yet exposed by the API (F-REVISIONS in the ledger).
 
 ## 4.6 Node disable
 
@@ -238,7 +238,7 @@ The **overlay** (`internal/schema/artifacts/overlay.json`) deep-merges over the 
 
 ## 5.2 Serving & client consumption
 
-`GET /api/schema/{version}` serves artifact+overlay merged, `ETag: <content hash>`, immutable per version. The client caches per version in IndexedDB. The palette, inspector forms, port system, L1 rules, and both codegens all derive from this ONE payload — there is no second component list anywhere (the text editor's `alloySchema.ts` is REPLACED by a thin adapter over the same payload in this milestone, retiring the hand-curated file and its drift test).
+`GET /api/schema/{version}` serves artifact+overlay merged, `ETag: <content hash>`, immutable per version. The client caches per version in IndexedDB. The palette, inspector forms, port system, L1 rules, and both codegens all derive from this ONE payload — there is no second component list anywhere (the text editor's `alloySchema.ts` was meant to be REPLACED by a thin adapter over the same payload in this milestone — **not done**: `web/src/editor/alloySchema.ts` is still the hand-curated map feeding `alloyCompletion.ts`, guarded by its drift test, while `web/src/visual/schemaAdapter.ts` adapts the artifact for the canvas only, so two component lists still exist).
 
 ## 5.3 Graph upgrades across Alloy versions (the hard part, designed honestly)
 
@@ -342,7 +342,7 @@ All standing rules apply: Ginkgo v2 + Gomega backend, Vitest/Playwright frontend
 5. **"sanitize collision is an error, never auto-suffixed"** — two nodes same component, labels `a-b`/`a_b` → render returns the L1-class error naming both nodes; output empty. Red run: add auto-suffixing → test fails on the error expectation.
 6. **"disabled node emission"** — covered by corpus, plus: disabling a node whose consumer then has zero wires still RENDERS (rendering is total; the dangling state is L1's job, not the renderer's) — assert render succeeds with the dangling reference absent.
 7. **"secret-typed prop with a literal value is refused"** — a graph doc hand-crafted with a raw string in a secret prop → render error `secret_by_value` naming node+prop. Red run: drop the check → renders a plaintext secret → fail.
-8. **Graph diff unit suite** — structural diff over corpus pairs with known deltas: added node, removed edge, changed prop, reordered blocks → diff output matches expected delta JSON (goldened).
+8. **Graph diff unit suite** — structural diff over corpus pairs with known deltas: added node, removed edge, changed prop, reordered blocks → diff output matches expected delta JSON (goldened). **Not built** — no graph diff exists (see §6, F-REVISIONS).
 
 ## 7.3 Go unit — `tools/alloy-schema-gen` + artifact invariants
 
@@ -370,7 +370,7 @@ Generation itself needs network + checkout, so it's a CI job, not a unit test. W
 3. **Store/undo** — mutations produce history entries; viewport/selection changes produce NONE (zundo partialize); 100-entry cap evicts oldest; undo of a paste removes all pasted nodes+edges atomically; redo restores ids identically (no re-nanoid on redo).
 4. **Draft persistence** — mutation → idb draft written (fake-indexeddb); restore round-trips; explicit Save clears the draft.
 5. **Inspector schema→zod generation** — for 5 representative components from the real artifact: generated zod accepts the default snippet's values and rejects type violations (string in duration, unknown enum).
-6. **Graph diff (TS)** — same delta fixtures as 7.2.8, same expected outputs (shared via the corpus sync).
+6. **Graph diff (TS)** — same delta fixtures as 7.2.8, same expected outputs (shared via the corpus sync). **Not built** — no graph diff exists in `internal/visual` or `web/src/visual` (see §6, F-REVISIONS).
 
 ## 7.6 Playwright — mocked suite (`web/tests/specs/visual-*.spec.ts`)
 
@@ -414,9 +414,9 @@ Mutation-gate extension (the WSR 6.2 discipline): the 8-invariant PR-gate check 
 
 # Part 8 — Delivery milestones (each ends green, standing rules apply)
 
-1. **Schema unification**: serve `GET /api/schema`, retire `alloySchema.ts` for the adapter, generator + overlay CI in place. (Pays off before any canvas exists — the text editor's autocomplete jumps from ~20 to full-catalog.)
+1. **Schema unification**: serve `GET /api/schema`, generator + overlay CI in place — done; retiring `alloySchema.ts` for the adapter is **not done** (see §5.4). (Pays off before any canvas exists — the text editor's autocomplete jumps from ~20 to full-catalog.)
 2. **Canvas core**: React Flow shell, palette, nodes, typed connect rules, inspector forms, L1, undo/redo, autosave drafts. No save yet.
-3. **Codegen + gate**: both generators + corpus, render/validate endpoints with node-addressed diagnostics, Code tab, save/enable through the gate, `source='visual'`, revisions + graph diff.
+3. **Codegen + gate**: both generators + corpus, render/validate endpoints with node-addressed diagnostics, Code tab, save/enable through the gate, `source='visual'`, revisions — done; graph diff **not built**.
 4. **Read-only graph view** + "recreate as visual".
 5. **S1 + S2**: flow overlay; relabel + log traces with fixtures; live-sample fetch behind its flag.
 6. **Upgrade machinery**: version stamps, upgrade-check, review UI, needs_upgrade filter, overlay migrations.

@@ -11,9 +11,9 @@ name: CI
 # against a local `vite preview` server — no backend, no Docker required.
 # It is the only coverage for the canvas's delete and port-drag
 # interactions, so it must run on every PR, not just on manual dispatch.
-# test-fullstack runs here on every PR; e2e lives in e2e.yml (manual
-# dispatch + merge_group) per F7's scope, e2e-k8s in e2e-k8s.yml (nightly +
-# paths-filtered), and schema-verify in schema-verify.yml (weekly cron +
+# test-fullstack runs here on every PR; e2e lives in e2e.yml (push to main
+# path-filtered per D11, manual dispatch + merge_group), e2e-k8s in
+# e2e-k8s.yml (weekly cron + paths-filtered), and schema-verify in schema-verify.yml (weekly cron +
 # versions.env PRs). There is no separate test-integration stage any more —
 # `make test` runs the whole Go suite, testcontainers included. `make smoke`
 # now runs inside test-fullstack, immediately before make test-fullstack —

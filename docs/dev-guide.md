@@ -88,10 +88,10 @@ Without the profile, `Simulate ▾ → Sandbox run` reports that sandbox simulat
 this server, which is the intended degradation. The other two tiers (S1 flow check, S2
 relabel/log trace) need no profile and work in the default stack.
 
-**Fullstack Playwright coverage of the sandbox-run UI is pending** (`web/tests/fullstack/`, wave 3
-per `docs/project-status.md`) — there is no `make test-fullstack-sim` target yet; `make
-test-fullstack` runs against the sim-disabled default dev stack, same as `make dev` without
-`dev-sim`.
+**Sandbox-run UI coverage exists**: `web/tests/fullstack/sandbox-run.spec.ts` self-skips unless
+`FULLSTACK_SIM=1`. `make test-fullstack-sim` (local-only, not in CI — D13) brings the `sim`
+profile up and runs just that spec; plain `make test-fullstack` still runs against the
+sim-disabled default stack, same as `make dev` without `dev-sim`.
 
 ---
 
@@ -196,7 +196,8 @@ Full list (`make help` prints the same, plus the `E2E_*` env knobs each test tar
 | `make test` | Run all Go tests (requires Docker) |
 | `make test-cover` | Run all Go tests with a coverage profile (requires Docker) |
 | `make test-ui` | Mocked Playwright suite (no backend required) |
-| `make test-fullstack` | Playwright fullstack suite against the dev stack (boots it, runs, tears down; no dedicated `-sim` variant yet — see the sandbox table above) |
+| `make test-fullstack` | Playwright fullstack suite against the dev stack (boots it, runs, tears down) |
+| `make test-fullstack-sim` | The sandbox-run fullstack spec against the dev stack's `sim` profile (local-only, not in CI) |
 | `make web-ci` | Run CI's web job locally (typecheck + tests + biome check + build) |
 | `make smoke` | Container smoke test (< 60s, Docker only) |
 | `make e2e` | Compose e2e suite, real Alloy agent (~10 min) |

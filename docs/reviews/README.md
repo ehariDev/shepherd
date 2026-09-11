@@ -1,17 +1,16 @@
 # Reviews — live findings and decision records
 
-Two documents live here (re-checked 2026-09-11: `ls docs/reviews/*.md | grep -vc README` and this
+One document lives here (re-checked 2026-09-11: `ls docs/reviews/*.md | grep -vc README` and this
 index's row count must match, or the drift this section used to have is back). Everything else —
 the 2026-08-19 deep review, the 2026-08-22 S3 containment findings and B-CONTAIN-1 decision
-record, and the 2026-08-25 full-application review — is **implemented** and has moved to
-[`docs/archive/reviews/`](../archive/reviews/).
+record, the 2026-08-25 full-application review, and the 2026-09-09 review's remediation record —
+is **implemented** and has moved to [`docs/archive/reviews/`](../archive/reviews/).
 
 | Document | Why it is still live |
 |---|---|
 | [`canvas-framework-evaluation.md`](canvas-framework-evaluation.md) | **Decision record.** Why the canvas uses React Flow, and the controlled-mode contract the canvas now depends on. Read this before changing `CanvasPane`'s node/edge projection — the contract is easy to break silently (`web/src/visual/reconcile.ts:11` cites this file by path; `CanvasPane.tsx` references the same contract by name). |
-| [`2026-09-09-remediation.md`](2026-09-09-remediation.md) | **This session's record.** The 2026-09-09 review artifact and remediation plan, the D1–D14 decisions, how the eight parallel workstreams actually ran, what landed, what's deferred. Live until the deferred items close and it can move to the archive like every review before it. |
 
-Three documents moved to the archive because they describe work that is finished:
+Four documents moved to the archive because they describe work that is finished:
 
 - [`archive/reviews/s3-sandbox-security-findings.md`](../archive/reviews/s3-sandbox-security-findings.md)
   — the 2026-08-20 adversarial review of S3 sandbox containment. Every finding carries a status
@@ -27,6 +26,11 @@ Three documents moved to the archive because they describe work that is finished
   layer, frontend). All seven phases landed, shipped in `v0.3.4` (2026-08-25). Moved here
   2026-09-11: it was still sitting in this directory with no index row, which is the same
   reads-as-current hazard the other two moves above exist to close.
+- [`archive/reviews/2026-09-09-remediation.md`](../archive/reviews/2026-09-09-remediation.md)
+  — the 2026-09-09 whole-project review's remediation record: the D1–D14 decisions, how the
+  eight parallel workstreams ran, what landed in v0.4.0. Moved 2026-09-11 once its deferred items
+  (the framework majors, request-gate auth, the lazy editor chunk, the fullstack specs) had all
+  shipped in v0.5.0; what remains open is tracked in `docs/project-status.md`.
 
 ---
 

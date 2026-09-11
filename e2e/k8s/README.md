@@ -48,7 +48,7 @@ Setup order matters and each step exists because its absence produced a confusin
 4. **Nodes Ready** — the CNI is serving
 5. **CoreDNS Available** — Ready nodes do *not* imply working DNS
 6. **Images loaded**, **shared Postgres**
-7. **Gateway API CRDs + NGINX Gateway Fabric** — pinned from `deploy/versions.env`
+7. **Gateway API CRDs + NGINX Gateway Fabric** — CRD version/channel pinned in `deploy/versions.env`; the NGF chart version is a constant in `route_conformance_test.go` (`ngfChartVersion`)
 8. **CloudNativePG + External Secrets operators** — pinned the same way, for the chart's two
    optional dependencies (`chart_deps_test.go`). Shepherd's chart installs neither and requires
    neither; they are here so those integrations are proven against real controllers rather than

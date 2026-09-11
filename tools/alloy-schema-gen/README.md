@@ -1,6 +1,6 @@
 # tools/alloy-schema-gen
 
-Generates `schema/alloy-v<X>.json` by cloning grafana/alloy at the fleet-pinned tag and running `extract.go` INSIDE that checkout.
+Generates `internal/schema/artifacts/alloy-v<X>.json` by cloning grafana/alloy at the fleet-pinned tag and running `extract.go` INSIDE that checkout.
 
 ## Why inside the checkout?
 
@@ -9,14 +9,14 @@ Go's `internal/` visibility rule prevents importing `grafana/alloy/internal/*` f
 ## Usage
 
 ```bash
-make schema          # requires: git, go, jq, network access to ALLOY_REPO
+make schema          # requires: git, go, jq, docker, network access to ALLOY_REPO
 ```
 
 Reads `ALLOY_VERSION` from `deploy/versions.env`. CI can override `ALLOY_REPO` with your organisation's mirror if applicable.
 
 ## Committed-artifact mode
 
-When network access is unavailable (local dev, air-gapped), the committed `schema/alloy-v<X>.json` is used directly. **Never run `make schema` as part of an application build** — builds must be hermetic.
+When network access is unavailable (local dev, air-gapped), the committed `internal/schema/artifacts/alloy-v<X>.json` is used directly. **Never run `make schema` as part of an application build** — builds must be hermetic.
 
 ## CI discipline
 
@@ -33,11 +33,10 @@ When network access is unavailable (local dev, air-gapped), the committed `schem
 `run.sh` also honours `ALLOY_SRC=<path>` to reuse an existing checkout instead of
 cloning, which turns a local verify from a ~4 GB clone into a ~40 s run.
 
-An Alloy version bump PR must include: `versions.env` change + regenerated artifact + overlay entries for new components + a fleet stage-3 revalidation sweep.
 
 ## Overlay guards (CI-enforced)
 
-- Every key in `schema/overlay.json` must exist in the artifact. (Hard fail — overlay cannot reference components that don't exist.)
+- Every key in `internal/schema/artifacts/overlay.json` must exist in the artifact. (Hard fail — overlay cannot reference components that don't exist.)
 - New artifact components with no overlay `category` land in the Advanced palette category with a CI **warning** (not failure — a new experimental component must never block a version bump).
 - The discovery-stub map keys in the overlay must be `discovery.*` components present in the artifact.
 - A component's `port_display_order` must name exactly the ports the artifact

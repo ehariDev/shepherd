@@ -33,7 +33,9 @@ runs, so the areas most worth attention are:
 - Anything that makes the server fetch a URL a user supplied. OIDC discovery is
   deliberately constrained (`internal/auth/discovery.go`); a way around those
   constraints is a finding.
-- The agent-facing `collector.v1` surface and the agent token verification.
+- The agent-facing `collector.v1` surface and the agent token verification
+  (`internal/agentapi/auth.go`, a Connect request gate that runs before the body is decoded;
+  the service-account gate in `internal/mgmtapi/machine_auth.go` is the same shape).
 
 ## Not in scope
 

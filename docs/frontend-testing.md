@@ -61,7 +61,8 @@ web/
 │   │   ├── test.ts          # extended `test` with the `api` fixture (§5)
 │   │   ├── factories.ts     # fixture builders + basicScenario() (§4)
 │   │   ├── personas.ts      # appAdmin / orgAdmin / orgEditor / reader / nobody / localAdmin (§6)
-│   │   └── schema-fixture.ts
+│   │   ├── schema-fixture.ts
+│   │   └── canvas.ts        # settledBox / waitForViewportSettled — start drags from a settled React Flow layout
 │   ├── mocks/
 │   │   ├── router.ts        # MockState + route matcher (§3)
 │   │   └── handlers.ts      # default handlers + fixture→wire converters
@@ -83,8 +84,10 @@ holds 15. By group rather than exhaustively:
   rather than the app: `route-guard.spec.ts` (direct-nav denial matrix, W6-S7's red run),
   `persona-floor.spec.ts` (minimum per-persona coverage floors so appAdmin cannot dominate the
   suite by default — orgAdmin 16, orgEditor 10, reader 10, localAdmin 3, nobody 4, app-admin
-  share capped at 60%), `wait-budget.spec.ts` (caps `waitForTimeout` at 25 call sites, all in the
-  visual-canvas drag/highlight/layout specs — §1's documented exemption)
+  share capped at 60%), `wait-budget.spec.ts` (caps `waitForTimeout` at 25 call sites, all of which must live in a
+  `visual-*.spec.ts` file — §1's documented exemption; today: selection-delete, layout, linking,
+  inspector, drag-highlight. Positions those specs drag from come through `fixtures/canvas.ts`,
+  which polls for a settled layout instead of sleeping)
 
 Dependencies: `@playwright/test` only. No MSW — route interception is the single mocking
 mechanism (two mock systems drift apart). Scripts: `pnpm test:ui` runs the mocked suite;
@@ -222,6 +225,11 @@ CodeMirror is not a `<textarea>`; specs interact through the DOM it renders (`.c
 the hard way (header comment in `editor-autocomplete.spec.ts`): completion is opened with
 **`Control+Space` on every platform** — `ControlOrMeta+Space` resolves to Cmd-Space on macOS,
 which is Spotlight, so the tooltip never opens locally while CI's Linux runner passes.
+
+CodeMirror is code-split (`src/editor/LazyAlloyEditor.tsx`), so `.cm-editor` appears only after
+the lazy chunk resolves — assert on the locator (auto-waiting) rather than querying immediately
+after navigation. A chunk that fails to load lands in the route error fallback, pinned by
+`states.spec.ts`.
 
 ---
 

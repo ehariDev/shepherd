@@ -91,9 +91,10 @@ for every setting.
 
 ### Just want to look at it?
 
-`make dev` boots the whole thing in Docker — PostgreSQL, seeded data, a mock
-identity provider, a git server, and live Alloy collectors already polling
-Shepherd at <http://localhost:8080> with `admin` / `admin`. For trying Shepherd
+`make dev` boots the whole thing in Docker — PostgreSQL, seeded data, a git
+server, a mock Microsoft Graph for group search, and live Alloy collectors
+already polling Shepherd at <http://localhost:8080> with `admin` / `admin` (a
+mock OIDC provider sits behind the `oidc` compose profile). For trying Shepherd
 or working on it, not for running it.
 
 ## Connect a collector
