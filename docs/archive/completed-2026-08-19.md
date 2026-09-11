@@ -5,8 +5,10 @@ shipped**; it is kept as the historical record of what the 2026-08-19 baseline r
 closed. Not current instructions — the live ledger is `docs/project-status.md`.
 
 The one exception is **F5** (S3 sandbox simulation), which was open at the time of this record and
-has since been implemented but is **disabled by default with open containment criticals**. Its
-current state is in the live ledger, not here.
+~~has since been implemented but is disabled by default with open containment criticals~~ — stale
+as of 2026-09-11: both enablement gates closed 2026-08-21, and the Helm chart has shipped
+`simulator.enabled: true` since v0.0.1 (`docs/project-status.md` § F5). Its current state is in the
+live ledger, not here.
 
 ---
 
@@ -113,11 +115,14 @@ Collectors, active pipelines and clusters tiles are hardcoded `—`. Only the or
 
 None of these exist in the proto contract either, so each needs an RPC + shim + UI.
 
-### F5 — VB-1 M7: S3 sandbox simulation · [IMPLEMENTED 2026-08-20 — see §3a, MUST STAY DISABLED]
+### F5 — VB-1 M7: S3 sandbox simulation · [IMPLEMENTED 2026-08-20 — see §3a, ~~MUST STAY DISABLED~~]
 
-`docs/visual-builder-design-VB1.md` §6.4. Built on 2026-08-20 but its containment claim does not
-hold; the feature is off by default and must stay off. See `docs/project-status.md` (the live ledger)
-and `docs/archive/reviews/s3-sandbox-security-findings.md`.
+`docs/visual-builder-design-VB1.md` §6.4. Built on 2026-08-20; at the time of this record its
+containment claim did not hold, so the feature was off by default and had to stay off. **No longer
+true** (corrected 2026-09-11): both gates closed 2026-08-21, and the chart has shipped
+`simulator.enabled: true` since v0.0.1. See `docs/project-status.md` (the live ledger, § F5) and
+`docs/archive/reviews/s3-sandbox-security-findings.md` (why that review itself moved to the
+archive).
 
 ### F6 — [DONE 2026-08-19] VB-1 M8: hardening · **low**
 
