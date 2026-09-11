@@ -16,7 +16,8 @@ live ledger.
 | `completed-2026-08-19.md` | The 2026-08-19 baseline round verbatim: seven bugs (B1–B7) and the features F1–F9 that closed with it | 2026-08-19 |
 | `reviews/` | The three fresh-context deep reviews of the visual builder and schema pipeline. All ten priority items implemented; see `docs/reviews/README.md` for what closed each |
 | `reviews/s3-sandbox-security-findings.md` | The 2026-08-20 adversarial review of S3 sandbox containment. All findings closed. **Archived 2026-08-22 because its conclusion is now false** — it says the feature must stay disabled, and the sandbox ships enabled by default since v0.0.1 | gates closed 2026-08-21; enabled in v0.0.1 |
-| `reviews/b-contain-1-bind-hardening.md` | Decision record for B-CONTAIN-1's fix: bind-address hardening (Option C), with the rejected options' analysis | 2026-08-21 | 2026-08-19 → 2026-08-20 |
+| `reviews/b-contain-1-bind-hardening.md` | Decision record for B-CONTAIN-1's fix: bind-address hardening (Option C), with the rejected options' analysis | 2026-08-19 → 2026-08-20, gate closed 2026-08-21 |
+| `reviews/2026-08-25-full-review-fixes.md` | Five parallel fresh-context reviews (auth/authz, chart/deployment, merge engine, API/data layer, frontend). Seven phases, all landed across four commits; F1.1 (`helm upgrade` silently dropping the database under cnpg+ESO) and F5.1 kill-probed by reverting the fix and watching the failure | `v0.3.4` (2026-08-25) |
 
 ## Where the live documents are
 
@@ -25,7 +26,8 @@ live ledger.
 - `docs/visual-builder-design-VB1.md` — still live: M1–M8 are built, and §6.4 remains the
   specification for S3 sandbox simulation, which ships **disabled by default** with open
   containment criticals
-- `docs/reviews/` — one live decision record: React Flow's controlled-mode contract
+- `docs/reviews/` — two live documents: React Flow's controlled-mode contract, and this
+  remediation session's own record (`2026-09-09-remediation.md`)
 - `docs/gateway-tier-plan.md` — the multi-session plan for the gateway tier, beacon, teams and
   agent interface; its §9 ledger is where workstream status lives
 - `docs/proofs/` — red–green proofs for shipped controls. **Not archived**, because Go source and
