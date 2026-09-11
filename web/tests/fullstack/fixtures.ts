@@ -22,16 +22,31 @@ export const DEV_VIEWER = { username: 'viewer', password: 'viewer-dev-pass' };
 /**
  * loginAs performs a real POST /api/auth/local/login and waits for the
  * shepherd_session cookie to be set. Fast: ~1 round-trip, no browser redirect.
+ *
+ * Retries once on a 429 from internal/auth/login_throttle.go's per-login
+ * bucket (burst 10, refill ~1/6s) — real, and shared across this whole
+ * suite's single dev stack: with `workers: 1` and enough specs logging in as
+ * the same username in a tight window (most fullstack specs use admin), the
+ * bucket can be exhausted well before it refills. The server's own
+ * Retry-After tells us exactly how long that takes; honoring it is the
+ * correct response to a real rate limiter, not a flakiness workaround, and
+ * a second 429 (or any non-200) still fails loudly.
  */
 export async function loginAs(page: Page, username: string, password: string): Promise<void> {
-  const resp = await page.request.post('/api/auth/local/login', {
-    data: { username, password },
-    headers: {
-      'Content-Type': 'application/json',
-      'X-Requested-With': 'XMLHttpRequest',
-    },
-  });
-  if (resp.status() !== 200) {
+  for (let attempt = 0; ; attempt++) {
+    const resp = await page.request.post('/api/auth/local/login', {
+      data: { username, password },
+      headers: {
+        'Content-Type': 'application/json',
+        'X-Requested-With': 'XMLHttpRequest',
+      },
+    });
+    if (resp.status() === 200) return;
+    if (resp.status() === 429 && attempt === 0) {
+      const retryAfterSeconds = Number(resp.headers()['retry-after']) || 6;
+      await page.waitForTimeout(retryAfterSeconds * 1000 + 250);
+      continue;
+    }
     throw new Error(`loginAs failed: ${resp.status()} ${await resp.text()}`);
   }
 }

@@ -1,4 +1,4 @@
-.PHONY: docs check-docs-drift check-docs-version web-ci check-gateway-pin check-chartvalues-pin chart-verify preflight-docker help build build-web build-all test e2e e2e-k8s e2e-k8s-clean e2e-sim e2e-egress smoke test-cover test-ui check-single-dist check-dist-consistency check-build-script check-raw-sql check-docker check-no-route-mocks guards vulncheck lint fmt generate gen-alloy-version generate-corpus schema schema-verify helm-lint release-snapshot docker-build docker-build-local docker-build-init docker-build-simulator dev dev-sim dev-frontend dev-restart dev-seed dev-reset test-fullstack clean clean-docker tools preflight-ginkgo preflight-k8s
+.PHONY: docs check-docs-drift check-docs-version web-ci check-gateway-pin check-chartvalues-pin chart-verify preflight-docker help build build-web build-all test e2e e2e-k8s e2e-k8s-clean e2e-sim e2e-egress smoke test-cover test-ui check-single-dist check-dist-consistency check-build-script check-raw-sql check-docker check-no-route-mocks guards vulncheck lint fmt generate gen-alloy-version generate-corpus schema schema-verify helm-lint release-snapshot docker-build docker-build-local docker-build-init docker-build-simulator dev dev-sim dev-frontend dev-restart dev-seed dev-reset test-fullstack test-fullstack-sim clean clean-docker tools preflight-ginkgo preflight-k8s
 
 # Several recipes are bash-idiomatic (the smoke here-string, trap chains);
 # /bin/sh is dash on Debian/Ubuntu and rejects them.
@@ -804,6 +804,31 @@ test-fullstack: docker-build-local docker-build-init ## Playwright fullstack sui
 		if [ $$STATUS -ne 0 ]; then \
 			docker compose -f dev/docker-compose.dev.yaml logs --no-color > /tmp/fullstack-stack.log 2>&1; \
 			echo "Stack logs saved to /tmp/fullstack-stack.log"; \
+		fi; \
+		docker compose -f dev/docker-compose.dev.yaml down -v; \
+		exit $$STATUS
+
+# Run ONLY tests/fullstack/sandbox-run.spec.ts, with the `sim` compose profile
+# up (a real simulator container, VB-1 §6.4). Local-only (D13): the plain
+# test-fullstack target above does not start the sim profile, and this
+# target is deliberately not part of `guards`/CI — a sandbox run takes ~30s
+# of real Alloy execution per spec, which is a bad trade for every PR.
+# FULLSTACK_SIM=1 is what tells sandbox-run.spec.ts to run instead of skip;
+# every other fullstack spec ignores it.
+test-fullstack-sim: docker-build-local docker-build-init docker-build-simulator ## Playwright sandbox-run spec against the dev stack's sim profile (local-only, not in CI)
+	cd web && $(PNPM) exec playwright install --with-deps chromium
+	docker compose -f dev/docker-compose.dev.yaml down -v
+	SHEPHERD_SIM_ENABLED=true docker compose -f dev/docker-compose.dev.yaml --profile sim up -d --build --wait \
+		|| { echo "=== stack failed to start; container logs follow ==="; \
+		     docker compose -f dev/docker-compose.dev.yaml --profile sim ps -a; \
+		     docker compose -f dev/docker-compose.dev.yaml --profile sim logs --no-color --tail=200; \
+		     docker compose -f dev/docker-compose.dev.yaml down -v; \
+		     exit 1; }
+	( cd web && FULLSTACK_SIM=1 $(PNPM) exec playwright test --config playwright.fullstack.config.ts tests/fullstack/sandbox-run.spec.ts ); \
+		STATUS=$$?; \
+		if [ $$STATUS -ne 0 ]; then \
+			docker compose -f dev/docker-compose.dev.yaml --profile sim logs --no-color > /tmp/fullstack-sim-stack.log 2>&1; \
+			echo "Stack logs saved to /tmp/fullstack-sim-stack.log"; \
 		fi; \
 		docker compose -f dev/docker-compose.dev.yaml down -v; \
 		exit $$STATUS

@@ -33,6 +33,21 @@ real session is wrong.
   cannot drive, so short real waits appear in those helpers deliberately. Do not add real waits
   outside that class of interaction.
 
+**W7 additions (RBAC + rollout + wizard/matcher + sandbox, `make test-fullstack`):**
+`roles.spec.ts` drives the seeded local `editor`/`viewer` accounts (dev/shepherd.dev.env's
+platform-org members) through the real login form and API — editor authoring a pipeline through
+the actual editor UI, viewer blocked from a direct PUT with a real 403, both denied `/admin/orgs`.
+`rollout.spec.ts` enables a pipeline from `/pipelines` and polls the real `alloy-metrics` agent's
+own 10s poll cycle to APPLIED — no `forceRecompute` shortcut, unlike `pipelines.spec.ts`'s
+scenario 6. `wizard-commit.spec.ts` commits the self-monitoring wizard (role `singleton`) to a
+real pipeline and checks its block reaches served config; `matcher-edit.spec.ts` edits a
+pipeline's matchers in the classic editor and asserts `PreviewMatches` moves it from the metrics
+collector to the logs collector. `sandbox-run.spec.ts` runs a real S3 sandbox run from the visual
+builder's Simulate menu and needs the `sim` compose profile, which `make test-fullstack` does not
+start — it self-skips unless `FULLSTACK_SIM=1`, and `make test-fullstack-sim` (local-only, not
+wired into CI — a real sandbox run costs ~30s of actual Alloy execution) sets that and runs only
+this one spec against the profile it brings up itself.
+
 ---
 
 ## 2. Layout & tooling
@@ -55,7 +70,7 @@ web/
 ```
 
 `tests/specs/` holds 46 spec files (`ls web/tests/specs/*.spec.ts | wc -l`); `tests/fullstack/`
-holds 10. By group rather than exhaustively:
+holds 15. By group rather than exhaustively:
 
 - **Screens** — auth, local-login, overview, collectors, collector-access, pipelines-list,
   pipeline-editor, editor-autocomplete, editor-role, revisions, served-config, wizard,
