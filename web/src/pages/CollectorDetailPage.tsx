@@ -265,7 +265,10 @@ export function CollectorDetailPage() {
             <span>Last seen {formatTimestampRelative(detail?.lastSeen)}</span>
           </div>
         </div>
-        <span className={`text-xs font-medium px-2 py-0.5 rounded border ${statusColor}`}>
+        <span
+          data-testid='collector-status'
+          className={`text-xs font-medium px-2 py-0.5 rounded border ${statusColor}`}
+        >
           {status || 'UNKNOWN'}
         </span>
       </div>

@@ -138,6 +138,9 @@ test.describe('roles: viewer', () => {
 
     await page.goto('/pipelines');
     await page.waitForLoadState('networkidle');
+    // Positive control first: the list rendered real rows for the viewer, so
+    // the absences below are about role gating, not a blank or errored page.
+    await expect(page.getByTestId(/^pipeline-row-/).first()).toBeVisible();
     // Neither authoring affordance renders for a viewer (useCanWrite false).
     await expect(page.getByTestId('pipeline-new')).toHaveCount(0);
     await expect(page.getByTestId('pipeline-visual-builder')).toHaveCount(0);

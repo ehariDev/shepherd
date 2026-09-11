@@ -66,6 +66,40 @@ var _ = Describe("REST shim — org-editor may author, org-reader may not", Labe
 		server = httptest.NewServer(newRESTRouter(st, authHandler, cfg, nil))
 	})
 
+	// Red run, 2026-09-11 (fullstack wizard-commit spec against the real dev
+	// stack): the shim seeded OrgId from the URL and then let
+	// protojson.Unmarshal reset the whole message, so a body without orgId
+	// reached the service with an empty org and CommitWizard 500ed on
+	// pipelines.org_id NOT NULL. The URL is the authorized org; the body must
+	// neither be required to repeat it nor be able to override it.
+	It("commits a wizard over REST with the org taken from the URL, not the body", func() {
+		resp := postJSON(server, "/orgs/"+orgID+"/wizards/commit", map[string]any{
+			"kind":  "app-observability",
+			"name":  "rest_wizard_commit",
+			"state": map[string]any{"scrape_url": "http://myapp:9090/metrics", "metrics_dest_name": "mimir"},
+		}, editorCookie)
+		defer resp.Body.Close() //nolint:errcheck // test cleanup
+		Expect(resp.StatusCode).To(Equal(http.StatusCreated))
+
+		other, err := st.Queries.CreateOrg(ctx, sqlc.CreateOrgParams{
+			Name: "rest-roles-other", DisplayName: "Other", AdminGroupID: "other-admin-grp",
+		})
+		Expect(err).NotTo(HaveOccurred())
+		resp2 := postJSON(server, "/orgs/"+orgID+"/wizards/commit", map[string]any{
+			"orgId": other.ID.String(),
+			"kind":  "app-observability",
+			"name":  "rest_wizard_commit_2",
+			"state": map[string]any{"scrape_url": "http://myapp:9090/metrics", "metrics_dest_name": "mimir"},
+		}, editorCookie)
+		defer resp2.Body.Close() //nolint:errcheck // test cleanup
+		Expect(resp2.StatusCode).To(Equal(http.StatusCreated))
+		var orgUUID pgtype.UUID
+		Expect(orgUUID.Scan(orgID)).To(Succeed())
+		p, err := st.Queries.GetPipelineByOrgAndName(ctx, sqlc.GetPipelineByOrgAndNameParams{OrgID: orgUUID, Name: "rest_wizard_commit_2"})
+		Expect(err).NotTo(HaveOccurred(), "the pipeline must land in the URL's org even when the body names another")
+		Expect(p.OrgID.String()).To(Equal(orgID))
+	})
+
 	AfterEach(func() {
 		server.Close()
 		st.Close()
