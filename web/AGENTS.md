@@ -30,9 +30,13 @@ React 18 + TypeScript + Vite SPA, embedded into the Go binary via `go:embed`.
 - No `any` in production code (warning); `any` allowed in test files
 - All imports organised by Biome assist (auto on save)
 - `pnpm check --write .` before committing
+- The Shell (`web/src/components/Shell.tsx`, `flex h-screen overflow-hidden`) is a desktop-only
+  layout — nothing collapses navigation or reflows for a small viewport. A couple of pages use
+  Tailwind's `sm:`/`lg:` grid-column variants to add columns on a wider desktop window, but that
+  is not mobile support. Do not add mobile specs or media-query work without a design decision.
 
 ## Rules
 - **If a bug or failing test takes more than 3 rounds of attempts to fix, stop and get an independent adversarial review before continuing** — a fresh reviewer with no stake in the current theory. Give it the exact symptom, the failing code, everything already tried, and the exact error output. Act on its findings before making further changes.
-- Always run `pnpm ci` before finishing a task — it is exactly the CI web job. `pnpm lint` is the lint half only, so a formatting difference passes locally and fails in CI; that has happened.
+- Always run `pnpm ci` before finishing a task — it is exactly the CI web job. `pnpm lint` (== `check:ci`, Biome's read-only check) skips typecheck, tests and the build, so a type error or a failing test can pass `pnpm lint` and still fail CI.
 - make test-ui always rebuilds dist/ then kills any stale vite preview (reuseExistingServer=false) — no manual pkill needed.
 - Single-spec runs (`pnpm exec playwright test tests/specs/<name>.spec.ts`) do NOT rebuild — run `pnpm build` first.
