@@ -116,20 +116,65 @@ Served config is shown, but nothing links back to the pipelines that produced it
 to get from "this collector runs X" to "because pipeline Y matched". The merge engine already knows
 the contributing set.
 
-### Gateway-tier workstreams awaiting a gate · see `docs/gateway-tier-plan.md` §7 and §9
+### Gateway-tier workstreams · see `docs/gateway-tier-plan.md` §7 "Sign-offs recorded 2026-09-11"
 
-Built, tested, not user-reachable: W4 receiver tier + tenant routes (R1 ready for sign-off, R3
-unsigned), W5 beacon inventory (R2 unsigned — the beacon itself ships on by default since v0.0.2,
-which §7 records as the one place status and reality diverge), W6 reconciliation and W7 onboarding
-artifacts (libraries with no caller), W9 chart-values generator (UI + G10), W10 teams UI (the
-services and the org-editor/admin service-account tiers are shipped), W11 MCP interface (R6
-partly resolved). A workstream is done when its gate is signed, not when its tests pass.
+R1, R2 signed; R6 signed conditionally; R3 open with the build scheduled. What is now scheduled
+product work rather than a gate: tenant routes reaching users (W4, cleared by R1), the receiver
+tier (W4's other half, to be built then brought back to R3), reconciliation (W6), onboarding
+artifacts (W7), the chart-values UI + G10 (W9), teams UI (W10), and the two R6 conditions for the
+MCP interface (W11). Each is a §4 item below.
 
 Closed features (F5 sandbox simulation, F-SIGNAL-SERVE) are in `docs/archive/completed-2026-09-11.md`.
 
 ---
 
-## 4. Smaller follow-ups
+## 4. Follow-ups
+
+### Decisions signed 2026-09-11
+
+Product decisions taken in the same sign-off round as the gateway gates; each is the settled
+answer and the ledger item it produced is below.
+
+- **F-REVISIONS approved**: add revision `contents` to `PipelineRevision` and a `RestoreRevision`
+  procedure (proto change approved).
+- **Editor toolbar**: build **Format** (server-side `alloy fmt` via a new `FormatPipeline` RPC —
+  proto change approved) and **Validate** buttons — "the editor needs those buttons for
+  usability". **User menu** (avatar, role badges): struck from the spec.
+- **Build both** the org-level experimental-components toggle with a server-side render gate,
+  and the `shepherd_build_info` metric.
+- **REST shim: schedule deprecation** — announce in the next changelog, add a deprecation
+  header, remove a release later. Machine callers use Connect.
+- **Product surfaces scheduled** for all four gated libraries: teams UI, reconciliation,
+  onboarding artifacts, chart-values generator (+ G10).
+- **gochecknoglobals: drop the vocabulary** — item closed, package-level vars stay allowed.
+- Gateway gates: R1, R2 signed; R3 open with the receiver-tier build scheduled; R6 conditional on
+  a per-service-account rate limit and a `pipeline.propose` audit event.
+
+### Scheduled work (from the decisions above)
+
+- [ ] **F-REVISIONS**: `contents` on `PipelineRevision`, `RestoreRevision` RPC, then the text
+      diff view and Restore in the pipeline editor; graph diff for visual pipelines afterwards.
+- [ ] **Editor Format + Validate buttons**: `FormatPipeline` RPC over `alloy fmt`, wired to a
+      Format button; an explicit Validate button beside the idle-debounced validation.
+- [ ] **Experimental components as an org setting**: migration + proto field + server-side
+      render gate (an experimental node with the toggle off is a render error), replacing the
+      hardcoded client flag.
+- [ ] **`shepherd_build_info` gauge** (labels `version`, `commit`) in `internal/metrics`.
+- [ ] **REST shim deprecation**: changelog notice, `Deprecation` header on every shim route,
+      removal scheduled one release later.
+- [ ] **Receiver tier build (R3)**: chart Deployment + Service + NetworkPolicy (gateway the only
+      ingress), tested off-switch, real-Alloy pass-through tenancy e2e; then R3 sign-off.
+- [ ] **R6 conditions**: per-service-account request rate limit (server-side, keyed on the
+      service-account id) and a `pipeline.propose` audit row from `propose_pipeline_revision`.
+      MCP binary joins the release archives only after both land.
+- [ ] **Tenant routes UI** (W4, cleared by R1): create/list/rotate/revoke, with the
+      identifier-not-authorizer caveat and edge-control guidance on the docs site.
+- [ ] **Teams UI** (W10): teams, members, service accounts and their role tier.
+- [ ] **Reconciliation surface** (W6): per-collector declared vs served vs observed drift.
+- [ ] **Onboarding artifacts page** (W7): "connect an app" snippets for a tenant route.
+- [ ] **Chart-values generator UI** (W9) + gate G10 in the kind suite.
+
+### Smaller follow-ups
 
 Open, in rough priority order:
 
@@ -146,17 +191,8 @@ Open, in rough priority order:
       stays flat-top-level-prop-only by design, not yet extended.
 - [ ] **Kind suite, plan steps 3 and 5** (`docs/kind-test-environment-plan.md`): the full-values
       install and the true previous-version Helm upgrade spec (no longer blocked — chart 0.9.0,
-      0.10.0 and 0.10.1 are all published), G10 (install the k8s-monitoring chart with generated
-      values and watch an Alloy register), and the `NOTES.txt` CNI/NetworkPolicy warning.
-- [ ] **Gateway-tier review gates R1, R2, R3, R6** need a human sign-off; nothing in code is
-      waiting on them except the gated workstreams' reachability (§3 above).
-- [ ] **Retiring the REST shim.** `docs/gateway-tier-plan.md` W10's review found the REST shim
-      "cannot carry a service-account identity at all" (recorded stricter-not-looser in
-      `router.go`) — a real capability gap, not yet a scheduled removal. No decision has been made
-      to retire it; callers still depend on it.
-- [ ] **`gochecknoglobals`.** W2-S10 removed 18 stale `nolint:gochecknoglobals` directives — the
-      linter itself was never enabled (not in `.golangci.yml`), so they suppressed nothing.
-      Undecided: enable the linter for real, or drop the vocabulary.
+      0.10.0 and 0.10.1 are all published), and the `NOTES.txt` CNI/NetworkPolicy warning (G10 is
+      scheduled with the chart-values UI above).
 - [ ] Overlay entries scaffolded by `make schema` carry `needs_review: true` and need an editorial
       pass on the next Alloy bump.
 - [ ] `go.mod` carries a vestigial `github.com/lib/pq` indirect line via testcontainers' own test
