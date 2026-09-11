@@ -705,8 +705,9 @@ No new features; nothing that was gated in v0.0.2 has been ungated.
   which carries no dynamic loader, so the binary was present and unrunnable. Every pipeline save in
   a Helm deployment failed Stage 2; dev and compose stacks silently *skipped* it (they leave the
   binary path empty), which is why no test caught it. Fixed by moving to `distroless/base-nossl`,
-  and `make check-alloy-runnable` now fails the build if it regresses. **This is the reason to
-  upgrade.**
+  and the `check-alloy-runnable` macro (a Makefile `define`, not a target — invoked from
+  `docker-build-local`, not run standalone) now fails the build if it regresses. **This is the
+  reason to upgrade.**
 - **Five of six wizards were absent from the running product.** Their packages were never imported,
   so they never registered; `ListWizards` returned one. Now all six are registered and reachable,
   and the wizard gallery/runner render whatever the backend serves rather than a hardcoded list.

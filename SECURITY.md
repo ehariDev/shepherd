@@ -41,6 +41,10 @@ runs, so the areas most worth attention are:
   cross a boundary an app admin is not meant to cross.
 - Vulnerabilities in dependencies that are not reachable from any code path we
   build or ship. `govulncheck` is the arbiter; a reachable one is in scope.
+  It runs on every backend-touching push/PR (CI's `build` job, `make
+  vulncheck`) and again every week regardless of code changes (`.github/
+  workflows/govulncheck.yml`, to catch a CVE freshly disclosed against a
+  dependency already pinned here).
 - The `dev/` and `e2e/` stacks. They ship deliberately fake credentials
   (`admin`/`admin`, keys that decode to "not-a-real-secret") and are not
   intended to be deployed.
