@@ -1,15 +1,25 @@
 # Kubernetes test environment — plan
 
-> Status (2026-08-22): **steps 1–2 implemented** (`e2e/k8s/`, `make e2e-k8s`); **step 3 partially
-> done** (default-values Helm install + repeatability specs in `e2e/k8s/helm_install_test.go` and
-> `helm_repeatable_test.go`; full-values install and true previous-version upgrade still pending);
-> **§5 Layer B implemented** (`e2e/k8s/simulator_containment_test.go`: all seven probes plus the
-> kill probe, gated behind §4's CNI control — see §8b for what building it taught us about probe
-> observability); Layer C and the remaining steps proposed.
+> Status (2026-08-22, re-checked 2026-09-11 — no code change to this suite this session): **steps
+> 1–2 implemented** (`e2e/k8s/`, `make e2e-k8s`); **step 3 partially done** (default-values Helm
+> install, `chart_deps_test.go`'s own-dependencies check, and repeatability specs in
+> `e2e/k8s/helm_install_test.go` and `helm_repeatable_test.go`; full-values install and true
+> previous-version upgrade still pending — the latter's blocker is gone as of `v0.3.5`/chart 0.9.0,
+> §9 item 4, but the spec itself is not written); **§5 Layer B implemented**
+> (`e2e/k8s/simulator_containment_test.go`: all seven probes plus the kill probe, gated behind §4's
+> CNI control — see §8b for what building it taught us about probe observability); Layer C and the
+> remaining steps proposed.
 >
-> **Grown since**: the suite now runs **six features in ~500s**, adding Gateway API route
+> **Grown since**: the suite now runs **nine features** (re-counted 2026-09-11 — one
+> `features.New(...)` per `TestX` function across `e2e/k8s/*_test.go`, `TestMain` excluded:
+> `chart_deps_test.go`, `helm_install_test.go` (×2), `helm_repeatable_test.go`,
+> `negative_control_test.go`, `route_apply_test.go`, `route_conformance_test.go`,
+> `simulator_containment_test.go` (×2) — command: `grep -h '^func Test' e2e/k8s/*_test.go | grep -v
+> TestMain | wc -l`), adding Gateway API route
 > conformance (`route_conformance_test.go`, gates G3/G4 with a live kill probe) and operator-owned
-> attachment verification (`route_apply_test.go`). Its `pull_request` paths filter also now covers
+> attachment verification (`route_apply_test.go`) since the six-feature count this line previously
+> gave. The ~500s runtime figure was not re-measured this session (no Docker in this worktree) and
+> likely understates nine features' worth of cluster work. Its `pull_request` paths filter also now covers
 > `deploy/Dockerfile*` and `deploy/versions.env`, because the suite builds and installs
 > `shepherd:local` — a base-image change that broke `alloy validate` in the shipped image reached a
 > release without ever triggering this job.
@@ -68,7 +78,7 @@ kind: Cluster
 apiVersion: kind.x-k8s.io/v1alpha4
 networking:
   disableDefaultCNI: true   # kindnetd is not a NetworkPolicy engine we want to trust
-  podSubnet: "192.168.0.0/16"
+  podSubnet: "10.244.0.0/16"
 nodes:
   - role: control-plane
   - role: worker           # so pod-to-pod policy crosses a real node boundary
@@ -111,7 +121,7 @@ in the repo, of precisely what an operator loses on a non-enforcing CNI.
 ### Layer A — chart deploys and runs (the cheap win)
 
 - `helm install` the chart with default values; every workload becomes Available.
-- Install again with `ci/full-values.yaml` (simulator on, ingress, HPA, ServiceMonitor).
+- Install again with `deploy/helm/shepherd/ci/full-values.yaml` (simulator on, ingress, HPA, ServiceMonitor).
 - The migrate Job completes; Shepherd's `/healthz` and `/readyz` answer through a Service.
 - Upgrade path: install the previous chart version, `helm upgrade` to this one, still healthy.
   This is the only place chart upgrades are ever exercised.
@@ -169,10 +179,17 @@ cannot cover is SIGKILL, hence the clean target.
 **Cost is real and must be sequenced accordingly.** Cluster create plus Calico plus image load is
 roughly 2–4 minutes before a single assertion runs; the LGTM layer adds more. So:
 
-- Layers A and B run in CI on pull requests **paths-filtered** to `deploy/helm/**`,
-  `internal/simsvc/**`, `internal/simulate/**` — the containment surface. This mirrors how
-  `e2e-egress` is already gated.
-- Layer C runs nightly and on `main`, not per-PR.
+- **As proposed here**: Layers A and B run in CI on pull requests **paths-filtered** to
+  `deploy/helm/**`, `internal/simsvc/**`, `internal/simulate/**` — the containment surface. This
+  mirrors how `e2e-egress` is already gated. Layer C runs nightly and on `main`, not per-PR.
+- **As built** (`.github/workflows/e2e-k8s.yml`): the layer split above was not carried into CI —
+  the whole nine-feature suite runs as one job, gated by one `pull_request` paths filter
+  (`deploy/helm/**`, `e2e/k8s/**`, the workflow file itself, and `deploy/Dockerfile*` /
+  `deploy/versions.env` — the suite builds and installs `shepherd:local`, and a base-image change
+  once broke `alloy validate` in the shipped image without ever triggering this job, per the note
+  above) plus a **weekly** `schedule` (not nightly) and `workflow_dispatch`. `internal/simsvc/**`
+  and `internal/simulate/**` are not in the filter — a change confined to those paths does not
+  trigger this job today.
 - Nothing here joins the default `make test`.
 
 ## 7. Documentation deliverable
@@ -198,10 +215,10 @@ that reproduces the failure instead of asking the reader to take it on faith.
 | 1 | ~~`e2e/k8s` skeleton: TestMain, kind config, Calico, teardown, `make e2e-k8s`~~ **done** | — |
 | 2 | ~~§4 negative control + the "CNI does not enforce" hard failure~~ **done** | 1 |
 | 3 | Layer A chart-deploys specs — **partially done** (default-values install + repeatability landed; full-values + upgrade pending) | 1 |
-| 4 | Layer B containment probes + kill probe | 2, 3 |
-| 5 | §7 documentation and `NOTES.txt` warning | 4 |
-| 6 | CI wiring, paths-filtered | 4 |
-| 7 | Layer C LGTM stack and delivery assertions | 3 |
+| 4 | ~~Layer B containment probes + kill probe~~ **done** (`simulator_containment_test.go`, §8b) | 2, 3 |
+| 5 | §7 documentation and `NOTES.txt` warning — **not done**: `deploy/helm/shepherd/templates/NOTES.txt` carries no CNI/NetworkPolicy warning today | 4 |
+| 6 | ~~CI wiring, paths-filtered~~ **done** (`.github/workflows/e2e-k8s.yml`) | 4 |
+| 7 | Layer C LGTM stack and delivery assertions — **not started** | 3 |
 
 Steps 1–4 answer the S3 containment question and are the point of the exercise. Step 7 is
 independently valuable and can follow later.
@@ -262,9 +279,11 @@ fails for reasons unrelated to policy.
    B-CONTAIN-2, but node reachability depends on CNI and cloud provider. It may be honest to
    assert it on kind and document it as environment-dependent elsewhere, rather than imply a
    universal guarantee.
-4. **Chart upgrade coverage** needs a previous version to upgrade from. Until there is a released
-   chart version, step 3's upgrade spec has nothing to install first, and should be deferred
-   rather than faked.
+4. **Chart upgrade coverage** needs a previous version to upgrade from. **No longer blocked**:
+   `v0.3.5` (tagged 2026-08-27) is a released chart version 0.9.0
+   (`git show v0.3.5:deploy/helm/shepherd/Chart.yaml`), ahead of the unreleased 0.10.0 on this
+   branch — step 3's true previous-version upgrade spec has something to install first now. Still
+   not written (see the status header and §8 step 3); this only removes the reason it was deferred.
 
 ## 10. What this does not do
 
