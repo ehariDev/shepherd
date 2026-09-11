@@ -7,6 +7,7 @@ import { toast } from 'sonner';
 import { renderVisual } from '../../api/client';
 import { clients, toApiError } from '../../api/transport';
 import { useOrgId } from '../../hooks/useOrg';
+import { clearDraft } from '../draft';
 import { isValidMatcher } from '../matcher';
 import { useVisualStore } from '../store';
 import { SandboxRunPanel } from './SandboxRunPanel';
@@ -84,6 +85,10 @@ export function Toolbar({ pipelineId }: { pipelineId: string }) {
     onSuccess: (p) => {
       toast.success(pipelineId === 'new' ? 'Pipeline created' : 'Pipeline saved');
       qc.invalidateQueries({ queryKey: ['pipelines', orgId] });
+      // The graph just saved is now durable on the server — the local draft
+      // (keyed by the id this save was made under, 'new' for a create) no
+      // longer has anything to protect against losing.
+      void clearDraft(pipelineId);
       navigate({ to: '/pipelines/$id', params: { id: p.id } });
     },
     onError: (e) => {

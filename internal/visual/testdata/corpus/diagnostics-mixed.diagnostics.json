@@ -1,0 +1,5 @@
+[
+  { "code": "empty_binding_expr", "severity": "error" },
+  { "code": "empty_binding_prop", "severity": "error" },
+  { "code": "secret_by_value", "severity": "error" }
+]

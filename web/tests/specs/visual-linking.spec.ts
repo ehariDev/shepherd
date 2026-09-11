@@ -23,7 +23,9 @@ async function dragWire(
     await page.waitForTimeout(15);
   }
   await page.mouse.up();
-  await page.waitForTimeout(400);
+  // React Flow removes its in-flight connection line once the drop is
+  // processed; callers then assert the resulting edge count themselves.
+  await expect(page.locator('.react-flow__connectionline')).toHaveCount(0);
 }
 
 test.describe('visual linking', () => {

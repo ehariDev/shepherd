@@ -8,6 +8,7 @@ import (
 	"strings"
 
 	"connectrpc.com/connect"
+	"github.com/jackc/pgx/v5"
 	"google.golang.org/protobuf/encoding/protojson"
 	"google.golang.org/protobuf/types/known/structpb"
 
@@ -127,7 +128,10 @@ func (s *DestinationService) loadOwnedDestination(ctx context.Context, orgIDStr,
 	}
 	d, err := s.store.Queries.GetDestinationByID(ctx, id)
 	if err != nil {
-		return sqlc.Destination{}, connect.NewError(connect.CodeNotFound, errDestinationNotFound)
+		if errors.Is(err, pgx.ErrNoRows) {
+			return sqlc.Destination{}, connect.NewError(connect.CodeNotFound, errDestinationNotFound)
+		}
+		return sqlc.Destination{}, mapError(err)
 	}
 	if d.OrgID != orgID {
 		return sqlc.Destination{}, connect.NewError(connect.CodeNotFound, errDestinationNotFound)
@@ -234,8 +238,8 @@ func (s *DestinationService) UpdateDestination(ctx context.Context, req *connect
 
 // DeleteDestination deletes a destination, refusing (with a
 // destinationInUseError) when it is still referenced by a wizard-managed
-// pipeline's wizard_state. Mirrors OrgsHandler.DeleteDestination's raw JSONB
-// containment query exactly — sqlc has no equivalent.
+// pipeline's wizard_state. Mirrors OrgsHandler.DeleteDestination's JSONB
+// containment check exactly (ListPipelineNamesReferencingDestination).
 func (s *DestinationService) DeleteDestination(ctx context.Context, req *connect.Request[mgmtv1.DeleteDestinationRequest]) (*connect.Response[mgmtv1.DeleteDestinationResponse], error) {
 	if err := requireWriteAuthorized(ctx); err != nil {
 		return nil, err
@@ -246,26 +250,9 @@ func (s *DestinationService) DeleteDestination(ctx context.Context, req *connect
 	}
 	id := owned.ID
 
-	// RAW-SQL-OK: JSONB containment check on wizard_state — no sqlc equivalent
-	rows, err := s.store.Pool().Query(ctx,
-		`SELECT name FROM pipelines
-		 WHERE wizard_state IS NOT NULL
-		 AND wizard_state @> jsonb_build_object('destination_id', $1::text)
-		 ORDER BY name`,
-		id.String())
+	refNames, err := s.store.Queries.ListPipelineNamesReferencingDestination(ctx, id.String())
 	if err != nil {
 		return nil, connect.NewError(connect.CodeInternal, errors.New("failed to check destination references"))
-	}
-	var refNames []string
-	for rows.Next() {
-		var name string
-		if scanErr := rows.Scan(&name); scanErr == nil {
-			refNames = append(refNames, name)
-		}
-	}
-	rows.Close()
-	if err := rows.Err(); err != nil {
-		return nil, connect.NewError(connect.CodeInternal, errors.New("failed to scan references"))
 	}
 	if len(refNames) > 0 {
 		msg := fmt.Sprintf("referenced by %d wizard pipeline(s): %s", len(refNames), strings.Join(refNames, ", "))
@@ -363,7 +350,10 @@ func (s *DestinationService) loadOwnedDestinationBinding(ctx context.Context, or
 	}
 	b, err := s.store.Queries.GetDestinationBindingByID(ctx, id)
 	if err != nil {
-		return sqlc.DestinationBinding{}, connect.NewError(connect.CodeNotFound, errDestinationBindingNotFound)
+		if errors.Is(err, pgx.ErrNoRows) {
+			return sqlc.DestinationBinding{}, connect.NewError(connect.CodeNotFound, errDestinationBindingNotFound)
+		}
+		return sqlc.DestinationBinding{}, mapError(err)
 	}
 	if b.OrgID != orgID {
 		return sqlc.DestinationBinding{}, connect.NewError(connect.CodeNotFound, errDestinationBindingNotFound)
@@ -434,7 +424,10 @@ func (s *DestinationService) CreateDestinationBinding(ctx context.Context, req *
 
 	dest, err := s.store.Queries.GetDestinationByID(ctx, destID)
 	if err != nil {
-		return nil, connect.NewError(connect.CodeNotFound, errDestinationNotFound)
+		if errors.Is(err, pgx.ErrNoRows) {
+			return nil, connect.NewError(connect.CodeNotFound, errDestinationNotFound)
+		}
+		return nil, mapError(err)
 	}
 	if dest.OrgID != orgID {
 		return nil, connect.NewError(connect.CodeNotFound, errDestinationNotFound)
@@ -549,7 +542,10 @@ func (s *DestinationService) ResolveDestinationBinding(ctx context.Context, req 
 	}
 	row, err := s.store.Queries.GetResolvedDestinationBinding(ctx, id)
 	if err != nil {
-		return nil, connect.NewError(connect.CodeNotFound, errDestinationBindingNotFound)
+		if errors.Is(err, pgx.ErrNoRows) {
+			return nil, connect.NewError(connect.CodeNotFound, errDestinationBindingNotFound)
+		}
+		return nil, mapError(err)
 	}
 	if row.OrgID != orgID {
 		return nil, connect.NewError(connect.CodeNotFound, errDestinationBindingNotFound)

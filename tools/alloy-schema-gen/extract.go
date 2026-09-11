@@ -24,10 +24,9 @@ import (
 	"strings"
 	"time"
 
+	"github.com/grafana/alloy/internal/component"
 	// Blank import registers every component into the global registry.
 	_ "github.com/grafana/alloy/internal/component/all"
-
-	"github.com/grafana/alloy/internal/component"
 	"github.com/grafana/alloy/internal/featuregate"
 )
 

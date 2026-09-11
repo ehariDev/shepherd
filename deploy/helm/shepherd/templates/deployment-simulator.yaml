@@ -18,6 +18,15 @@ spec:
   template:
     metadata:
       annotations:
+        {{- if eq (include "shepherd.simulatorTokenChartGenerated" .) "true" }}
+        # Rotating the chart-generated token updates the Secret object but env
+        # vars are read once, at container start -- without this the pod kept
+        # serving with the old token until some unrelated rollout restarted
+        # it. A hash, never the token itself. Only meaningful for the
+        # chart-generated Secret: the value behind existingSecret or an
+        # ExternalSecret is not something this render computes or sees.
+        checksum/simulator-token: {{ include (print $.Template.BasePath "/secret-simulator-token.yaml") . | sha256sum }}
+        {{- end }}
         {{- with .Values.simulator.podAnnotations }}
         {{- toYaml . | nindent 8 }}
         {{- end }}
@@ -70,6 +79,11 @@ spec:
           env:
             - name: SIM_LISTEN
               value: ":8099"
+            - name: SIM_TOKEN
+              valueFrom:
+                secretKeyRef:
+                  name: {{ include "shepherd.simulatorTokenSecretName" . }}
+                  key: {{ include "shepherd.simulatorTokenKey" . }}
             {{- if .Values.simulator.allowedHosts }}
             - name: SIM_ALLOWED_HOSTS
               value: {{ join "," .Values.simulator.allowedHosts | quote }}

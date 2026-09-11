@@ -40,6 +40,8 @@ func New(ctx context.Context, cfg *config.DatabaseConfig, loggers ...*slog.Logge
 			logger.ErrorContext(ctx, msg, args...)
 		case tracelog.LogLevelWarn:
 			logger.WarnContext(ctx, msg, args...)
+		case tracelog.LogLevelTrace, tracelog.LogLevelDebug, tracelog.LogLevelInfo, tracelog.LogLevelNone:
+			logger.DebugContext(ctx, msg, args...)
 		default:
 			logger.DebugContext(ctx, msg, args...)
 		}

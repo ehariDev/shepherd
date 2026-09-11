@@ -60,7 +60,7 @@ const (
 // CreateRun submits a graph for an S3 sandbox run (VB-1 §6.4 step 1 onward).
 // It performs only a cheap structural pre-check synchronously; render,
 // transform, gate validation and the sandbox call itself all happen later in
-// internal/simulate.RunWorker, with the run recorded as failed rather than
+// internal/simulate/worker.RunWorker, with the run recorded as failed rather than
 // synchronously rejected — see the run-API spec's decision 13.
 func (s *SimulateService) CreateRun(ctx context.Context, req *connect.Request[mgmtv1.CreateRunRequest]) (*connect.Response[mgmtv1.CreateRunResponse], error) {
 	if !s.cfg.Enabled {

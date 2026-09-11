@@ -4,6 +4,10 @@ import { CheckCircle, Copy, Plus, Search, Trash2 } from 'lucide-react';
 import { useEffect, useState } from 'react';
 import { toast } from 'sonner';
 import { clients, toApiError } from '@/api/transport';
+import { QueryError } from '@/components/QueryError';
+import { DataTable, type DataTableColumn } from '@/components/ui/DataTable';
+import { Field, Input } from '@/components/ui/Field';
+import type { Assignment, CollectorInstance } from '@/gen/shepherd/mgmt/v1/fleet_pb';
 import { useMe } from '@/hooks/useMe';
 import { useOrgId } from '@/hooks/useOrg';
 import { formatTimestampRelative } from '@/lib/utils';
@@ -13,6 +17,103 @@ const STATUS_COLORS: Record<string, string> = {
   APPLYING: 'text-yellow-400 bg-yellow-400/10 border-yellow-400/20',
   FAILED: 'text-red-400 bg-red-400/10 border-red-400/20',
 };
+
+const instanceColumns: DataTableColumn<CollectorInstance>[] = [
+  {
+    key: 'name',
+    header: 'Name',
+    headerClassName: 'px-4 py-2 text-left font-medium',
+    cellClassName: 'px-4 py-2.5 font-mono text-xs',
+    render: (i) => i.name,
+  },
+  {
+    key: 'version',
+    header: 'Version',
+    headerClassName: 'px-4 py-2 text-left font-medium',
+    cellClassName: 'px-4 py-2.5 text-muted',
+    render: (i) => i.alloyVersion || '—',
+  },
+  {
+    key: 'os',
+    header: 'OS',
+    headerClassName: 'px-4 py-2 text-left font-medium',
+    cellClassName: 'px-4 py-2.5 text-muted',
+    render: (i) => i.os || '—',
+  },
+  {
+    key: 'lastSeen',
+    header: 'Last seen',
+    headerClassName: 'px-4 py-2 text-left font-medium',
+    cellClassName: 'px-4 py-2.5 text-muted',
+    render: (i) => formatTimestampRelative(i.lastSeen),
+  },
+  {
+    key: 'status',
+    header: 'Status',
+    headerClassName: 'px-4 py-2 text-left font-medium',
+    render: (i) => {
+      const instStatus = i.remoteConfigStatus?.toUpperCase() ?? '';
+      const instColor = STATUS_COLORS[instStatus] ?? 'text-muted bg-border border-border-strong';
+      return (
+        <span className={`text-xs font-medium px-2 py-0.5 rounded border ${instColor}`}>
+          {instStatus || 'UNKNOWN'}
+        </span>
+      );
+    },
+  },
+  {
+    key: 'error',
+    header: 'Error',
+    headerClassName: 'px-4 py-2 text-left font-medium',
+    cellClassName: 'px-4 py-2.5 text-red-400 text-xs',
+    render: (i) => i.remoteConfigError || '—',
+  },
+];
+
+function assignmentColumns(
+  onRemove: (a: Assignment) => void,
+  removePending: boolean,
+): DataTableColumn<Assignment>[] {
+  return [
+    {
+      key: 'group',
+      header: 'Group',
+      headerClassName: 'px-4 py-2 text-left font-medium',
+      render: (a) => a.groupDisplayName || '—',
+    },
+    {
+      key: 'groupId',
+      header: 'Group ID',
+      headerClassName: 'px-4 py-2 text-left font-medium',
+      cellClassName: 'px-4 py-2.5 font-mono text-xs text-muted',
+      render: (a) => a.groupId,
+    },
+    {
+      key: 'added',
+      header: 'Added',
+      headerClassName: 'px-4 py-2 text-left font-medium',
+      cellClassName: 'px-4 py-2.5 text-muted text-xs',
+      render: (a) => formatTimestampRelative(a.createdAt),
+    },
+    {
+      key: 'actions',
+      header: '',
+      headerClassName: 'px-4 py-2',
+      cellClassName: 'px-4 py-2.5 text-right',
+      render: (a) => (
+        <button
+          type='button'
+          onClick={() => onRemove(a)}
+          disabled={removePending}
+          aria-label={`Remove ${a.groupDisplayName || a.groupId}`}
+          className='text-muted-3 transition-colors hover:text-red-400 disabled:opacity-50'
+        >
+          <Trash2 size={14} />
+        </button>
+      ),
+    },
+  ];
+}
 
 type Tab = 'config' | 'info' | 'access';
 
@@ -32,7 +133,12 @@ export function CollectorDetailPage() {
     if (tab === 'access' && !isOrgAdmin) setTab('config');
   }, [tab, isOrgAdmin]);
 
-  const { data: collector, isLoading: collectorLoading } = useQuery({
+  const {
+    data: collector,
+    isLoading: collectorLoading,
+    isError: collectorIsError,
+    error: collectorError,
+  } = useQuery({
     queryKey: ['collector', orgId, id],
     queryFn: () => clients.fleet.getCollector({ orgId, id }),
     enabled: !!orgId,
@@ -126,6 +232,13 @@ export function CollectorDetailPage() {
   if (!orgId || collectorLoading) {
     return <div className='text-sm text-muted p-6'>Loading…</div>;
   }
+  if (collectorIsError) {
+    return (
+      <div className='p-6'>
+        <QueryError error={collectorError} noun='this collector' />
+      </div>
+    );
+  }
 
   const detail = collector;
   const status = detail?.remoteConfigStatus?.toUpperCase() ?? '';
@@ -152,7 +265,10 @@ export function CollectorDetailPage() {
             <span>Last seen {formatTimestampRelative(detail?.lastSeen)}</span>
           </div>
         </div>
-        <span className={`text-xs font-medium px-2 py-0.5 rounded border ${statusColor}`}>
+        <span
+          data-testid='collector-status'
+          className={`text-xs font-medium px-2 py-0.5 rounded border ${statusColor}`}
+        >
           {status || 'UNKNOWN'}
         </span>
       </div>
@@ -248,47 +364,13 @@ export function CollectorDetailPage() {
             {instances.length === 0 ? (
               <p className='text-sm text-muted-2'>No instances have reported in yet.</p>
             ) : (
-              <div className='rounded-lg border border-border overflow-hidden overflow-x-auto'>
-                <table className='w-full text-sm'>
-                  <thead className='bg-card text-muted'>
-                    <tr>
-                      <th className='px-4 py-2 text-left font-medium'>Name</th>
-                      <th className='px-4 py-2 text-left font-medium'>Version</th>
-                      <th className='px-4 py-2 text-left font-medium'>OS</th>
-                      <th className='px-4 py-2 text-left font-medium'>Last seen</th>
-                      <th className='px-4 py-2 text-left font-medium'>Status</th>
-                      <th className='px-4 py-2 text-left font-medium'>Error</th>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {instances.map((inst) => {
-                      const instStatus = inst.remoteConfigStatus?.toUpperCase() ?? '';
-                      const instColor =
-                        STATUS_COLORS[instStatus] ?? 'text-muted bg-border border-border-strong';
-                      return (
-                        <tr key={inst.name} className='border-t border-border'>
-                          <td className='px-4 py-2.5 font-mono text-xs'>{inst.name}</td>
-                          <td className='px-4 py-2.5 text-muted'>{inst.alloyVersion || '—'}</td>
-                          <td className='px-4 py-2.5 text-muted'>{inst.os || '—'}</td>
-                          <td className='px-4 py-2.5 text-muted'>
-                            {formatTimestampRelative(inst.lastSeen)}
-                          </td>
-                          <td className='px-4 py-2.5'>
-                            <span
-                              className={`text-xs font-medium px-2 py-0.5 rounded border ${instColor}`}
-                            >
-                              {instStatus || 'UNKNOWN'}
-                            </span>
-                          </td>
-                          <td className='px-4 py-2.5 text-red-400 text-xs'>
-                            {inst.remoteConfigError || '—'}
-                          </td>
-                        </tr>
-                      );
-                    })}
-                  </tbody>
-                </table>
-              </div>
+              <DataTable
+                columns={instanceColumns}
+                rows={instances}
+                rowKey={(inst) => inst.name}
+                rowClassName='border-t border-border'
+                scrollX
+              />
             )}
           </div>
         </div>
@@ -346,25 +428,22 @@ export function CollectorDetailPage() {
             </div>
 
             <form onSubmit={addByPaste} className='flex flex-wrap items-end gap-2 max-w-md'>
-              <label className='block flex-1 min-w-40 text-xs font-medium text-muted'>
-                Group ID
-                <input
+              <Field label='Group ID' className='flex-1 min-w-40'>
+                <Input
                   value={pastedGroupId}
                   onChange={(e) => setPastedGroupId(e.target.value)}
                   placeholder='11111111-1111-1111-1111-111111111111'
-                  className='mt-1 block w-full rounded-md border border-border-strong bg-card px-3 py-1.5 text-sm font-mono'
+                  mono
                   data-testid='group-id-input'
                 />
-              </label>
-              <label className='block flex-1 min-w-40 text-xs font-medium text-muted'>
-                Display name <span className='text-muted-3'>(optional)</span>
-                <input
+              </Field>
+              <Field label='Display name' optional className='flex-1 min-w-40'>
+                <Input
                   value={pastedDisplayName}
                   onChange={(e) => setPastedDisplayName(e.target.value)}
                   placeholder='SRE Readers'
-                  className='mt-1 block w-full rounded-md border border-border-strong bg-card px-3 py-1.5 text-sm'
                 />
-              </label>
+              </Field>
               <button
                 type='submit'
                 disabled={!pastedGroupId.trim() || addAssignment.isPending}
@@ -385,40 +464,16 @@ export function CollectorDetailPage() {
                 <p className='text-sm text-muted-2'>No groups have access to this collector yet.</p>
               </div>
             ) : (
-              <div className='rounded-lg border border-border overflow-hidden overflow-x-auto'>
-                <table className='w-full text-sm'>
-                  <thead className='bg-card text-muted'>
-                    <tr>
-                      <th className='px-4 py-2 text-left font-medium'>Group</th>
-                      <th className='px-4 py-2 text-left font-medium'>Group ID</th>
-                      <th className='px-4 py-2 text-left font-medium'>Added</th>
-                      <th className='px-4 py-2' />
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {(assignments?.items ?? []).map((a) => (
-                      <tr key={a.id} className='border-t border-border'>
-                        <td className='px-4 py-2.5'>{a.groupDisplayName || '—'}</td>
-                        <td className='px-4 py-2.5 font-mono text-xs text-muted'>{a.groupId}</td>
-                        <td className='px-4 py-2.5 text-muted text-xs'>
-                          {formatTimestampRelative(a.createdAt)}
-                        </td>
-                        <td className='px-4 py-2.5 text-right'>
-                          <button
-                            type='button'
-                            onClick={() => removeAssignment.mutate(a.groupId)}
-                            disabled={removeAssignment.isPending}
-                            aria-label={`Remove ${a.groupDisplayName || a.groupId}`}
-                            className='text-muted-3 transition-colors hover:text-red-400 disabled:opacity-50'
-                          >
-                            <Trash2 size={14} />
-                          </button>
-                        </td>
-                      </tr>
-                    ))}
-                  </tbody>
-                </table>
-              </div>
+              <DataTable
+                columns={assignmentColumns(
+                  (a) => removeAssignment.mutate(a.groupId),
+                  removeAssignment.isPending,
+                )}
+                rows={assignments?.items ?? []}
+                rowKey={(a) => a.id}
+                rowClassName='border-t border-border'
+                scrollX
+              />
             )}
           </div>
         </div>

@@ -89,7 +89,7 @@ type ClientRun struct {
 }
 
 // clientTerminalStates are simsvc's terminal RunStates.
-var clientTerminalStates = map[string]bool{ //nolint:gochecknoglobals // static lookup table
+var clientTerminalStates = map[string]bool{
 	"completed": true, "failed": true, "expired": true, "canceled": true,
 }
 

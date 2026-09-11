@@ -11,6 +11,6 @@
 
 - [ ] `make lint`
 - [ ] `make test`
-- [ ] `cd web && pnpm ci` (if the SPA changed)
+- [ ] `make web-ci` (if the SPA changed)
 - [ ] `./scripts/build-web.sh` run and `internal/spa/dist/` staged (if the SPA changed)
 - [ ] `make generate` run and output committed (if proto/ or SQL changed)

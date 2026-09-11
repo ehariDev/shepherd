@@ -35,8 +35,16 @@ var _ mgmtv1connect.ServiceAccountServiceHandler = (*ServiceAccountService)(nil)
 var (
 	errServiceAccountNameRequired = errors.New("name is required")
 	errServiceAccountCapability   = errors.New(`capability must be "propose" or "apply"`)
+	errServiceAccountRole         = errors.New(`role must be "" (defaults to "editor"), "editor", or "admin"`)
 	errServiceAccountNotFound     = errors.New("service account not found")
 	errServiceAccountNameExists   = errors.New("service account name already exists in this org")
+)
+
+// serviceAccountRoleEditor/Admin mirror 0018_service_account_role's CHECK
+// constraint values exactly.
+const (
+	serviceAccountRoleEditor = "editor"
+	serviceAccountRoleAdmin  = "admin"
 )
 
 func toServiceAccountProto(sa sqlc.ServiceAccount) *mgmtv1.ServiceAccount {
@@ -52,6 +60,7 @@ func toServiceAccountProto(sa sqlc.ServiceAccount) *mgmtv1.ServiceAccount {
 		CreatedBy:  sa.CreatedBy,
 		Status:     status,
 		CreatedAt:  protoTimestamp(sa.CreatedAt),
+		Role:       sa.Role,
 	}
 }
 
@@ -110,6 +119,18 @@ func (s *ServiceAccountService) CreateServiceAccount(ctx context.Context, req *c
 	if capability != capabilityPropose && capability != capabilityApply {
 		return nil, connect.NewError(connect.CodeInvalidArgument, errServiceAccountCapability)
 	}
+	// role defaults to "editor" when the request leaves it unset — D3's
+	// "admin explicit at creation": nothing about capability, name, or any
+	// other field ever implies "admin", only an explicit role="admin" does.
+	role := req.Msg.GetRole()
+	switch role {
+	case "":
+		role = serviceAccountRoleEditor
+	case serviceAccountRoleEditor, serviceAccountRoleAdmin:
+		// explicit and valid.
+	default:
+		return nil, connect.NewError(connect.CodeInvalidArgument, errServiceAccountRole)
+	}
 
 	actor := actorFromCtx(ctx)
 	raw := make([]byte, 32)
@@ -120,7 +141,7 @@ func (s *ServiceAccountService) CreateServiceAccount(ctx context.Context, req *c
 	hash := sha256.Sum256([]byte(secret))
 
 	sa, err := s.store.Queries.CreateServiceAccount(ctx, sqlc.CreateServiceAccountParams{
-		OrgID: orgID, Name: req.Msg.GetName(), Capability: capability, TokenHash: hash[:], CreatedBy: actor,
+		OrgID: orgID, Name: req.Msg.GetName(), Capability: capability, Role: role, TokenHash: hash[:], CreatedBy: actor,
 	})
 	if err != nil {
 		if isUniqueViolation(err) {
@@ -131,7 +152,7 @@ func (s *ServiceAccountService) CreateServiceAccount(ctx context.Context, req *c
 	}
 	auditLog(ctx, s.store, actor, orgID, "service_account.create", "service_account", sa.ID.String())
 	return connect.NewResponse(&mgmtv1.CreateServiceAccountResponse{
-		Id: sa.ID.String(), Name: sa.Name, Capability: sa.Capability, Secret: secret,
+		Id: sa.ID.String(), Name: sa.Name, Capability: sa.Capability, Secret: secret, Role: sa.Role,
 	}), nil
 }
 

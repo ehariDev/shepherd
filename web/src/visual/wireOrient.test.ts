@@ -1,8 +1,8 @@
 import { readdirSync, readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { describe, expect, it } from 'vitest';
-import type { GraphDocument, GraphNode, SchemaPayload } from './types';
-import { orientConnection, rfEndpointsForEdge } from './wireOrient';
+import type { GraphDocument, GraphEdge, GraphNode, SchemaPayload } from './types';
+import { orientConnection, rfEndpointsForEdge, scalarConflicts } from './wireOrient';
 
 /**
  * B1 (docs/reviews/README.md): CanvasPane's onConnect stored React Flow's
@@ -202,3 +202,76 @@ describe('rfEndpointsForEdge (B1, the render-side half of the fix)', () => {
     expect(rf).toEqual(gesture);
   });
 });
+
+describe('scalarConflicts (W5-03)', () => {
+  // The shipped schema does not currently populate `cardinality` on any real
+  // port (nothing in the artifact/overlay pipeline emits it yet), so this —
+  // like store.test.ts's own selectConnectionState fixtures — is a
+  // hand-built minimal schema rather than the shipped one.
+  const scalarSchema = {
+    _meta: { alloy_version: 'x' },
+    components: {
+      source: {
+        stability: 'ga',
+        attributes: [],
+        blocks: [],
+        inputs: [],
+        outputs: [{ export: 'out', path: ['out'], type: 'x', role: 'produces' }],
+      },
+      sink: {
+        stability: 'ga',
+        attributes: [],
+        blocks: [],
+        inputs: [{ prop: 'in', path: ['in'], type: 'x', role: 'accepts', cardinality: 'scalar' }],
+        outputs: [],
+      },
+      list_sink: {
+        stability: 'ga',
+        attributes: [],
+        blocks: [],
+        inputs: [{ prop: 'in', path: ['in'], type: 'x', role: 'accepts', cardinality: 'list' }],
+        outputs: [],
+      },
+    },
+  } as unknown as SchemaPayload;
+
+  const wireEdge = (id: string, fromNode: string, toNode: string): GraphEdge => ({
+    id,
+    from: { node: fromNode, port: 'out' },
+    to: { node: toNode, port: 'in' },
+  });
+
+  it('returns the existing edge(s) into a scalar port', () => {
+    const nodes = [node('a', 'source'), node('b', 'source'), node('c', 'sink')];
+    const existing = wireEdge('e1', 'a', 'c');
+    const conflicts = scalarConflicts(
+      scalarSchema,
+      { nodes, edges: [existing] },
+      orientedFrom('b', 'c'),
+    );
+    expect(conflicts).toEqual([existing]);
+  });
+
+  it('returns [] for a list-cardinality port, however many wires it already has', () => {
+    const nodes = [node('a', 'source'), node('b', 'source'), node('c', 'list_sink')];
+    const existing = wireEdge('e1', 'a', 'c');
+    expect(
+      scalarConflicts(scalarSchema, { nodes, edges: [existing] }, orientedFrom('b', 'c')),
+    ).toEqual([]);
+  });
+
+  it('returns [] for a scalar port with no existing wire', () => {
+    const nodes = [node('a', 'source'), node('c', 'sink')];
+    expect(scalarConflicts(scalarSchema, { nodes, edges: [] }, orientedFrom('a', 'c'))).toEqual([]);
+  });
+
+  it('returns [] without a schema', () => {
+    const nodes = [node('a', 'source'), node('c', 'sink')];
+    const existing = wireEdge('e1', 'a', 'c');
+    expect(scalarConflicts(null, { nodes, edges: [existing] }, orientedFrom('a', 'c'))).toEqual([]);
+  });
+});
+
+function orientedFrom(fromNode: string, toNode: string) {
+  return { from: { node: fromNode, port: 'out' }, to: { node: toNode, port: 'in' } };
+}

@@ -7,7 +7,9 @@ import "google/protobuf/struct.proto";
 option go_package = "shepherd/gen/shepherd/mgmt/v1;mgmtv1";
 
 // VisualService covers /api/orgs/{org}/visual/* and the pipeline graph view.
-// Render/Validate/UpgradeCheck require org-admin; GraphView requires org-reader.
+// Render/Validate/UpgradeCheck require org-editor (D6, the same authoring
+// ceiling WizardService and SimulateService hold); GraphView requires
+// org-reader.
 service VisualService {
   rpc Render(RenderRequest) returns (RenderResponse) {}
   rpc Validate(ValidateVisualRequest) returns (ValidateVisualResponse) {}

@@ -726,3 +726,7 @@ widget types per attribute type. (4) Delete/selection tests. (5) Extend `a11y.sp
 
 *Reviewed against `main` @ `11f4e16`, Alloy schema `v1.18.1` (184 components), Alloy binary v1.18.1.
 No source files were modified in the course of this review.*
+
+*Note added 2026-09-11: `11f4e16` is from a pre-reset history and does not resolve in this
+repository (see `docs/archive/README.md`'s note on archived commit SHAs). Treat it as a sequencing
+label, not a commit to look up.*

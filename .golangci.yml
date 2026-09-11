@@ -43,7 +43,7 @@ linters:
       check-type-assertions: true
       check-blank: true
     exhaustive:
-      default-signifies-exhaustive: true
+      default-signifies-exhaustive: false
     gosec:
       excludes:
         - G104            # duplicate of errcheck

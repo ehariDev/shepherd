@@ -47,7 +47,7 @@ var errEncryptionUnavailable = errors.New("encryption not configured")
 
 // validCredentialKinds are the six auth strategies from
 // docs/git-provider-design.md §3.2.
-var validCredentialKinds = map[string]bool{ //nolint:gochecknoglobals // static validation table, read-only after init
+var validCredentialKinds = map[string]bool{
 	"none": true, "basic": true, "pat": true, "ssh": true, "ado_sp": true, "github_app": true,
 }
 

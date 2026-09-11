@@ -7,7 +7,8 @@
   "scripts": {
     "dev": "vite",
     "build": "tsc && vite build",
-    "lint": "biome lint --write .",
+    "lint": "biome check .",
+    "lint:fix": "biome lint --write .",
     "fmt": "biome format --write .",
     "check": "biome check --write .",
     "check:ci": "biome check .",
@@ -53,14 +54,16 @@
     "@bufbuild/protoc-gen-es": "^2.14.0",
     "@playwright/test": "^1.50.0",
     "@tailwindcss/vite": "^4.1.8",
+    "@testing-library/react": "^16.3.3",
     "@types/node": "^22.15.21",
     "@types/react": "^18.3.23",
     "@types/react-dom": "^18.3.7",
     "@vitejs/plugin-react": "^4.5.2",
     "fake-indexeddb": "6.2.5",
+    "jsdom": "^26.1.0",
     "tailwindcss": "^4.1.8",
     "typescript": "^5.8.3",
     "vite": "^6.3.5",
-    "vitest": "^3.2.1"
+    "vitest": "^4.1.11"
   }
 }

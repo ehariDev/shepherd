@@ -7,7 +7,7 @@ Compose-based e2e suites (`//go:build e2e`) plus the kind-based Kubernetes suite
 - `make e2e` — core flow (registration, pipelines, GitOps, RBAC); excludes `sandbox-sim`
 - `make e2e-sim` — S3 sandbox suite: containment probes first, then run-lifecycle specs
 - `make e2e-egress` — the containment probes alone (fast local check)
-- `make e2e-k8s` — kind cluster suite: Helm install, NetworkPolicy enforcement (CNI negative control first), Gateway API route conformance and operator-owned attachment verification; ~500s for six features incl. cluster create/destroy
+- `make e2e-k8s` — kind cluster suite, nine `func Test*` features (`grep -h '^func Test' e2e/k8s/*_test.go | grep -vc TestMain`): CNI negative control, Helm install with defaults, Helm install with the simulator on, repeatable install, chart-provisioned CNPG/ESO dependencies, simulator containment probes, simulator containment kill probe, Gateway operator-owned attachment, Gateway route conformance/tenant isolation. Last full-cycle timing (`e2e/k8s/README.md`'s ~500s figure, recorded for six capability groups rather than by `func Test`, incl. cluster create/destroy) predates this nine-count and has not been re-measured since the suite grew — treat it as a stale floor, not a current number.
 - Focused run against a running stack (`E2E_KEEP=1` first): `ginkgo --tags=e2e --focus "GitOps" ./e2e`
 
 ## Rules

@@ -1,8 +1,9 @@
 # Management API contract — protobuf/Connect refactor design
 
-> Status: approved for implementation 2026-08-18. Companion progress tracking in
-> `docs/project-status.md`. This doc is the authoritative reference for the
-> `mgmt-api-contract` implementation workflow.
+> Status: approved for implementation 2026-08-18, implemented, **archived — no longer
+> authoritative** (see `docs/archive/README.md`). Kept as the design record for why the management
+> API is Connect RPC + REST shims. `docs/spec.md` is the current authoritative reference for the
+> shipped contract.
 
 ## Problem
 

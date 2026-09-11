@@ -92,8 +92,10 @@
         <tbody>
           <tr>
             <td><strong>Deploy on Kubernetes</strong><br><span class="req-note">the intended way</span></td>
-            <td><strong>Kubernetes 1.25+</strong> and Helm 3, plus a <strong>PostgreSQL 14+</strong>
-                the cluster can reach (CI and the dev stack use 16). The chart declares that floor in
+            <td><strong>Kubernetes 1.25+</strong> and Helm 3, plus a <strong>PostgreSQL 16</strong>
+                the cluster can reach &mdash; the only major every test, testcontainers run, and the
+                compose stacks pin (<code>postgres:16-alpine</code>); older majors are untested. The
+                chart declares the Kubernetes floor in
                 <code>kubeVersion</code>, so an older cluster is refused at install rather than
                 failing later on a kind it does not have &mdash; and because <code>helm template</code>
                 takes its Kubernetes version from the <code>helm</code> binary's own defaults, a
@@ -142,7 +144,7 @@
 <footer>
   <div class="wrap">
     <div class="foot-left">
-      <span class="pill">v0.3.5</span>
+      <span class="pill">v0.4.0</span>
       <span>self-hosted Grafana Alloy fleet manager</span>
     </div>
     <div class="foot-links">

@@ -21,9 +21,9 @@ Helm. `make tools` installs the Go-side generators at their pinned versions.
 ## Before you open a pull request
 
 ```bash
-make lint         # golangci-lint (v2 config) + the repo guards + helm lint
+make lint         # golangci-lint (v2 config) + the repo guards; make helm-lint for the chart
 make test         # the whole Go suite; spins up real Postgres via testcontainers
-cd web && pnpm ci # typecheck, vitest, biome, build
+make web-ci       # typecheck, vitest, biome check, build — CI's exact web job
 ```
 
 Two things catch people out:

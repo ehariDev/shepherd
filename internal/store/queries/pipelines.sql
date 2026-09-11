@@ -57,6 +57,16 @@ RETURNING *;
 -- name: DeletePipeline :exec
 DELETE FROM pipelines WHERE id = $1;
 
+-- name: ListPipelineNamesReferencingDestination :many
+-- Backs DeleteDestination's in-use check: a wizard-managed pipeline records
+-- the destination it targets as {"destination_id": "<uuid>"} inside its
+-- wizard_state JSONB, and deleting the destination out from under it would
+-- leave the pipeline pointing at nothing.
+SELECT name FROM pipelines
+WHERE wizard_state IS NOT NULL
+AND wizard_state @> jsonb_build_object('destination_id', sqlc.arg(destination_id)::text)
+ORDER BY name;
+
 -- name: ListEnabledPipelinesByOrg :many
 SELECT * FROM pipelines WHERE org_id = $1 AND enabled = true ORDER BY name;
 

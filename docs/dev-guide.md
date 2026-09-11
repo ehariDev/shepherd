@@ -65,17 +65,33 @@ docker compose -f dev/docker-compose.dev.yaml --profile oidc up -d --build --wai
 make dev-sim   # == SHEPHERD_SIM_ENABLED=true docker compose ... --profile sim up
 ```
 
-**The feature is disabled by default and that default is deliberate.** `simulator.enabled` has no
-viper default, and both compose files default `SHEPHERD_SIM_ENABLED` to `false`. Two containment
-criticals are open (B-CONTAIN-1 and B-CONTAIN-2 in the ledger): the sandbox can reach the control
-plane over `sim-internal`, and `internal: true` does not deny the Docker host on every runtime.
+**The posture is different in every artifact — none of them is "disabled and that's deliberate"
+across the board any more; both containment gates (B-CONTAIN-1, B-CONTAIN-2) closed 2026-08-21
+and F5 is CLOSED in `docs/project-status.md`:**
 
-Turning it on locally to develop against is fine. Do not enable it on a shared or production
-deployment until those close — the sandbox executes user-authored Alloy config.
+| Artifact | Default | Why |
+|---|---|---|
+| Shepherd binary (viper) | `simulator.enabled` has **no default** — off unless config sets it | Library default stays conservative; something above it (chart or an operator) opts in explicitly |
+| Helm chart (`deploy/helm/shepherd`) | `simulator.enabled: true` — **on since v0.0.1** | Both containment gates closed: bind-address hardening + `P-shepherd-deny` probes (B-CONTAIN-1), and NetworkPolicy enforcement verified in a real cluster (`e2e/k8s/simulator_containment_test.go`, all seven Layer B probes + the kill probe). Ships with its default-deny NetworkPolicy, never without |
+| `dev/docker-compose.dev.yaml` / `e2e/docker-compose.e2e.yaml` | opt-in `sim` profile, `SHEPHERD_SIM_ENABLED` defaults `false` | Deliberate, and unrelated to the containment gates: the default `make e2e` exercises the simulator-*absent* path on purpose; compose is a local-dev convenience, not the containment boundary |
+
+`make dev-sim` builds the simulator image and brings the stack up with the profile and the env
+var both on — this is the one path in the table above that still requires an explicit opt-in.
+
+**B-CONTAIN-2 remains a documented local-dev-only caveat**, unrelated to the chart default above:
+on OrbStack/Docker Desktop, `internal: true` does not deny the bridge gateway, so every
+host-published port is reachable from the sandbox network. This is a Docker-bridge artifact with
+no Kubernetes equivalent (the chart's NetworkPolicy is enforced by the CNI, not by compose), so it
+stays documented rather than fixed. Turning `dev-sim` on locally to develop against is fine.
 
 Without the profile, `Simulate ▾ → Sandbox run` reports that sandbox simulation is not enabled on
 this server, which is the intended degradation. The other two tiers (S1 flow check, S2
 relabel/log trace) need no profile and work in the default stack.
+
+**Fullstack Playwright coverage of the sandbox-run UI is pending** (`web/tests/fullstack/`, wave 3
+per `docs/project-status.md`) — there is no `make test-fullstack-sim` target yet; `make
+test-fullstack` runs against the sim-disabled default dev stack, same as `make dev` without
+`dev-sim`.
 
 ---
 
@@ -86,6 +102,7 @@ The dev seed (`shepherd dev seed`) creates:
 | Entity | Details |
 |---|---|
 | Orgs | `platform-org` (admin group `22222222-aaaa-4000-8000-000000000001`, reader group `…0002`) + `data-eng` (admin group `…0003`) |
+| Local users | Bootstrap admin (§ Credentials below) plus two more on `platform-org`: `editor` / `editor-dev-pass` (`org_members.role = editor`) and `viewer` / `viewer-dev-pass` (`role = viewer`) — deterministic fixtures for exercising the org-editor/viewer tiers without an OIDC provider (`internal/cli/dev.go`'s `seedLocalUsers`) |
 | Clusters | `prod-eu-1`, `staging-eu-1` (both claimed by platform-org), `data-eng-eu-1` (claimed by data-eng) |
 | Collectors | `metrics`, `logs`, `singleton` on prod-eu-1; `metrics` on data-eng-eu-1. Collector rows only — instances register themselves from the compose Alloy containers; `singleton` shows zero instances until something registers, which is expected |
 | Pipelines (platform-org) | `base-metrics` (ui, enabled), `demo-visual` (visual, enabled — real `alloy-graph/v1` wizard_state so the visual builder opens with an editable example), `loki-logs` (ui, disabled), `app-obs-wizard` (wizard, disabled) |
@@ -145,14 +162,71 @@ This is a direct DB insert — no HTTP flow. **Never use in production.**
 
 ## Makefile targets
 
+Full list (`make help` prints the same, plus the `E2E_*` env knobs each test target honors).
+
+**Dev stack**
+
 | Target | Action |
 |---|---|
-| `make dev` | Start full dev stack (idempotent, builds images if needed) |
-| `make dev-frontend` | Start Vite dev server (backend must be running) |
-| `make dev-restart` | Rebuild shepherd image + restart container |
-| `make dev-seed` | Re-run seed (idempotent) |
-| `make dev-reset` | Stop stack + wipe all data |
-| `make test-fullstack` | Run fullstack Playwright suite (boots stack, runs, tears down) |
+| `make dev` | Start the local dev stack (idempotent, builds images if needed) — login `admin`/`admin` at `:8080` |
+| `make dev-frontend` | Start the Vite dev server (HMR) against the running dev backend |
+| `make dev-restart` | Rebuild the shepherd image + restart its container (5-10s with layer cache) |
+| `make dev-seed` | Re-run the dev seed (idempotent — safe on a running stack) |
+| `make dev-reset` | Stop the dev stack and wipe all data (named volumes) |
+| `make dev-sim` | Start the dev stack with the S3 sandbox simulator (builds the simulator image; opt-in — see Optional profiles above) |
+
+**Build**
+
+| Target | Action |
+|---|---|
+| `make build` | Build the shepherd binary (embeds the SPA built by `build-web`) |
+| `make build-web` | Build the React SPA into `internal/spa/dist` |
+| `make build-all` | Alias of `build` |
+| `make docker-build-local` | Build `shepherd:local` from `deploy/Dockerfile.local` |
+| `make docker-build-init` | Build `shepherd:local-init` (init/CLI image for migrate + seed) |
+| `make docker-build-simulator` | Build the S3 sandbox simulator image |
+| `make release-snapshot` | GoReleaser dry run |
+| `make clean` | Remove build outputs (`bin/`, goreleaser `dist/`) |
+| `make clean-docker` | Remove the local `shepherd:*` / `shepherd-simulator:*` image tags |
+
+**Test**
+
+| Target | Action |
+|---|---|
+| `make test` | Run all Go tests (requires Docker) |
+| `make test-cover` | Run all Go tests with a coverage profile (requires Docker) |
+| `make test-ui` | Mocked Playwright suite (no backend required) |
+| `make test-fullstack` | Playwright fullstack suite against the dev stack (boots it, runs, tears down; no dedicated `-sim` variant yet — see the sandbox table above) |
+| `make web-ci` | Run CI's web job locally (typecheck + tests + biome check + build) |
+| `make smoke` | Container smoke test (< 60s, Docker only) |
+| `make e2e` | Compose e2e suite, real Alloy agent (~10 min) |
+| `make e2e-sim` | S3 sandbox e2e: containment probes + run lifecycle |
+| `make e2e-egress` | Sandbox egress containment probes only (fast local check) |
+| `make e2e-k8s` | Kubernetes e2e suite on a fresh kind cluster (~3-5 min; 45m timeout budget) |
+| `make e2e-k8s-clean` | Delete kind clusters a SIGKILLed `e2e-k8s` run left behind |
+| `make schema-verify` | Verify the committed Alloy schema artifact matches the pinned version |
+| `make helm-lint` | Lint + template the Helm chart against every `ci/` value file |
+| `make chart-verify` | Verify the vendored chart schema matches upstream (network; occasional) |
+
+**Lint, guards, codegen**
+
+| Target | Action |
+|---|---|
+| `make lint` | Repo guards + golangci-lint |
+| `make guards` | Run all ten repo-shape guards |
+| `make fmt` | Format Go code |
+| `make vulncheck` | Guard: no known-reachable vulnerabilities (govulncheck) |
+| `make generate` | Regenerate buf + sqlc code (and the Alloy version constant) |
+| `make generate-corpus` | Regenerate visual-builder goldens |
+| `make schema` | Regenerate the Alloy schema artifact (network + docker; occasional) |
+| `make docs` | Regenerate `site/docs/` from `scripts/docs-content/` |
+| `make tools` | Install the Go-installable CLIs the targets here shell out to |
+
+Individual guard targets (`check-single-dist`, `check-dist-consistency`, `check-build-script`,
+`check-raw-sql`, `check-docker`, `check-no-route-mocks`, `check-gateway-pin`,
+`check-chartvalues-pin`, `check-docs-drift`, `check-docs-version`) are `make lint`/`make guards`
+prerequisites, not meant to be run standalone day to day — see the Makefile header for what each
+one checks.
 
 ---
 

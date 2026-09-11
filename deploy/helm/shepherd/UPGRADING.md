@@ -1,5 +1,90 @@
 # Upgrading the Shepherd chart
 
+## 0.9.x → 0.10.0
+
+An ordinary `helm upgrade`. Every pod rolls once — read on for why — but there
+is no manual adoption step like 0.9.0's.
+
+### What changed
+
+**The simulator's control API now requires a bearer token.** Before this
+release `POST /v1/runs` on the sandbox simulator was reachable by anything
+that could route to the Pod. Every install now authenticates it, sourced with
+the same precedence Shepherd's other bootstrap secrets use, highest first:
+
+1. `simulator.token.existingSecret` — bring your own Secret, unmanaged by
+   this chart.
+2. `externalSecrets.enabled` — a Password generator + `ExternalSecret` this
+   chart renders (the same pattern the runtime bootstrap secrets already
+   use).
+3. Otherwise the chart generates its own Secret and reuses it (`lookup`) on
+   every later `helm upgrade`, the same way the runtime Secret already does.
+
+Both the `shepherd` and `shepherd-simulator` Deployments carry a new
+`checksum/simulator-token` annotation, so **this upgrade rolls both pods once**
+even if nothing else about your values changed. If you set `config.simulator`
+explicitly (pointing Shepherd at a simulator this chart does not manage), you
+must now also set `config.simulator.token` — the chart refuses to render
+otherwise, naming the missing field.
+
+**GitOps caveat.** The generated-Secret path (case 3 above) uses the same
+`lookup`-reuse trick as the runtime bootstrap Secret, and the same limits
+apply: Argo CD, Flux, and `helm template | kubectl apply` render with no live
+cluster connection, so `lookup` returns empty and the chart regenerates the
+token — and rolls both Deployments — on every sync. Set
+`simulator.token.existingSecret` (or disable the simulator) to avoid that
+under those tools, exactly as `UPGRADING.md`'s 0.9.0 section already
+recommends for `cnpg.render` / `externalSecrets.render`.
+
+**The sandbox's `NetworkPolicy` no longer allows DNS egress.** Cluster DNS
+used to be open so the simulator could resolve the harness endpoints it talks
+to; those are now dialled by loopback IP directly (D10), so the sandboxed
+Alloy process has no legitimate reason to resolve a name at all. A
+user-authored pipeline that names a destination by hostname inside the
+sandbox will now fail closed at the network layer rather than resolving one.
+
+**Service accounts now have a role tier**, independent of their write
+capability. Every existing service account is backfilled to `editor` by the
+migration; `admin` is never assigned implicitly — only a `CreateServiceAccount`
+call that asks for it explicitly gets one. This is a deliberate narrowing:
+an apply-capability service account that previously reached
+`RoleOrgAdmin`-tier procedures (`RotateTenantRoute`, `DeleteTeam`,
+`AddTeamMember`, `DeleteCredential`, `ListAudit`, `ListTeamMembers`, and
+others) only because its org matched — with no tier check at all — now gets
+`PermissionDenied` on those calls unless it is re-created with the `admin`
+role. Check what your automation's service accounts actually call before
+upgrading; a token that broke here needs `admin`, not a workaround.
+
+**OIDC sessions now end at the ID token's expiry**, even if the session's own
+sliding TTL has not run out. Entra/Okta typically mint an ID token good for
+about an hour, and this deployment stores no refresh token to silently renew
+it, so an OIDC user who has been idle may now be asked to sign in again
+sooner than before. Local sessions are unaffected.
+
+**Local sign-in is now throttled**, per login name and per source IP
+independently. A burst of mistyped passwords still succeeds; sustained
+guessing gets `429` with `Retry-After`. State is in-process and per-replica,
+so the effective ceiling scales with replica count — a generous floor, not an
+exact one.
+
+**GitOps-synced files are now fully validated before they reach a pipeline.**
+Previously `gitsync` only ran Stage 1 (syntax) on a synced file; a file that
+passed syntax but would fail `alloy validate` (Stage 2) or the merge-time
+Stage 3 checks against the collector's other pipelines could still land. All
+three stages now run, and a `Reconciler` built without a validator refuses to
+sync at all rather than falling back to the weaker check. If your GitOps repo
+carries a pipeline that only ever passed Stage 1, this upgrade will start
+rejecting it — check the reconciler's logs, not the running config, for what
+changed.
+
+### Other changes worth knowing
+
+- Existing installs need no values changes for any of the above; every new
+  behaviour activates from the values you already have. The token precedence,
+  the role backfill, and the validation stages all have zero-config defaults
+  that preserve what a default 0.9.x install was already doing, except where
+  a gap is being closed (the simulator token, the GitOps validation depth).
+
 ## 0.8.x → 0.9.0
 
 This release needs **one manual step before the first upgrade**, and only that

@@ -69,7 +69,7 @@ func TestEveryProcedureHasAnAuthzRequirement(t *testing.T) {
 // TestCredential, VisualService.Render/Validate/UpgradeCheck,
 // SimulateService's whole surface) — role level alone cannot distinguish
 // "admin-only read" from "write", so this test does not try to.
-var writeVerbPrefixes = []string{ //nolint:gochecknoglobals // static test fixture
+var writeVerbPrefixes = []string{
 	"Create", "Update", "Delete", "Enable", "Disable", "Revoke", "Claim", "Unclaim", "Rotate", "Set", "Commit",
 }
 
@@ -84,7 +84,7 @@ var writeVerbPrefixes = []string{ //nolint:gochecknoglobals // static test fixtu
 // gated. Any addition to this set must justify, in this comment, why the
 // procedure's Create/Update/Delete-shaped name does not mean what it means
 // everywhere else in this table.
-var nonMutatingNameExceptions = map[string]bool{ //nolint:gochecknoglobals // static test fixture
+var nonMutatingNameExceptions = map[string]bool{
 	mgmtv1connect.SimulateServiceCreateRunProcedure: true,
 }
 

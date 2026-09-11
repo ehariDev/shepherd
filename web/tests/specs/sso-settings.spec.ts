@@ -124,8 +124,32 @@ test('a chart-managed provider is readable but not editable', async ({ page, api
   await expect(page.getByTestId('sso-remove')).toHaveCount(0);
 });
 
+test('shows an alert, not the forbidden message, when settings fail to load for another reason', async ({
+  page,
+  api,
+}) => {
+  await api.loginAs(appAdmin);
+  api.failNext('POST', '/shepherd.mgmt.v1.AdminService/GetOidcSettings', 503, 'unavailable');
+  await page.goto('/admin/auth');
+
+  await expect(page.getByTestId('sso-load-error')).toBeVisible({ timeout: 5000 });
+  await expect(page.getByTestId('sso-forbidden')).toHaveCount(0);
+});
+
 test('a non-app-admin is refused', async ({ page, api }) => {
+  // W6-S7: routeManifest's requiredRole ('app-admin' for admin/*) denies the
+  // direct navigation before AdminAuthPage ever mounts, so its own
+  // 'sso-forbidden' banner is unreachable now — the guard redirects to '/'
+  // (and shows a route-denied element on the way) instead of letting the
+  // page render and refuse. See route-guard.spec.ts for the full matrix.
   await api.loginAs(orgAdmin);
   await page.goto('/admin/auth');
-  await expect(page.getByTestId('sso-forbidden')).toBeVisible();
+  await expect(async () => {
+    const onRoot = new URL(page.url()).pathname === '/';
+    const hasDeniedBanner = await page
+      .getByTestId('route-denied')
+      .isVisible()
+      .catch(() => false);
+    expect(onRoot || hasDeniedBanner).toBe(true);
+  }).toPass({ timeout: 5000 });
 });

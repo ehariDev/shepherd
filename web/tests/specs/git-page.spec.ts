@@ -167,6 +167,34 @@ test('deletes a credential after confirmation', async ({ page, api }) => {
   expect(calls).toHaveLength(1);
 });
 
+test('shows an alert, not an empty state, when the credentials list fails to load', async ({
+  page,
+  api,
+}) => {
+  await api.loginAs(orgAdmin);
+  const s = basicScenario();
+  api.seed({ orgs: [s.org], collectors: s.collectors });
+  api.failNext('POST', '/shepherd.mgmt.v1.GitOpsService/ListCredentials', 503, 'unavailable');
+  await page.goto('/git');
+
+  await expect(page.getByTestId('git-credentials-error')).toBeVisible({ timeout: 5000 });
+  await expect(page.getByText(/no credentials configured/i)).toHaveCount(0);
+});
+
+test('shows an alert, not an empty state, when the repo links list fails to load', async ({
+  page,
+  api,
+}) => {
+  await api.loginAs(orgAdmin);
+  const s = basicScenario();
+  api.seed({ orgs: [s.org], collectors: s.collectors });
+  api.failNext('POST', '/shepherd.mgmt.v1.GitOpsService/ListRepoLinks', 503, 'unavailable');
+  await page.goto('/git');
+
+  await expect(page.getByTestId('git-repo-links-error')).toBeVisible({ timeout: 5000 });
+  await expect(page.getByText(/no repository links configured/i)).toHaveCount(0);
+});
+
 test('deletes a repo link after confirmation', async ({ page, api }) => {
   await api.loginAs(orgAdmin);
   const s = basicScenario();

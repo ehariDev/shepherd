@@ -19,7 +19,7 @@
  * isValidConnection and onConnect) goes through it, so they can't drift.
  */
 import { canConnectPorts, resolvePorts } from './l1';
-import type { GraphDocument, SchemaPayload } from './types';
+import type { GraphDocument, GraphEdge, SchemaPayload } from './types';
 
 export interface OrientedEdge {
   from: { node: string; port: string };
@@ -104,4 +104,26 @@ export function orientConnection(
     return { from: { node: target, port: targetHandle }, to: { node: source, port: sourceHandle } };
   }
   return null;
+}
+
+/**
+ * The edges an oriented connection's `to` port would conflict with (W5-03,
+ * design §3.2): a `cardinality: scalar` port accepts exactly one wire, so a
+ * second one replaces the first rather than fanning in. Resolves the `to`
+ * port the same way L1 does for `scalar_input_multi_wire` (l1.ts's
+ * `resolvePorts`, the accepts end) and returns every edge already landed on
+ * it — `[]` for a list-cardinality (or cardinality-less) port, however many
+ * wires it already carries, and `[]` without a schema or a resolvable port.
+ */
+export function scalarConflicts(
+  schema: SchemaPayload | null | undefined,
+  doc: Pick<GraphDocument, 'nodes' | 'edges'>,
+  oriented: OrientedEdge,
+): GraphEdge[] {
+  const toNode = doc.nodes.find((n) => n.id === oriented.to.node);
+  const toPort = resolvePorts(toNode && schema?.components[toNode.component]).find(
+    (p) => p.id === oriented.to.port,
+  );
+  if (toPort?.cardinality !== 'scalar') return [];
+  return doc.edges.filter((e) => e.to.node === oriented.to.node && e.to.port === oriented.to.port);
 }

@@ -3,6 +3,7 @@ package mgmtapi
 import (
 	"context"
 	"errors"
+	"fmt"
 
 	"connectrpc.com/connect"
 
@@ -27,7 +28,7 @@ type orgScoped interface {
 // authorization requirement, mirroring the Services table in
 // docs/archive/api-contract-design.md. A procedure absent from this map is denied —
 // see newAuthzInterceptor.
-var procedureRequirements = map[string]string{ //nolint:gochecknoglobals // static authz table, read-only after init
+var procedureRequirements = map[string]string{
 	// MeService — any authenticated session.
 	mgmtv1connect.MeServiceGetMeProcedure: auth.RoleAny,
 
@@ -193,7 +194,7 @@ var procedureRequirements = map[string]string{ //nolint:gochecknoglobals // stat
 // (capability_enumeration_test.go) fail the moment a new mutating RPC is
 // added without a classification decision, so "forgot to gate the new
 // write path" cannot happen silently.
-var capabilityRequirements = map[string]string{ //nolint:gochecknoglobals // static classification table, read-only after init
+var capabilityRequirements = map[string]string{
 	mgmtv1connect.AdminServiceCreateOrgProcedure:        capabilityApply,
 	mgmtv1connect.AdminServiceUpdateOrgProcedure:        capabilityApply,
 	mgmtv1connect.AdminServiceDeleteOrgProcedure:        capabilityApply,
@@ -319,37 +320,71 @@ func authorizeProcedure(ctx context.Context, st *store.Store, sess *auth.Session
 }
 
 // authorizeServiceAccountProcedure decides whether a machine caller may
-// reach a procedure at all (org match). auth.RoleAppAdmin is always
-// refused — no service account is ever app-admin. auth.RoleAny (MeService)
-// is granted to any authenticated machine identity; every other
-// requirement (RoleOrgAdmin, RoleOrgReader, reqAppOrOrgAdmin) requires the
-// token's org to match the org named in the request.
+// reach a procedure at all: org match, THEN role tier (W3-1).
+// auth.RoleAppAdmin is always refused — no service account is ever
+// app-admin, by construction (0012_teams_service_accounts' org_id column
+// is required, not nullable-for-global). auth.RoleAny (MeService) is
+// granted to any authenticated machine identity. Every other requirement
+// (RoleOrgAdmin, RoleOrgEditor, RoleOrgReader, reqAppOrOrgAdmin) requires
+// BOTH the token's org to match the org named in the request AND its role
+// tier (sa.Role — "editor" or "admin", 0018_service_account_role) to
+// satisfy the requirement, via auth.RoleSatisfies — the same comparison a
+// human session's role is checked with. reqAppOrOrgAdmin is normalized to
+// RoleOrgAdmin here: a service account can never take the app-admin half
+// of that either/or, so only the org-admin half is reachable.
 func authorizeServiceAccountProcedure(sa serviceAccountIdentity, orgID, requirement string) error {
 	switch requirement {
 	case auth.RoleAny:
 		return nil
 	case auth.RoleAppAdmin:
 		return connect.NewError(connect.CodePermissionDenied, errors.New("mgmtapi: service accounts are never app-admin"))
-	default: // RoleOrgAdmin, RoleOrgReader, reqAppOrOrgAdmin
+	default: // RoleOrgAdmin, RoleOrgEditor, RoleOrgReader, reqAppOrOrgAdmin
 		if orgID == "" || sa.OrgID != orgID {
 			return connect.NewError(connect.CodePermissionDenied, errors.New("mgmtapi: service account is not scoped to this org"))
+		}
+		need := requirement
+		if need == reqAppOrOrgAdmin {
+			need = auth.RoleOrgAdmin
+		}
+		if !auth.RoleSatisfies(serviceAccountTierRequirement(sa.Role), need) {
+			return connect.NewError(connect.CodePermissionDenied, fmt.Errorf(
+				"mgmtapi: service account %q holds %q tier; this procedure requires %q", sa.Name, sa.Role, need))
 		}
 		return nil
 	}
 }
 
-// toConnectError maps auth's sentinel errors to connect.Error codes.
-func toConnectError(err error) error {
-	switch {
-	case err == nil:
-		return nil
-	case errors.Is(err, auth.ErrUnauthenticated):
-		return connect.NewError(connect.CodeUnauthenticated, err)
-	case errors.Is(err, auth.ErrOrgNotFound):
-		return connect.NewError(connect.CodeNotFound, err)
-	case errors.Is(err, auth.ErrInvalidOrgID):
-		return connect.NewError(connect.CodeInvalidArgument, err)
-	default:
-		return connect.NewError(connect.CodePermissionDenied, err)
+// serviceAccountTierRequirement maps a service account's stored role
+// ("editor" or "admin", 0018_service_account_role's CHECK constraint) onto
+// auth's Role* requirement vocabulary ("org-editor"/"org-admin"), so
+// auth.RoleSatisfies can compare it against a procedure's requirement
+// without internal/auth needing to know service_accounts' own role
+// spelling. Any role value other than "admin" — including an unrecognized
+// one, which the CHECK constraint should never allow through — maps to the
+// lower tier: fail toward less reach, not more.
+func serviceAccountTierRequirement(role string) string {
+	if role == "admin" {
+		return auth.RoleOrgAdmin
 	}
+	return auth.RoleOrgEditor
+}
+
+// toConnectError maps auth's sentinel errors to connect.Error codes. It
+// delegates to the merged mapError (rpc_errors.go) — which already carries
+// the auth.ErrUnauthenticated/ErrOrgNotFound/ErrInvalidOrgID cases this
+// function used to duplicate in its own partial sentinel table (W2-S7c) —
+// with one deliberate override: mapError's default is CodeInternal ("we
+// don't know what this is"), but toConnectError maps the OUTCOME of an
+// access check, where "reason unclear" must still mean "no access", not a
+// 5xx that reads like a server bug. auth.ErrForbidden (the common case: a
+// session authenticated fine but doesn't hold the required role) is exactly
+// what falls through to that override today.
+func toConnectError(err error) error {
+	if err == nil {
+		return nil
+	}
+	if mapped := mapError(err); connect.CodeOf(mapped) != connect.CodeInternal {
+		return mapped
+	}
+	return connect.NewError(connect.CodePermissionDenied, err)
 }

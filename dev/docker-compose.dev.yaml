@@ -185,6 +185,12 @@ services:
       # Empty by default so the default stack exercises the "simulator not
       # configured" path; `make dev-sim` / `make e2e-sim` set it to true.
       SHEPHERD_SIMULATOR_ENABLED: ${SHEPHERD_SIM_ENABLED:-false}
+      # The control API bearer token: same env var as the simulator
+      # service's SIM_TOKEN below, so the two sides never drift apart.
+      # Defaulted so the stack still comes up for a developer who has
+      # never heard of SHEPHERD_SIM_TOKEN, but overridable so a shared
+      # or CI host doesn't run with a token anyone can read out of git.
+      SHEPHERD_SIMULATOR_TOKEN: ${SHEPHERD_SIM_TOKEN:-local-compose-sim-token}
       # config.go's SimulatorConfig defaults all assume a compose service
       # named "shepherd-simulator"; internal/simsvc's compose containment
       # spec (internal/simsvc/compose_containment_test.go) pins this
@@ -308,6 +314,12 @@ services:
     environment:
       SIM_LISTEN: ":8099"
       SIM_LOG_LEVEL: info
+      # Same env var as SHEPHERD_SIMULATOR_TOKEN on the shepherd service
+      # above — the control API refuses every request without a matching
+      # bearer token (internal/simsvc/server.go), and mismatched literals
+      # on the two sides are exactly how that silently regresses to an
+      # unauthenticated control API.
+      SIM_TOKEN: ${SHEPHERD_SIM_TOKEN:-local-compose-sim-token}
       # allowedHosts (internal/simsvc/config.go) defaults to the literal
       # "shepherd-simulator" plus os.Hostname() — which inside a container is
       # the container ID, not the compose service name, so neither half of

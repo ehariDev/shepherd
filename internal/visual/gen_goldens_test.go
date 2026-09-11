@@ -28,6 +28,7 @@ func TestGenGoldens(t *testing.T) {
 	entries := []string{
 		"minimal-scrape", "fanin-fanout", "nested-blocks", "bindings-secret",
 		"logs-chain", "disabled-node", "label-edgecases", "otel-three-signals", "kitchen-sink",
+		"diagnostics-mixed",
 	}
 	for _, name := range entries {
 		path := "testdata/corpus/" + name + ".graph.json"

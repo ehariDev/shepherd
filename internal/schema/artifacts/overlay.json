@@ -2,27 +2,32 @@
   "_meta": {
     "alloy_version": "v1.18.1",
     "description": "Overlay for alloy-v1.18.1. Deep-merged server-side over the artifact before serving via GET /api/schema/{version}. Keys must exist in the artifact (CI-enforced). Components absent from this overlay land in the 'advanced' category.",
-    "version": "4"
+    "version": "5"
   },
   "categories": {
     "advanced": {
       "color": "#64748b",
+      "color_light": "#475569",
       "label": "Advanced"
     },
     "config": {
       "color": "#94a3b8",
+      "color_light": "#64748b",
       "label": "Config"
     },
     "destinations": {
       "color": "#10b981",
+      "color_light": "#047857",
       "label": "Destinations"
     },
     "sources": {
       "color": "#3b82f6",
+      "color_light": "#1d4ed8",
       "label": "Sources"
     },
     "transform": {
       "color": "#a855f7",
+      "color_light": "#7e22ce",
       "label": "Transform"
     }
   },
@@ -2784,41 +2789,49 @@
   "wire_types": {
     "loki.logs": {
       "color": "#22c55e",
+      "color_light": "#15803d",
       "go_type": "loki.LogsReceiver",
       "label": "loki.logs"
     },
     "otel.any": {
       "color": "#0ea5e9",
+      "color_light": "#0369a1",
       "go_type": "otelcol.Consumer",
       "label": "otel"
     },
     "otel.logs": {
       "color": "#0ea5e9",
+      "color_light": "#0369a1",
       "go_type": "otelcol.Consumer[logs]",
       "label": "otel.logs"
     },
     "otel.metrics": {
       "color": "#0ea5e9",
+      "color_light": "#0369a1",
       "go_type": "otelcol.Consumer[metrics]",
       "label": "otel.metrics"
     },
     "otel.traces": {
       "color": "#0ea5e9",
+      "color_light": "#0369a1",
       "go_type": "otelcol.Consumer[traces]",
       "label": "otel.traces"
     },
     "prom.metrics": {
       "color": "#f97316",
+      "color_light": "#c2410c",
       "go_type": "prometheus.Appendable",
       "label": "prom.metrics"
     },
     "pyroscope.profiles": {
       "color": "#f43f5e",
+      "color_light": "#be123c",
       "go_type": "pyroscope.Appendable",
       "label": "pyroscope.profiles"
     },
     "targets": {
       "color": "#8b5cf6",
+      "color_light": "#6d28d9",
       "go_type": "[]discovery.Target",
       "label": "targets"
     }

@@ -5,6 +5,7 @@ import (
 	"errors"
 	"slices"
 
+	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgtype"
 
 	"shepherd/internal/store"
@@ -106,10 +107,28 @@ func authorizeOrgAccess(ctx context.Context, st *store.Store, sess *Session, org
 	// two places to look.
 	if sess.Source == SourceLocal && sess.UserID.Valid {
 		role, roleErr := st.Queries.GetOrgMemberRole(ctx, sqlc.GetOrgMemberRoleParams{OrgID: orgID, UserID: sess.UserID})
-		if roleErr != nil {
+		switch {
+		case roleErr == nil:
+			if orgRoleRank(localToRequirement(role)) < orgRoleRank(minRole) {
+				return ErrForbidden
+			}
+			return nil
+		case !errors.Is(roleErr, pgx.ErrNoRows):
 			return ErrForbidden
 		}
-		if orgRoleRank(localToRequirement(role)) < orgRoleRank(minRole) {
+
+		// W3-7: no org_members row, but this mirrors the OIDC path's team
+		// fallback below (W10) rather than stopping here -- a local user has
+		// no groups claim, so ListTeamsByOrgAndGroups can never reach them,
+		// and without this a local user who is only a team member (0017)
+		// was refused the same reader-equivalent floor a group-backed team
+		// member gets for free.
+		if orgRoleRank(RoleOrgReader) < orgRoleRank(minRole) {
+			return ErrForbidden
+		}
+		isMember, err := st.Queries.IsUserMemberOfAnyTeamInOrg(ctx,
+			sqlc.IsUserMemberOfAnyTeamInOrgParams{OrgID: orgID, UserID: sess.UserID})
+		if err != nil || !isMember {
 			return ErrForbidden
 		}
 		return nil
@@ -170,6 +189,91 @@ func authorizeOrgAccess(ctx context.Context, st *store.Store, sess *Session, org
 		}
 	}
 	return nil
+}
+
+// RoleSatisfies reports whether a caller holding role `have` clears the
+// minimum requirement `need`, using the same admin > editor > reader
+// ordering authorizeOrgAccess enforces for a human session (orgRoleRank).
+// It exists so a non-human caller with its own, separately-stored role —
+// today, a service account's tier (internal/mgmtapi's
+// authorizeServiceAccountProcedure, W3-1) — can be checked against the
+// exact procedureRequirements vocabulary a human session already is,
+// without either caller kind reaching into the other's authorization path.
+//
+// RoleAny is satisfied by any non-empty have (mirrors Authorize's RoleAny
+// case: authenticated is enough). RoleAppAdmin is satisfied ONLY by
+// RoleAppAdmin itself — no org role, however high, ever satisfies the
+// app-admin floor, the same way an org admin is not an app admin in
+// authorizeOrgAccess. Anything else falls to orgRoleRank, so an unrecognized
+// `have` (rank 0, same as no role at all) satisfies nothing.
+func RoleSatisfies(have, need string) bool {
+	switch need {
+	case RoleAny:
+		return have != ""
+	case RoleAppAdmin:
+		return have == RoleAppAdmin
+	default:
+		return orgRoleRank(have) >= orgRoleRank(need)
+	}
+}
+
+// ResolveOrgRole reports the UI-facing role a session holds in org, or "" if
+// none: OrgRoleAdmin/OrgRoleEditor/OrgRoleViewer for a local session (read
+// straight off org_members, falling back to OrgRoleViewer when there is no
+// org_members row but the user is a member of a team in the org — W3-7b,
+// mirroring authorizeOrgAccess's own W3-7 fallback), or the same three names
+// for an OIDC session resolved from its groups claim against the org's
+// admin/editor/reader_group_id, in that priority order.
+//
+// It is the GetMe-facing counterpart to authorizeOrgAccess: that function
+// answers "does this session clear requirement X", gated by a minimum;
+// this one answers "what is this session's role", full stop, which is what
+// drives the UI's own gating (offering the pipeline editor, the admin
+// screens, ...). Kept separate rather than derived from authorizeOrgAccess
+// because the two ask different questions — the "for is-app-admin, treat as
+// admin in every org" answer lives in the caller (rpc_me.go), which already
+// special-cases IsAppAdmin before this is reached.
+//
+// The empty-group guard matters here for exactly the reason it matters in
+// authorizeOrgAccess's hasGroup: an org whose admin_group_id is "" (never
+// configured) must not be reported as admin to a session whose groups claim
+// happens to carry an empty string.
+func ResolveOrgRole(ctx context.Context, st *store.Store, sess *Session, org sqlc.Org) string {
+	if sess.Source == SourceLocal && sess.UserID.Valid {
+		role, err := st.Queries.GetOrgMemberRole(ctx, sqlc.GetOrgMemberRoleParams{OrgID: org.ID, UserID: sess.UserID})
+		switch {
+		case err == nil:
+			return role
+		case !errors.Is(err, pgx.ErrNoRows):
+			return ""
+		}
+
+		// W3-7b: mirrors authorizeOrgAccess's own W3-7 team fallback -- a
+		// local user with no org_members row but who is a member of a team
+		// in this org already clears the reader floor there, so this must
+		// report the matching viewer role rather than "", or the UI hides
+		// an org the server is already granting reads under.
+		isMember, err := st.Queries.IsUserMemberOfAnyTeamInOrg(ctx,
+			sqlc.IsUserMemberOfAnyTeamInOrgParams{OrgID: org.ID, UserID: sess.UserID})
+		if err != nil || !isMember {
+			return ""
+		}
+		return OrgRoleViewer
+	}
+
+	hasGroup := func(candidate string) bool {
+		return candidate != "" && slices.Contains(sess.GroupIDs, candidate)
+	}
+	switch {
+	case hasGroup(org.AdminGroupID):
+		return OrgRoleAdmin
+	case org.EditorGroupID.Valid && hasGroup(org.EditorGroupID.String):
+		return OrgRoleEditor
+	case org.ReaderGroupID.Valid && hasGroup(org.ReaderGroupID.String):
+		return OrgRoleViewer
+	default:
+		return ""
+	}
 }
 
 // orgRoleRank orders the org roles so a floor can be compared numerically.

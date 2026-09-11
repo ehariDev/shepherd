@@ -48,6 +48,19 @@ SELECT EXISTS (
     SELECT 1 FROM team_members WHERE team_id = $1 AND user_id = $2
 );
 
+-- name: IsUserMemberOfAnyTeamInOrg :one
+-- Used by internal/auth.authorizeOrgAccess's LOCAL-session branch (W3-7):
+-- the local-user mirror of ListTeamsByOrgAndGroups above, granting the same
+-- reader-equivalent baseline to a local user who has no org_members row but
+-- is an explicit member of some team in the org -- a local user has no
+-- groups claim, so the OIDC path's team fallback never reaches them without
+-- this.
+SELECT EXISTS (
+    SELECT 1 FROM team_members tm
+    JOIN teams t ON t.id = tm.team_id
+    WHERE t.org_id = $1 AND tm.user_id = $2
+);
+
 -- name: CountTeamMembersByTeam :many
 -- Member counts for the teams list, so the page can show membership source
 -- per team without a query per row.

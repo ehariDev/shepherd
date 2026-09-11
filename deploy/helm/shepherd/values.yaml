@@ -8,12 +8,19 @@ fullnameOverride: ""
 image:
   # Default to the released images; set registry: "" to use a bare/local name.
   registry: "ghcr.io/procoduck"
+  # repository: the image name, combined with registry above (or used bare
+  # if registry is empty) to form the image the chart pulls.
   repository: shepherd
   # Empty means the chart's own appVersion, so a given chart version installs
   # the Shepherd release it was published and tested with. Override only to
   # pin something else deliberately.
   tag: ""
+  # pullPolicy: standard Kubernetes image pull policy. IfNotPresent is safe
+  # here because tag defaults to a specific released version, not a moving
+  # tag like "latest".
   pullPolicy: IfNotPresent
+  # pullSecrets: names of existing imagePullSecrets, for a private registry.
+  # Empty means the pod pulls with no credentials.
   pullSecrets: []
 
 # Shepherd keeps no state outside PostgreSQL, so replicas are free to add and
@@ -29,7 +36,13 @@ replicas: 2
 # hand — kind and other local clusters have no ingress controller, and that is
 # exactly where someone is trying the chart for the first time.
 service:
+  # type: the Service's kind (ClusterIP, NodePort, LoadBalancer -- standard
+  # Kubernetes values). See above for why this is exposed rather than
+  # hardcoded to ClusterIP.
   type: ClusterIP
+  # port: the container's HTTP port and the port the Service listens on.
+  # config.server.listen below must agree with it -- the Deployment's
+  # containerPort is hardcoded to 8080, not derived from either value.
   port: 8080
   # Only used when type is NodePort. Leave empty to let Kubernetes pick one
   # from the node port range.
@@ -37,11 +50,19 @@ service:
 
 config:
   server:
+    # listen: host:port the main HTTP server binds. The Deployment's
+    # containerPort and service.port above are both hardcoded to 8080, so
+    # changing this alone does not move where the container is reachable --
+    # keep all three in agreement.
     listen: ":8080"
     # Metrics listen on their own port; /metrics is never served on `listen`.
     # The container port, the metrics Service, and the ServiceMonitor are all
     # derived from this value, so changing it here is enough.
     metrics_listen: ":9090"
+    # base_url: Shepherd's own externally-reachable URL, no path. Collectors'
+    # remotecfg clients and the beacon's remote-write endpoint are both built
+    # against it, so it needs to be an address they can actually reach, not
+    # just this Service's in-cluster name.
     base_url: "https://shepherd.example.internal"
     # The beacon (docs/gateway-tier-plan.md D6) serves every claimed collector
     # a small baseline pipeline that reports which components it is running
@@ -58,6 +79,7 @@ config:
     # say no without downgrading.
     beacon_disabled: false
   database:
+    # max_conns: the maximum size of Shepherd's own PostgreSQL connection pool.
     max_conns: 20
   # ---------------------------------------------------------------------------
   # OIDC single sign-on (OPTIONAL)
@@ -75,6 +97,9 @@ config:
   # least provider, subject_claim, and groups_claim.
   # ---------------------------------------------------------------------------
   oidc:
+    # scopes: OAuth scopes requested at login. This default matches every
+    # supported provider's minimum; add to it only if your provider requires
+    # more to return the claims configured below.
     scopes: ["openid", "profile", "email"]
     # issuer: "https://login.microsoftonline.com/<tenant-id>/v2.0"
     # client_id: ""                  # client_secret via SHEPHERD_OIDC_CLIENT_SECRET
@@ -100,6 +125,8 @@ config:
     # once a user is in more than ~200 groups.
     # use_graph_groups: true
   auth:
+    # session_ttl: how long a signed-in session stays valid before the user
+    # must sign in again.
     session_ttl: "8h"
     #
     # app_admin_group_ids: the groups whose members are APPLICATION ADMINS —
@@ -140,15 +167,33 @@ config:
     # a deleted account or reset an existing password on a later rollout.
     # -----------------------------------------------------------------------
   graph:
+    # base_url: the Microsoft Graph API root used to resolve group membership
+    # when use_graph_groups is on. Override only for a sovereign cloud (e.g.
+    # graph.microsoft.us) whose API root differs from the public cloud.
     base_url: "https://graph.microsoft.com"
   agent:
+    # inactive_after: mark a collector instance inactive once this long has
+    # passed with no check-in.
     inactive_after: "5m"
+    # delete_after: hard-delete a collector instance once this long has
+    # passed with no check-in. Longer than inactive_after, so an instance
+    # spends time visibly inactive before it disappears.
     delete_after: "24h"
   validate:
+    # alloy_binary: path to the bundled `alloy` binary Stage 2 validation
+    # execs. Empty skips Stage 2 entirely (reported as "skipped", not
+    # "valid", so a broken path is visible rather than silently passing).
     alloy_binary: "/usr/local/bin/alloy"
+    # stability_level: passed to `alloy validate --stability.level=`. One of
+    # stable, public-preview, experimental; a typo here fails every pipeline
+    # validation and nothing catches it at install time.
     stability_level: "experimental"
+    # timeout: how long Stage 2's `alloy validate` exec is allowed to run
+    # before it is killed.
     timeout: "10s"
   gitsync:
+    # tick: how often the git-sync reconciler polls repos that are due for a
+    # check, per their own poll interval.
     tick: "3m"
   # ---------------------------------------------------------------------------
   # Tracing (OPTIONAL — off by default)
@@ -167,17 +212,32 @@ config:
     # as a misconfiguration in the logs rather than silently doing nothing —
     # an empty trace backend with no explanation is the worst way to find out.
     enabled: false
-    endpoint: ""            # e.g. "opentelemetry-collector.observability.svc:4317"
-    protocol: "grpc"        # "grpc" (port 4317) or "http" (port 4318)
-    insecure: true          # normal for an in-cluster collector over the pod network
+    # endpoint: the OTLP collector's address, e.g.
+    # "opentelemetry-collector.observability.svc:4317" -- host:port, no
+    # scheme. Required when enabled is true; see enabled above.
+    endpoint: ""
+    # protocol: "grpc" (collector port 4317, the default) or "http" (port
+    # 4318) -- which OTLP transport to export spans over.
+    protocol: "grpc"
+    # insecure: skip TLS to the collector. true is normal for an in-cluster
+    # collector reached over the pod network; set false for a collector
+    # reached over the open network.
+    insecure: true
     # sample_ratio applies only to traces Shepherd ROOTS; an incoming sampling
     # decision is always honoured. Collectors poll continuously, so 1.0 here is
     # a lot of spans.
     sample_ratio: 0.1
+    # service_name: the resource.service.name attribute stamped on every
+    # exported span, so your trace backend can group Shepherd's spans apart
+    # from other services.
     service_name: "shepherd"
     # service_version: ""   # set it to correlate traces with releases
   log:
+    # level: the minimum log level Shepherd emits, e.g. debug, info, warn, error.
     level: "info"
+    # format: the log encoding Shepherd writes -- "json" for structured logs
+    # (the default, suited to log aggregation) or "text" for human-readable
+    # output.
     format: "json"
 
 # -----------------------------------------------------------------------------
@@ -215,6 +275,9 @@ config:
 # deploy this chart through any such tool, set `render: never` below once the
 # database exists.
 cnpg:
+  # enabled: turn on to let the chart provision the database via
+  # CloudNativePG. See the block comment above for what that means and its
+  # GitOps caveat.
   enabled: false
   # render: auto | always | never -- when to emit the Cluster object.
   #   auto    (default) only when `lookup` says it is not already there.
@@ -229,15 +292,20 @@ cnpg:
   # needs for automated failover. Raise it for more read capacity or headroom.
   instances: 2
   storage:
+    # size: the PersistentVolumeClaim size for the primary and each standby.
     size: 10Gi
     # Empty uses the cluster's default StorageClass.
     storageClass: ""
   # The database and the role that owns it. Shepherd needs no superuser.
   database: shepherd
+  # owner: the role that owns `database` above; Shepherd connects using this
+  # role. See the comment above -- no superuser required.
   owner: shepherd
   # Pinning the image is optional; empty lets the operator choose the version
   # it was built against, which is the one it knows how to upgrade.
   imageName: ""
+  # resources: CPU/memory requests and limits for the Postgres instances.
+  # Empty means unbounded, same as the app's own `resources` below.
   resources: {}
   # Merged verbatim into the Cluster spec, for anything this chart does not
   # surface: backup, monitoring, affinity, postgresql.parameters, and so on.
@@ -273,12 +341,17 @@ cnpg:
 # cannot be rotated -- with no error at the moment it happens. Set
 # `render: never` below once the secret exists.
 externalSecrets:
+  # enabled: turn on to let External Secrets Operator generate the bootstrap
+  # Secret in-cluster. See the block comment above for what that means and
+  # its GitOps caveat.
   enabled: false
   # render: auto | always | never. Identical meaning to cnpg.render above.
   render: auto
   # API versions, exposed because ESO has moved them before. These defaults
   # match ESO v1.x.
   apiVersion: external-secrets.io/v1
+  # generatorApiVersion: API version for the Password generator objects
+  # (distinct from apiVersion above, which is for the ExternalSecret itself).
   generatorApiVersion: generators.external-secrets.io/v1alpha1
   # Do not change. See the note above.
   refreshInterval: "0"
@@ -292,6 +365,7 @@ externalSecrets:
     # Generate the first administrator's password too. Turn this off if you
     # would rather set SHEPHERD_BOOTSTRAP_ADMIN_PASSWORD yourself.
     enabled: true
+    # length: character length of the generated bootstrap administrator password.
     length: 24
     # Read it once it exists with:
     #   kubectl get secret <release>-secrets \
@@ -348,14 +422,32 @@ migrations:
 # is how the broken default survived. Enable it deliberately, and set
 # parentRefs/hostnames when you do: an HTTPRoute with neither routes nothing.
 route:
+  # enabled: turn on to render the HTTPRoute below. See the comment above
+  # for why it defaults off.
   enabled: false
+  # hostnames: hostnames this HTTPRoute matches, e.g.
+  # ["shepherd.example.com"]. Required alongside parentRefs -- an HTTPRoute
+  # with neither routes nothing.
   hostnames: []
+  # parentRefs: the Gateway(s) this HTTPRoute attaches to, e.g.
+  # [{name: my-gateway, namespace: gateway-system}]. Required alongside
+  # hostnames.
   parentRefs: []
 
 ingress:
+  # enabled: turn on to render the Ingress below. Off by default: like
+  # `route` above, it needs infrastructure (an Ingress controller) a vanilla
+  # cluster does not have.
   enabled: false
+  # className: the IngressClass to use, e.g. "nginx". Empty lets the
+  # cluster's default IngressClass apply.
   className: ""
+  # hosts: a list of {host, paths: [{path, pathType}]} entries, the standard
+  # Kubernetes Ingress rule shape. Empty renders an Ingress with no rules,
+  # which routes nothing.
   hosts: []
+  # tls: standard Kubernetes Ingress TLS entries ({hosts, secretName}), for
+  # terminating TLS at the Ingress. Empty configures no TLS here.
   tls: []
 
 # ---------------------------------------------------------------------------
@@ -372,6 +464,9 @@ ingress:
 # against unscraped Services existing.
 # ---------------------------------------------------------------------------
 metrics:
+  # enabled: render the metrics Service and expose
+  # config.server.metrics_listen's port on it. The listener itself always
+  # runs regardless; this only controls whether a Service fronts it.
   enabled: true
   serviceMonitor:
     # Requires the Prometheus Operator's CRDs. Off by default because a
@@ -382,9 +477,18 @@ metrics:
     # resource's serviceMonitorSelector; without a matching label the
     # ServiceMonitor is created and quietly ignored.
     labels: {}
+    # interval: Prometheus scrape interval for this target. Empty uses the
+    # Prometheus Operator's own default.
     interval: "30s"
+    # scrapeTimeout: how long Prometheus waits for a scrape before giving up.
+    # Empty uses the Prometheus Operator's own default.
     scrapeTimeout: "10s"
+    # relabelings: standard Prometheus Operator relabeling rules applied
+    # before scraping (e.g. to rewrite target labels). Empty applies none.
     relabelings: []
+    # metricRelabelings: standard Prometheus Operator relabeling rules
+    # applied to each scraped metric after collection (e.g. to drop or
+    # rename series). Empty applies none.
     metricRelabelings: []
 
 # serviceAccount: the identity Shepherd's pods run as.
@@ -441,9 +545,15 @@ extraEnv: []
 #
 # REQUIRES resources.requests.cpu; see the note there.
 autoscaling:
+  # enabled: hand the replica count to a HorizontalPodAutoscaler. See the
+  # block comment above -- REQUIRES resources.requests.cpu.
   enabled: false
+  # minReplicas: the floor the HPA will not scale below.
   minReplicas: 2
+  # maxReplicas: the ceiling the HPA will not scale above.
   maxReplicas: 10
+  # targetCPUUtilizationPercentage: the average CPU utilization, as a
+  # percentage of resources.requests.cpu, the HPA scales to maintain.
   targetCPUUtilizationPercentage: 80
 
 # networkPolicy: a NetworkPolicy for SHEPHERD's own pods (the simulator has its
@@ -456,6 +566,8 @@ autoscaling:
 # FQDN policies. Off by default because a policy is only meaningful on a CNI
 # that enforces them.
 networkPolicy:
+  # enabled: render a NetworkPolicy for Shepherd's own pods. See the block
+  # comment above for what it allows and why it defaults off.
   enabled: false
 
 # -----------------------------------------------------------------------------
@@ -480,45 +592,111 @@ networkPolicy:
 #   - automountServiceAccountToken: false on its ServiceAccount. Defense in
 #     depth, not the only gate — internal/simsvc.Config.SATokenPath makes the
 #     binary itself refuse to start if a token is mounted anyway.
+#   - a bearer token (simulator.token below) on the control API. Without one
+#     POST /v1/runs was reachable by anything that could route to the Pod at
+#     all; every install now authenticates it, from one of three sources.
 #   - a default-deny egress NetworkPolicy. The sandboxed Alloy is a CHILD
 #     PROCESS of shepherd-simulator (internal/simsvc/runner.go), not a sibling
 #     container, so this Pod's own network boundary IS the sandbox's boundary.
 #     Egress is allowed only to this Pod's own harness ports (the capture
-#     receivers shepherd-simulator itself serves) and to cluster DNS; nothing
-#     else, including the rest of the cluster and the internet.
+#     receivers shepherd-simulator itself serves) — nothing else, including
+#     cluster DNS (D10: every harness endpoint the sandbox needs is dialled by
+#     loopback IP, so it has no legitimate reason to resolve a name at all),
+#     the rest of the cluster, or the internet.
 #   - non-root securityContext, every capability dropped, no privilege
 #     escalation, a read-only root filesystem (the run scratch directory is an
 #     emptyDir mounted over /tmp).
 #   - CPU/memory limits, so one runaway sandboxed config cannot starve the node.
+#   - what this chart CANNOT set: a per-Pod process/PID limit. Kubernetes has
+#     no PodSpec field for one (unlike the compose stacks' `pids_limit`) — it
+#     is a kubelet-level setting (`podPidsLimit` in KubeletConfiguration, or
+#     `--pod-max-pids`) that belongs to the cluster operator, not this chart.
+#     Mitigating factors: the sandboxed Alloy is one process (internal/simsvc
+#     runs it directly, no shell fork-bomb surface), and the CPU/memory limits
+#     above already bound a runaway config's other resource costs.
 #
 # See docs/visual-builder-design-VB1.md §6.4 and docs/archive/reviews/s3-sandbox-security-findings.md
 # (finding H5) for why each of these exists.
 simulator:
+  # enabled: turn the S3 sandbox simulator on or off. See the block comment
+  # above -- ON by default since v0.0.1, after both containment gates closed.
   enabled: true
   image:
+    # registry: the simulator image's registry, mirroring image.registry
+    # above. Set to "" to use a bare/local name.
     registry: "ghcr.io/procoduck"
+    # repository: the simulator image name, combined with registry above to
+    # form the pulled image.
     repository: shepherd-simulator
+    # tag: empty means the chart's own appVersion, same convention as
+    # image.tag above.
     tag: ""
+    # pullPolicy: standard Kubernetes pull policy, mirroring
+    # image.pullPolicy above.
     pullPolicy: IfNotPresent
     # pullSecrets for the simulator image specifically. Separate from
     # image.pullSecrets because the two images can come from different
     # registries; set both if they come from the same private one.
     pullSecrets: []
+  # replicas: how many simulator Deployment pods run behind the simulator
+  # Service and its control API.
   replicas: 1
   resources:
     requests:
+      # cpu: minimum CPU reserved for the sandboxed Alloy process and its
+      # harness.
       cpu: 250m
+      # memory: minimum memory reserved, same reasoning as cpu above.
       memory: 256Mi
     limits:
+      # cpu: the hard CPU ceiling -- part of §6.4's defense against a
+      # runaway sandboxed config; see the block comment above.
       cpu: "1"
+      # memory: the hard memory ceiling, same reasoning as cpu above.
       memory: 512Mi
   # allowedHosts overrides SIM_ALLOWED_HOSTS, the endpoint allowlist that is
   # §6.4's defense-in-depth check ON TOP OF the NetworkPolicy. Empty uses the
   # service's own built-in default (its own hostname plus localhost).
   allowedHosts: []
+  # token authenticates the control API both Deployments talk over: the
+  # simulator reads it as SIM_TOKEN, Shepherd as SHEPHERD_SIMULATOR_TOKEN /
+  # config.simulator.token, and both always read the SAME Secret + key
+  # (shepherd.simulatorTokenSecretName in _helpers.tpl resolves it once).
+  # Precedence, highest first:
+  #   1. existingSecret + key -- bring your own Secret (vault operator,
+  #      GitOps-managed, whatever already exists), unmanaged by this chart.
+  #   2. externalSecrets.enabled -- a Password generator + ExternalSecret this
+  #      chart renders in templates/externalsecret.yaml, the same pattern the
+  #      runtime bootstrap values already use.
+  #   3. otherwise, the chart generates its own Secret
+  #      (templates/secret-simulator-token.yaml) with lookup reuse: `value`
+  #      pins it to a literal, and left empty the chart generates a random
+  #      token ONCE and reuses it on every later `helm upgrade` -- see that
+  #      template for the caveat under GitOps tooling with no live cluster to
+  #      look up against.
+  token:
+    # value: pin the shared bearer token to a literal, e.g. for a
+    # fixture-driven parity check. Empty lets the chart generate and reuse a
+    # random one instead -- see the block comment above for the full
+    # precedence.
+    value: ""
+    # existingSecret: name of a Secret you already manage holding the token.
+    # Highest-precedence option -- see the block comment above.
+    existingSecret: ""
+    # key: the key within existingSecret (or the chart-generated Secret)
+    # that holds the token value.
+    key: "token"
+  # podAnnotations: extra annotations on the simulator pod template,
+  # mirroring podAnnotations below but scoped to the simulator Deployment only.
   podAnnotations: {}
+  # nodeSelector: constrain simulator pods to nodes carrying these labels,
+  # mirroring nodeSelector below but scoped to the simulator Deployment only.
   nodeSelector: {}
+  # tolerations: let simulator pods schedule onto tainted nodes, mirroring
+  # tolerations below but scoped to the simulator Deployment only.
   tolerations: []
+  # affinity: pod/node affinity rules for the simulator pods, mirroring
+  # affinity below but scoped to the simulator Deployment only.
   affinity: {}
   networkPolicy:
     # extraEgress lets an operator open one additional narrow hole (e.g. a

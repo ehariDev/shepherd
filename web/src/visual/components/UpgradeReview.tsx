@@ -1,12 +1,14 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import {
   stampSchemaVersion,
   type UpgradeCheckResult,
   type UpgradeItem,
   upgradeCheck,
 } from '../../api/client';
+import { Modal } from '../../components/ui/Modal';
 import { useMe } from '../../hooks/useMe';
 import { useVisualStore } from '../store';
+import { hasBlockingItems, pruneRemovedAttrs } from '../upgradeOps';
 
 interface UpgradeReviewProps {
   open: boolean;
@@ -48,64 +50,78 @@ export function UpgradeReview({ open, onClose, onAccept }: UpgradeReviewProps) {
   const [result, setResult] = useState<UpgradeCheckResult | null>(null);
   const [error, setError] = useState<string | null>(null);
 
+  // Read the freshest doc at request time without making it an effect
+  // dependency — see the effect below.
+  const docRef = useRef(doc);
+  docRef.current = doc;
+
   useEffect(() => {
     if (!open || !me?.orgs[0]?.id) return;
     setResult(null);
     setError(null);
-    upgradeCheck(me.orgs[0].id, doc)
+    upgradeCheck(me.orgs[0].id, docRef.current)
       .then(setResult)
       .catch((e: unknown) => setError(e instanceof Error ? e.message : 'Failed to check upgrade'));
-  }, [doc, me, open]);
+    // Deliberately NOT `doc`: the review is checked against whichever
+    // schema_version the graph is stamped with, not against every keystroke
+    // in the inspector. Depending on the whole doc re-fired UpgradeCheck on
+    // every mutation made while the review panel happened to be open.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [doc.schema_version, me, open]);
+
+  const blocked = result ? hasBlockingItems(result.items) : false;
 
   if (!open) return null;
   return (
-    <div
-      data-testid='upgrade-review'
-      className='fixed inset-0 z-50 bg-black/40 flex items-center justify-center'
-    >
-      <div className='bg-card border rounded-lg p-6 max-w-xl w-full shadow-lg'>
-        <h2>Upgrade Review</h2>
-        {error ? (
-          <p data-testid='upgrade-error'>{error}</p>
-        ) : !result ? (
-          <p data-testid='upgrade-loading'>Loading…</p>
-        ) : (
-          <>
-            <p>
-              From {result.old_version} → {result.new_version}
-            </p>
-            {result.items.map((item, i) => (
-              <div key={i} data-testid={`upgrade-item-${item.class}`} className='flex gap-2 py-2'>
-                <span data-testid='upgrade-item-node'>{item.node_label}</span>
-                <span data-testid='upgrade-item-detail'>{renderItemUI(item)}</span>
-              </div>
-            ))}
-            {result.items.length === 0 && (
-              <p data-testid='upgrade-no-items'>No structural changes detected.</p>
-            )}
-            <div className='flex gap-2 mt-4 flex-col'>
-              <p className='text-xs text-muted'>
-                Accept stamps the new schema version in your local draft. Save the pipeline to
-                persist the upgrade.
-              </p>
-              <div className='flex gap-2'>
-                <button
-                  data-testid='upgrade-accept'
-                  onClick={() => {
-                    importGraph(stampSchemaVersion(doc, result.new_version));
-                    onAccept(result.new_version);
-                  }}
-                >
-                  Accept upgrade
-                </button>
-                <button data-testid='upgrade-close' onClick={onClose}>
-                  Cancel
-                </button>
-              </div>
+    <Modal title='Upgrade Review' onClose={onClose} size='xl' testId='upgrade-review'>
+      {error ? (
+        <p data-testid='upgrade-error'>{error}</p>
+      ) : !result ? (
+        <p data-testid='upgrade-loading'>Loading…</p>
+      ) : (
+        <>
+          <p>
+            From {result.old_version} → {result.new_version}
+          </p>
+          {result.items.map((item, i) => (
+            <div key={i} data-testid={`upgrade-item-${item.class}`} className='flex gap-2 py-2'>
+              <span data-testid='upgrade-item-node'>{item.node_label}</span>
+              <span data-testid='upgrade-item-detail'>{renderItemUI(item)}</span>
             </div>
-          </>
-        )}
-      </div>
-    </div>
+          ))}
+          {result.items.length === 0 && (
+            <p data-testid='upgrade-no-items'>No structural changes detected.</p>
+          )}
+          <div className='flex gap-2 mt-4 flex-col'>
+            <p className='text-xs text-muted'>
+              Accept stamps the new schema version in your local draft. Save the pipeline to persist
+              the upgrade.
+            </p>
+            {blocked && (
+              <p data-testid='upgrade-blocked' className='text-xs text-red-500'>
+                Resolve every removed component above before accepting this upgrade.
+              </p>
+            )}
+            <div className='flex gap-2'>
+              <button
+                data-testid='upgrade-accept'
+                disabled={blocked}
+                title={blocked ? 'Resolve removed components before accepting' : undefined}
+                onClick={() => {
+                  const pruned = pruneRemovedAttrs(doc, result.items);
+                  importGraph(stampSchemaVersion(pruned, result.new_version));
+                  onAccept(result.new_version);
+                }}
+              >
+                Accept upgrade
+              </button>
+              <button data-testid='upgrade-close' onClick={onClose}>
+                Cancel
+              </button>
+            </div>
+          </div>
+        </>
+      )}
+    </Modal>
   );
 }

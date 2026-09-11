@@ -415,6 +415,16 @@
         "replicas": { "type": "integer", "minimum": 1 },
         "resources": { "$ref": "#/definitions/resources" },
         "allowedHosts": { "type": "array", "items": { "type": "string" } },
+        "token": {
+          "description": "Bearer token for the control API. Precedence: existingSecret, then externalSecrets.enabled, then the chart's own generated Secret (value pins its content).",
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "value": { "type": "string" },
+            "existingSecret": { "type": "string" },
+            "key": { "type": "string", "minLength": 1 }
+          }
+        },
         "podAnnotations": { "$ref": "#/definitions/labelMap" },
         "nodeSelector": { "$ref": "#/definitions/labelMap" },
         "tolerations": { "type": "array", "items": { "type": "object" } },

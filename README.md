@@ -47,7 +47,7 @@ traces; it configures the collectors that ship them.
 
 | To | You need |
 |---|---|
-| Run Shepherd | A Kubernetes cluster, Helm 3, and a **PostgreSQL 14+** it can reach. The chart needs no CRDs by default. |
+| Run Shepherd | A Kubernetes cluster, Helm 3, and a **PostgreSQL 16** it can reach — the only major every test, testcontainers run, and the compose stacks pin (`postgres:16-alpine`); older majors are untested. The chart needs no CRDs by default. |
 | Run collectors | [Grafana Alloy](https://grafana.com/docs/alloy/) **v1.18.1** — the version whose component schema this build validates against, pinned in `deploy/versions.env`. |
 | Build from source | Go (see `go.mod`), Node 24 with pnpm, Docker (tests start real PostgreSQL via testcontainers), and Helm. |
 
@@ -72,7 +72,7 @@ kubectl -n shepherd create secret generic shepherd-secrets \
   --from-literal=SHEPHERD_SECURITY_ENCRYPTION_KEY="$(openssl rand -base64 32)" \
   --from-literal=SHEPHERD_BOOTSTRAP_ADMIN_PASSWORD='choose-a-password'
 
-helm install shepherd oci://ghcr.io/procoduck/charts/shepherd --version 0.9.0 \
+helm install shepherd oci://ghcr.io/procoduck/charts/shepherd --version 0.10.0 \
   --namespace shepherd --set existingSecret=shepherd-secrets
 
 kubectl -n shepherd port-forward svc/shepherd 8080:8080
@@ -179,10 +179,16 @@ Shepherd is in active development and pre-1.0; expect breaking changes, which
 the [changelog](CHANGELOG.md) calls out explicitly.
 
 Several subsystems are **built and tested but not wired to a running surface**:
-a tenant-aware gateway and receiver tier, three-way reconciliation, onboarding
-artifacts, a k8s-monitoring chart-values generator, and a read-plus-propose MCP
-interface. `docs/gateway-tier-plan.md` §9 tracks what stands between each one
-and being usable. Do not plan against them yet.
+the Gateway API HTTPRoute apply and the receiver tier that would make a
+tenant route deliver traffic (`TenantRouteService` itself — segment
+issuance, listing, rotation, revocation — is mounted on the mgmtapi Connect
+surface and reachable today; nothing calls `internal/gateway.ApplyRoute`
+outside its own tests, and nothing imports `internal/receiver`), three-way
+reconciliation, onboarding artifacts, a k8s-monitoring chart-values
+generator, and a read-plus-propose MCP interface (`cmd/shepherd-mcp` builds
+but ships in none of the release artifacts — see `.goreleaser.yaml`).
+`docs/gateway-tier-plan.md` §9 tracks what stands between each one and being
+usable. Do not plan against them yet.
 
 ## Development
 
@@ -197,7 +203,7 @@ make help       # every target, and the env knobs the suites honour
 | Command | What it runs |
 |---|---|
 | `make e2e` | Compose end-to-end suite (~10 min, Docker) |
-| `make e2e-k8s` | Kubernetes suite: a kind cluster, Gateway API, NGINX Gateway Fabric, CloudNativePG and External Secrets, then the chart (~12 min) |
+| `make e2e-k8s` | Kubernetes suite: a kind cluster, Gateway API, NGINX Gateway Fabric, CloudNativePG and External Secrets, then the chart — 9 features (`e2e/k8s/README.md`); last full-cycle timing on record is ~500s for 6, not re-measured since |
 | `make test-ui` | Mocked Playwright suite, no backend required |
 | `make generate` | buf + sqlc + version codegen |
 | `make docs` | Regenerate `site/docs/` from `scripts/docs-content/` |

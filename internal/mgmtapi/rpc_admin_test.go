@@ -148,6 +148,150 @@ var _ = Describe("shepherd.mgmt.v1 AdminService and MeService RPC", Label("integ
 			Expect(payload["code"]).To(Equal("not_found"))
 		})
 
+		It("DeleteOrg refuses an org that still has clusters or pipelines, and deletes one that is empty", func() {
+			appAdmin := createSession(true, nil)
+
+			nonEmptyOrg, err := st.Queries.CreateOrg(ctx, sqlc.CreateOrgParams{
+				Name: "delete-org-rpc-nonempty", DisplayName: "Delete Org RPC Non-Empty", AdminGroupID: "delete-org-rpc-admin",
+			})
+			Expect(err).NotTo(HaveOccurred())
+			cluster, err := st.Queries.UpsertCluster(ctx, "delete-org-rpc-cluster")
+			Expect(err).NotTo(HaveOccurred())
+			Expect(st.Queries.ClaimCluster(ctx, sqlc.ClaimClusterParams{ID: cluster.ID, OrgID: nonEmptyOrg.ID})).To(Succeed())
+
+			refuseResp := postConnect("/shepherd.mgmt.v1.AdminService/DeleteOrg", map[string]any{
+				"orgId": nonEmptyOrg.ID.String(),
+			}, appAdmin)
+			Expect(refuseResp.StatusCode).To(Equal(http.StatusConflict))
+			refusePayload := decodeBody(refuseResp)
+			Expect(refusePayload["code"]).To(Equal("already_exists"))
+			Expect(refusePayload["message"]).To(ContainSubstring("1 clusters"))
+
+			emptyOrg, err := st.Queries.CreateOrg(ctx, sqlc.CreateOrgParams{
+				Name: "delete-org-rpc-empty", DisplayName: "Delete Org RPC Empty", AdminGroupID: "delete-org-rpc-empty-admin",
+			})
+			Expect(err).NotTo(HaveOccurred())
+			deleteResp := postConnect("/shepherd.mgmt.v1.AdminService/DeleteOrg", map[string]any{
+				"orgId": emptyOrg.ID.String(),
+			}, appAdmin)
+			Expect(deleteResp.StatusCode).To(Equal(http.StatusOK))
+		})
+
+		It("UnclaimCluster marks every collector in the cluster dirty and clears the org assignment", func() {
+			appAdmin := createSession(true, nil)
+
+			cluster, err := st.Queries.UpsertCluster(ctx, "unclaim-rpc-cluster")
+			Expect(err).NotTo(HaveOccurred())
+			Expect(st.Queries.ClaimCluster(ctx, sqlc.ClaimClusterParams{ID: cluster.ID, OrgID: orgUUID(orgIDStr)})).To(Succeed())
+
+			metrics, err := st.Queries.UpsertCollector(ctx, sqlc.UpsertCollectorParams{ClusterID: cluster.ID, Role: "metrics"})
+			Expect(err).NotTo(HaveOccurred())
+			logs, err := st.Queries.UpsertCollector(ctx, sqlc.UpsertCollectorParams{ClusterID: cluster.ID, Role: "logs"})
+			Expect(err).NotTo(HaveOccurred())
+
+			// Start both collectors clean (dirty=false) so the assertion below
+			// proves UnclaimCluster is what dirtied them, not the row default.
+			_, err = st.Queries.UpsertServeCacheConditional(ctx, sqlc.UpsertServeCacheConditionalParams{
+				CollectorID: metrics.ID, Content: "x", Hash: "h1",
+			})
+			Expect(err).NotTo(HaveOccurred())
+			_, err = st.Queries.UpsertServeCacheConditional(ctx, sqlc.UpsertServeCacheConditionalParams{
+				CollectorID: logs.ID, Content: "x", Hash: "h2",
+			})
+			Expect(err).NotTo(HaveOccurred())
+
+			resp := postConnect("/shepherd.mgmt.v1.AdminService/UnclaimCluster", map[string]any{
+				"cluster": "unclaim-rpc-cluster",
+			}, appAdmin)
+			Expect(resp.StatusCode).To(Equal(http.StatusOK))
+			payload := decodeBody(resp)
+			Expect(payload["status"]).To(Equal("unclaimed"))
+
+			metricsCache, err := st.Queries.GetServeCache(ctx, metrics.ID)
+			Expect(err).NotTo(HaveOccurred())
+			Expect(metricsCache.Dirty).To(BeTrue(), "metrics collector's serve_cache must be marked dirty by UnclaimCluster")
+			logsCache, err := st.Queries.GetServeCache(ctx, logs.ID)
+			Expect(err).NotTo(HaveOccurred())
+			Expect(logsCache.Dirty).To(BeTrue(), "logs collector's serve_cache must be marked dirty by UnclaimCluster")
+
+			reloaded, err := st.Queries.GetClusterByID(ctx, cluster.ID)
+			Expect(err).NotTo(HaveOccurred())
+			Expect(reloaded.OrgID.Valid).To(BeFalse(), "cluster must no longer be assigned to an org")
+		})
+
+		It("UnclaimCluster surfaces the failure and rolls back the unclaim when marking the serve cache dirty cannot complete", func() {
+			appAdmin := createSession(true, nil)
+
+			cluster, err := st.Queries.UpsertCluster(ctx, "unclaim-rollback-cluster")
+			Expect(err).NotTo(HaveOccurred())
+			Expect(st.Queries.ClaimCluster(ctx, sqlc.ClaimClusterParams{ID: cluster.ID, OrgID: orgUUID(orgIDStr)})).To(Succeed())
+
+			collector, err := st.Queries.UpsertCollector(ctx, sqlc.UpsertCollectorParams{ClusterID: cluster.ID, Role: "metrics"})
+			Expect(err).NotTo(HaveOccurred())
+			_, err = st.Queries.UpsertServeCacheConditional(ctx, sqlc.UpsertServeCacheConditionalParams{
+				CollectorID: collector.ID, Content: "x", Hash: "h1",
+			})
+			Expect(err).NotTo(HaveOccurred())
+
+			// Hold a row lock on the collector's serve_cache row from a separate
+			// connection so UnclaimCluster's dirty-marking statement blocks on
+			// it, then cancel that blocked backend — the deterministic way to
+			// force the second statement in the unclaim to fail without a
+			// fault-injection seam in store.go.
+			lockConn, err := st.Pool().Acquire(ctx)
+			Expect(err).NotTo(HaveOccurred())
+			defer lockConn.Release()
+			lockTx, err := lockConn.Begin(ctx)
+			Expect(err).NotTo(HaveOccurred())
+			defer func() { _ = lockTx.Rollback(ctx) }() //nolint:errcheck // best-effort cleanup; explicit Rollback below is the real one
+			_, err = lockTx.Exec(ctx, `SELECT * FROM serve_cache WHERE collector_id = $1 FOR UPDATE`, collector.ID)
+			Expect(err).NotTo(HaveOccurred())
+
+			respCh := make(chan *http.Response, 1)
+			go func() {
+				defer GinkgoRecover()
+				respCh <- postConnect("/shepherd.mgmt.v1.AdminService/UnclaimCluster", map[string]any{
+					"cluster": "unclaim-rollback-cluster",
+				}, appAdmin)
+			}()
+
+			var pid int
+			Eventually(func() error {
+				return st.Pool().QueryRow(ctx,
+					`SELECT pid FROM pg_stat_activity
+					 WHERE datname = current_database() AND wait_event_type = 'Lock' AND query ILIKE '%serve_cache%'`,
+				).Scan(&pid)
+			}, "5s", "20ms").Should(Succeed(), "UnclaimCluster's dirty-mark statement never blocked on the held lock")
+			_, err = st.Pool().Exec(ctx, `SELECT pg_cancel_backend($1)`, pid)
+			Expect(err).NotTo(HaveOccurred())
+
+			resp := <-respCh
+			Expect(resp.StatusCode).NotTo(Equal(http.StatusOK), "a failed dirty-mark must not report success")
+			payload := decodeBody(resp)
+			Expect(payload["code"]).To(Equal("internal"))
+
+			Expect(lockTx.Rollback(ctx)).To(Succeed())
+
+			reloaded, err := st.Queries.GetClusterByID(ctx, cluster.ID)
+			Expect(err).NotTo(HaveOccurred())
+			Expect(reloaded.OrgID.Valid).To(BeTrue(), "the unclaim must roll back when the dirty-mark fails, not partially apply")
+
+			cache, err := st.Queries.GetServeCache(ctx, collector.ID)
+			Expect(err).NotTo(HaveOccurred())
+			Expect(cache.Dirty).To(BeFalse(), "serve_cache must not be left dirty by a rolled-back unclaim")
+		})
+
+		It("denies UnclaimCluster for an org-admin session that is not an app admin", func() {
+			orgAdmin := createSession(false, []string{"admin-rpc-admin-group"})
+
+			resp := postConnect("/shepherd.mgmt.v1.AdminService/UnclaimCluster", map[string]any{
+				"cluster": "no-such-cluster",
+			}, orgAdmin)
+			Expect(resp.StatusCode).To(Equal(http.StatusForbidden))
+			payload := decodeBody(resp)
+			Expect(payload["code"]).To(Equal("permission_denied"))
+		})
+
 		It("creates an agent token whose secret is returned exactly once", func() {
 			appAdmin := createSession(true, nil)
 

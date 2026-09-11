@@ -37,3 +37,14 @@ export function wireCountsFor(edges: GraphEdge[], nodeId: string): Map<string, n
   }
   return counts;
 }
+
+/** The edges landing on one ACCEPTS port of one node — the `to` side only,
+ *  since only an argument-origin (accepts) port ever backs an attribute
+ *  field — sorted by `order` (missing treated as 0, matching both
+ *  renderers' own fallback). Backs the inspector's minimal fan-in reorder
+ *  control (W5-08): `WiredRow` shows one row per entry here, in this order. */
+export function wireEdgesFor(edges: GraphEdge[], nodeId: string, portId: string): GraphEdge[] {
+  return edges
+    .filter((e) => e.to.node === nodeId && e.to.port === portId)
+    .sort((a, b) => (a.order ?? 0) - (b.order ?? 0));
+}

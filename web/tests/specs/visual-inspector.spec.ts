@@ -51,6 +51,120 @@ test.describe('visual inspector', () => {
     await expect(page.locator('[data-testid="attr-input-password"]')).not.toBeVisible();
   });
 
+  test('fan-in reorder control (W5-08): two wires into a list port can be swapped', async ({
+    page,
+  }) => {
+    // Same pipeline shape as visual-linking's "second wire into list input
+    // adds a second edge": two discovery.kubernetes sources wired into one
+    // discovery.relabel's `targets` (a real, schema-declared
+    // cardinality:'list' accepts port — internal/schema/artifacts/alloy-*.json).
+    await page.click('[data-component="discovery.kubernetes"]');
+    await page.click('[data-component="discovery.kubernetes"]');
+    await page.click('[data-component="discovery.relabel"]');
+    await expect(page.locator('[data-testid="pipeline-node"]')).toHaveCount(3);
+
+    const source1 = page
+      .locator('.react-flow__node')
+      .nth(0)
+      .locator('.react-flow__handle.source')
+      .first();
+    const source2 = page
+      .locator('.react-flow__node')
+      .nth(1)
+      .locator('.react-flow__handle.source')
+      .first();
+    const target = page
+      .locator('.react-flow__node')
+      .nth(2)
+      .locator('.react-flow__handle.target')
+      .first();
+    await source1.waitFor({ timeout: 5_000 });
+    await source2.waitFor({ timeout: 5_000 });
+    await target.waitFor({ timeout: 5_000 });
+
+    const drag = async (
+      from: { x: number; y: number; width: number; height: number },
+      to: { x: number; y: number; width: number; height: number },
+    ) => {
+      await page.mouse.move(from.x + from.width / 2, from.y + from.height / 2);
+      await page.mouse.down();
+      await page.waitForTimeout(100);
+      const steps = 20;
+      for (let i = 1; i <= steps; i++) {
+        await page.mouse.move(
+          from.x + from.width / 2 + ((to.x + to.width / 2 - (from.x + from.width / 2)) * i) / steps,
+          from.y +
+            from.height / 2 +
+            ((to.y + to.height / 2 - (from.y + from.height / 2)) * i) / steps,
+        );
+        await page.waitForTimeout(15);
+      }
+      await page.mouse.up();
+      await page.waitForTimeout(400);
+    };
+    await drag((await source1.boundingBox())!, (await target.boundingBox())!);
+    await expect(page.locator('.react-flow__edge')).toHaveCount(1);
+    const target2 = page
+      .locator('.react-flow__node')
+      .nth(2)
+      .locator('.react-flow__handle.target')
+      .first();
+    await drag((await source2.boundingBox())!, (await target2.boundingBox())!);
+    await expect(page.locator('.react-flow__edge')).toHaveCount(2);
+
+    // Select the relabel node to see its inspector, with the fan-in list.
+    const relabelId = await page
+      .locator('[data-testid="pipeline-node"]')
+      .nth(2)
+      .getAttribute('data-node-id');
+    await page.click(`[data-node-id="${relabelId}"]`, { force: true });
+    await expect(page.locator('[data-testid="inspector"]')).toContainText('discovery.relabel', {
+      timeout: 5_000,
+    });
+
+    const orderList = page.locator('[data-testid="attr-wire-order-targets"]');
+    await expect(orderList).toBeVisible();
+    await expect(page.locator('[data-testid="attr-wire-up-targets-0"]')).toBeDisabled();
+    await expect(page.locator('[data-testid="attr-wire-down-targets-1"]')).toBeDisabled();
+
+    await page.click('[data-testid="attr-wire-down-targets-0"]');
+    // After the swap, what was row 0 is now disabled at the bottom (row 1).
+    await expect(page.locator('[data-testid="attr-wire-down-targets-1"]')).toBeDisabled();
+    await expect(page.locator('[data-testid="attr-wire-up-targets-0"]')).toBeDisabled();
+  });
+
+  test('Code tab (W5-10): the render is debounced, not recomputed on every keystroke', async ({
+    page,
+  }) => {
+    // discovery.kubernetes' `role` is a required, top-level attribute
+    // (internal/schema/artifacts/alloy-*.json, overlaid with an enum of
+    // values) — visible without expanding "Show optional attributes" first,
+    // and absent from the render until set, so `role = "pod"` appearing is
+    // an unambiguous marker of "the edit reached the render".
+    await page.click('[data-component="discovery.kubernetes"]');
+    await page.waitForSelector('[data-testid="pipeline-node"]', { timeout: 5_000 });
+    await page.click('[data-testid="pipeline-node"]', { force: true });
+    await expect(page.locator('[data-testid="inspector"]')).toContainText('discovery.kubernetes', {
+      timeout: 5_000,
+    });
+
+    await page.click('[data-testid="drawer-toggle"]');
+    await page.click('[data-testid="drawer-tab-code"]');
+    const codeContent = page.locator('[data-testid="code-tab-content"]');
+    await expect(codeContent).toBeVisible({ timeout: 3_000 });
+    await expect(codeContent).not.toContainText('role = "pod"');
+
+    await page.selectOption('[data-testid="attr-select-role"]', 'pod');
+    // Immediately after the edit (well under the 300ms debounce), the Code
+    // tab must still show the OLD render — the value hasn't been committed
+    // to it yet. This is the assertion that is false today (renderTS runs
+    // on every keystroke, synchronously): it must go red before the fix.
+    await page.waitForTimeout(60);
+    await expect(codeContent).not.toContainText('role = "pod"');
+    // Once the debounce elapses, the render catches up.
+    await expect(codeContent).toContainText('role = "pod"', { timeout: 2_000 });
+  });
+
   test('placing two nodes and selecting second shows correct component', async ({ page }) => {
     await page.click('[data-component="prometheus.scrape"]');
     await page.click('[data-component="prometheus.remote_write"]');

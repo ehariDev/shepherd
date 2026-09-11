@@ -79,7 +79,7 @@ func writePipelineSaveError(w http.ResponseWriter, err error) {
 // struct marked `,omitempty`: revision is never populated by any handler
 // (always 0/omitted); revisions is populated only by GetPipeline, and only
 // when the pipeline actually has revision history.
-var pipelineOmitFields = []string{"revision", "revisions"} //nolint:gochecknoglobals // shared, read-only field list
+var pipelineOmitFields = []string{"revision", "revisions"}
 
 // List GET /api/orgs/{org}/pipelines
 func (h *PipelinesHandler) List(w http.ResponseWriter, r *http.Request) {

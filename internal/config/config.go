@@ -165,7 +165,7 @@ type SimulatorConfig struct {
 	Duration    time.Duration `mapstructure:"duration"`
 	MaxDuration time.Duration `mapstructure:"max_duration"`
 
-	// -- Run API (VB-1 §6.4/§13 M7): internal/simulate.RunWorker settings. --
+	// -- Run API (VB-1 §6.4/§13 M7): internal/simulate/worker.RunWorker settings. --
 
 	// ControlURL is scheme+host+port of the simulator's control API
 	// (POST/GET /v1/runs), no trailing slash. Distinct from CaptureBaseURL,
@@ -176,7 +176,7 @@ type SimulatorConfig struct {
 	Token string `mapstructure:"token"`
 	// MaxConcurrentRuns bounds how many runs RunWorker claims and manages at
 	// once, cluster-wide (enforced via Postgres advisory locks, not a
-	// per-replica semaphore — see internal/simulate.RunWorker).
+	// per-replica semaphore — see internal/simulate/worker.RunWorker).
 	MaxConcurrentRuns int `mapstructure:"max_concurrent_runs"`
 	// MaxNonTerminalPerOrg caps how many queued/running runs one org may
 	// have outstanding at once, so a single org cannot starve every other

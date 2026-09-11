@@ -6,10 +6,32 @@ import {
   useConnection,
   useUpdateNodeInternals,
 } from '@xyflow/react';
-import { memo, useCallback, useEffect, useMemo, useState } from 'react';
-import { getCategoryColor, getWireColor, portHandleId } from '../schemaAdapter';
+import { memo, useCallback, useEffect, useMemo, useState, useSyncExternalStore } from 'react';
+import { currentTheme, type Theme } from '../../theme';
+import { getThemedCategoryColor, getThemedWireColor, portHandleId } from '../schemaAdapter';
 import { type SimHealthEntry, selectConnectionState, useVisualStore } from '../store';
 import type { ComponentDef, GraphNode, L1Diagnostic, PortDef } from '../types';
+
+// D8/W6-D: getThemedWireColor/getThemedCategoryColor read the theme back
+// from the DOM (`currentTheme()`, html.light/html.dark), which is invisible
+// to React's own re-render pass — Shell.tsx's toggle only changes ITS OWN
+// local state, and this node is `memo`-wrapped with a `data` prop that
+// doesn't change on a theme flip, so without an explicit subscription the
+// canvas would stay locked to whichever palette was in effect when it first
+// mounted. `useSyncExternalStore` + a MutationObserver on the root's `class`
+// attribute is that subscription; CanvasPane reuses this same hook for its
+// in-flight connection-line colour (its own `theme` value would otherwise
+// go equally stale) rather than duplicating it.
+function subscribeToThemeChange(onChange: () => void): () => void {
+  // SSR/test environments with no DOM: nothing to observe, nothing to clean up.
+  if (typeof document === 'undefined') return () => undefined;
+  const observer = new MutationObserver(onChange);
+  observer.observe(document.documentElement, { attributes: true, attributeFilter: ['class'] });
+  return () => observer.disconnect();
+}
+export function useTheme(): Theme {
+  return useSyncExternalStore(subscribeToThemeChange, currentTheme, () => 'dark');
+}
 
 // Small 13px stroke icons, one per component category — drawn inline rather
 // than pulled from an icon library since the set is fixed and tiny.
@@ -215,6 +237,7 @@ export const PipelineNode = memo(function PipelineNode({
   const node = data;
   const setLabel = useVisualStore((s) => s.setLabel);
   const schema = useVisualStore((s) => s.schema);
+  const theme = useTheme();
   const [editing, setEditing] = useState(false);
   const [value, setValue] = useState(node.label);
   const def = node.schema;
@@ -284,7 +307,7 @@ export const PipelineNode = memo(function PipelineNode({
     (d) => d.node_id === node.id && d.severity === 'warning',
   ).length;
 
-  const categoryColor = getCategoryColor(schema, def?.category ?? 'advanced');
+  const categoryColor = getThemedCategoryColor(schema, def?.category ?? 'advanced', theme);
 
   const borderColorClass =
     dropState === 'valid' || dropState === 'snapped'
@@ -378,7 +401,7 @@ export const PipelineNode = memo(function PipelineNode({
                     top: `${p.top}px`,
                     ...(highlight
                       ? undefined
-                      : { backgroundColor: getWireColor(schema, p.wireType) }),
+                      : { backgroundColor: getThemedWireColor(schema, p.wireType, theme) }),
                   }}
                   className={[
                     '!w-3 !h-3 !rounded-full border-0 ring-2 ring-background',
@@ -413,7 +436,7 @@ export const PipelineNode = memo(function PipelineNode({
                     top: `${p.top}px`,
                     ...(highlight
                       ? undefined
-                      : { backgroundColor: getWireColor(schema, p.wireType) }),
+                      : { backgroundColor: getThemedWireColor(schema, p.wireType, theme) }),
                   }}
                   className={[
                     '!w-3 !h-3 !rounded-full border-0 ring-2 ring-background',

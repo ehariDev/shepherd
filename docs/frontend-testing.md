@@ -33,6 +33,21 @@ real session is wrong.
   cannot drive, so short real waits appear in those helpers deliberately. Do not add real waits
   outside that class of interaction.
 
+**W7 additions (RBAC + rollout + wizard/matcher + sandbox, `make test-fullstack`):**
+`roles.spec.ts` drives the seeded local `editor`/`viewer` accounts (dev/shepherd.dev.env's
+platform-org members) through the real login form and API — editor authoring a pipeline through
+the actual editor UI, viewer blocked from a direct PUT with a real 403, both denied `/admin/orgs`.
+`rollout.spec.ts` enables a pipeline from `/pipelines` and polls the real `alloy-metrics` agent's
+own 10s poll cycle to APPLIED — no `forceRecompute` shortcut, unlike `pipelines.spec.ts`'s
+scenario 6. `wizard-commit.spec.ts` commits the self-monitoring wizard (role `singleton`) to a
+real pipeline and checks its block reaches served config; `matcher-edit.spec.ts` edits a
+pipeline's matchers in the classic editor and asserts `PreviewMatches` moves it from the metrics
+collector to the logs collector. `sandbox-run.spec.ts` runs a real S3 sandbox run from the visual
+builder's Simulate menu and needs the `sim` compose profile, which `make test-fullstack` does not
+start — it self-skips unless `FULLSTACK_SIM=1`, and `make test-fullstack-sim` (local-only, not
+wired into CI — a real sandbox run costs ~30s of actual Alloy execution) sets that and runs only
+this one spec against the profile it brings up itself.
+
 ---
 
 ## 2. Layout & tooling
@@ -45,7 +60,7 @@ web/
 │   ├── fixtures/
 │   │   ├── test.ts          # extended `test` with the `api` fixture (§5)
 │   │   ├── factories.ts     # fixture builders + basicScenario() (§4)
-│   │   ├── personas.ts      # appAdmin / orgAdmin / reader / nobody / localAdmin (§6)
+│   │   ├── personas.ts      # appAdmin / orgAdmin / orgEditor / reader / nobody / localAdmin (§6)
 │   │   └── schema-fixture.ts
 │   ├── mocks/
 │   │   ├── router.ts        # MockState + route matcher (§3)
@@ -54,15 +69,22 @@ web/
 │   └── specs/               # the mocked suite
 ```
 
-`tests/specs/` holds 30+ spec files. By group rather than exhaustively:
+`tests/specs/` holds 46 spec files (`ls web/tests/specs/*.spec.ts | wc -l`); `tests/fullstack/`
+holds 15. By group rather than exhaustively:
 
 - **Screens** — auth, local-login, overview, collectors, collector-access, pipelines-list,
-  pipeline-editor, editor-autocomplete, revisions, served-config, wizard, destinations, git,
-  git-page, admin, audit, org-switcher, rbac, states (loading/empty/error/toasts)
-- **Visual builder** — `visual-*.spec.ts`: canvas, linking, inspector, code-sync, layout,
-  selection-delete, drag-highlight, disable, graph-view, toolbar-save, upgrade, simulate-s2,
-  simulate-s3
-- **Cross-cutting** — a11y
+  pipeline-editor, editor-autocomplete, editor-role, revisions, served-config, wizard,
+  destinations, git, git-page, admin, admin-users, sso-settings, teams, audit, org-switcher,
+  rbac, states (loading/empty/error/toasts), theme, shell-breadcrumb, dialogs, query-errors
+- **Visual builder** — `visual-*.spec.ts`: canvas, linking, bindings, inspector, code-sync,
+  drafts, layout, selection-delete, drag-highlight, disable, graph-view, toolbar-save, upgrade,
+  simulate-s2, simulate-s3
+- **Cross-cutting** — a11y, and three source-scanning guards that assert on the suite itself
+  rather than the app: `route-guard.spec.ts` (direct-nav denial matrix, W6-S7's red run),
+  `persona-floor.spec.ts` (minimum per-persona coverage floors so appAdmin cannot dominate the
+  suite by default — orgAdmin 16, orgEditor 10, reader 10, localAdmin 3, nobody 4, app-admin
+  share capped at 60%), `wait-budget.spec.ts` (caps `waitForTimeout` at 25 call sites, all in the
+  visual-canvas drag/highlight/layout specs — §1's documented exemption)
 
 Dependencies: `@playwright/test` only. No MSW — route interception is the single mocking
 mechanism (two mock systems drift apart). Scripts: `pnpm test:ui` runs the mocked suite;
@@ -181,11 +203,15 @@ Extends Playwright's `test` with an `api` fixture:
 
 ## 6. Personas (`fixtures/personas.ts`)
 
-Exact `/api/me` payloads (spec §7.2 roles): `appAdmin` (all orgs), `orgAdmin` (admin of one org),
-`reader`, `nobody` (authenticated, zero grants), `localAdmin`. Unauthenticated is expressed by
-the `/api/me` handler returning 401. RBAC rendering follows spec §13.4's rule — write
-affordances are **hidden, not disabled** — and `rbac.spec.ts` asserts both directions: presence
-for privileged personas and absence (negative assertions) for the reader persona.
+Exact `/api/me` payloads (spec §7.2 roles), six total: `appAdmin` (all orgs), `orgAdmin` (admin
+of one org), `orgEditor` (editor of one org — added with the org-editor tier, W3; authors
+pipelines/wizards/visual/simulate but not destinations/tenant routes/git credentials/teams),
+`reader` (viewer of one org), `nobody` (authenticated, zero grants), `localAdmin`.
+Unauthenticated is expressed by the `/api/me` handler returning 401. RBAC rendering follows spec
+§13.4's rule — write affordances are **hidden, not disabled** — and `rbac.spec.ts` asserts both
+directions: presence for privileged personas and absence (negative assertions) for the reader
+persona. `persona-floor.spec.ts` (§1) is the machine-enforced guard that this list stays
+exercised in proportion, not just declared.
 
 ---
 
@@ -213,10 +239,14 @@ screenshot tests; behavioral assertions are the guardrail.
 Specified in earlier revisions of this document but not implemented. Treat as candidate work,
 not as coverage:
 
-- **RBAC matrix completion** — reader-persona negatives now exist in `rbac.spec.ts` (no
-  New-pipeline/Visual-builder/Enable/Save affordances, each with a positive control against
-  vacuous passes); still missing: direct-nav denial (`/admin/orgs` for non-appAdmin personas),
-  the collector Access tab per persona, and any use of the `nobody` persona.
+- **RBAC matrix completion** — DONE, moved out of the backlog (W7). Reader-persona negatives
+  exist in `rbac.spec.ts` (no New-pipeline/Visual-builder/Enable/Save affordances, each with a
+  positive control against vacuous passes); direct-nav denial across every admin route plus
+  `/teams` is `route-guard.spec.ts`'s persona × route matrix (the red run for W6-S7's
+  `RequireRole` guard); the collector Access tab is covered per persona in
+  `collector-access.spec.ts` (hidden for reader and org editor, present for org/app admin); the
+  `nobody` persona is exercised in `route-guard.spec.ts` and `persona-floor.spec.ts` floors it at
+  a minimum of 4 uses so it cannot silently drop back out.
 - **Collectors screen depth** — role filter narrowing + `?role=` URL sync, clipboard copy toast,
   the 300ms group-search debounce asserted via `api.calls` call-count.
 - **Pipelines list** — matcher-chip truncation ("+n"), source badges, filter↔URL sync.

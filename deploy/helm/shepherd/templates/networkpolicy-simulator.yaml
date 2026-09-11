@@ -27,9 +27,18 @@ spec:
   # capture/synthetic/OTLP/syslog receivers THIS SAME POD serves for the
   # sandboxed Alloy child process to reach (internal/simsvc/runner.go — it is
   # a child process, not a sibling container, so this Pod's network boundary
-  # IS the sandbox's boundary), plus cluster DNS to resolve this Service's own
-  # name. No route to the rest of the cluster and no route to the internet —
-  # a user-authored config gets nothing else to talk to, whatever it names.
+  # IS the sandbox's boundary). No cluster DNS, no route to the rest of the
+  # cluster, no route to the internet — a user-authored config gets nothing
+  # else to talk to, whatever it names.
+  #
+  # D10: cluster DNS used to be open here so the sandbox could resolve this
+  # Service's own name. It no longer needs to: every harness endpoint above is
+  # served by THIS SAME POD, so shepherd.configYaml (_helpers.tpl) now wires
+  # the sandbox at these ports via 127.0.0.1 directly, and DNS resolution
+  # itself is denied end to end (e2e/k8s/simulator_containment_test.go's
+  # P-dns-only). A resolver a user-authored config could still ask to name
+  # things with -- and get nothing back -- is a smaller attack surface than a
+  # resolver it could use to confirm what else is reachable.
   egress:
     - to:
         - podSelector:
@@ -43,15 +52,6 @@ spec:
         - port: otlp-grpc
           protocol: TCP
         - port: syslog
-          protocol: TCP
-    - to:
-        - namespaceSelector:
-            matchLabels:
-              kubernetes.io/metadata.name: kube-system
-      ports:
-        - port: 53
-          protocol: UDP
-        - port: 53
           protocol: TCP
     {{- with .Values.simulator.networkPolicy.extraEgress }}
     {{- toYaml . | nindent 4 }}

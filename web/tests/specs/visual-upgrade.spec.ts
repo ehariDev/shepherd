@@ -100,6 +100,81 @@ test.describe('visual upgrade', () => {
     await expect(page.getByTestId('upgrade-discard-attr')).toBeVisible();
   });
 
+  test('W5-04 — Accept is disabled while a component_removed item is present', async ({
+    page,
+    api,
+  }) => {
+    api.seed({
+      upgradeCheckResult: {
+        old_version: 'alloy-v1.12.0',
+        new_version: 'alloy-v1.18.1',
+        items: [
+          {
+            node_id: 'n1',
+            node_label: 'my-scrape',
+            component: 'test.component',
+            class: 'component_removed',
+            detail: '',
+          },
+        ],
+        needs_upgrade: true,
+      },
+    });
+    await gotoWithOldGraph(page);
+    await page.getByTestId('upgrade-review-open').click();
+    await expect(page.getByTestId('upgrade-review')).toBeVisible();
+    await expect(page.getByTestId('upgrade-blocked')).toBeVisible();
+    await expect(page.getByTestId('upgrade-accept')).toBeDisabled();
+    // Clicking a disabled button does nothing — the review must stay open.
+    await page.getByTestId('upgrade-accept').click({ force: true });
+    await expect(page.getByTestId('upgrade-review')).toBeVisible();
+  });
+
+  test('W5-04 — UpgradeCheck runs once per review open, not on every graph mutation', async ({
+    page,
+    api,
+  }) => {
+    api.seed({
+      upgradeCheckResult: {
+        old_version: 'alloy-v1.12.0',
+        new_version: 'alloy-v1.18.1',
+        items: [],
+        needs_upgrade: true,
+      },
+    });
+    await gotoWithOldGraph(page);
+    // Build one undoable mutation BEFORE opening the review — the review is a
+    // full-screen modal (`fixed inset-0 z-50`) once open and intercepts every
+    // pointer event on the canvas/palette behind it, so any further mutation
+    // has to arrive via keyboard on the canvas, not a click.
+    await page.getByTestId('palette-item-loki.source.file').click();
+    await expect(page.locator('.react-flow__node')).toHaveCount(1);
+
+    await page.getByTestId('upgrade-review-open').click();
+    await expect(page.getByTestId('upgrade-review')).toBeVisible();
+    await expect(page.getByTestId('upgrade-no-items')).toBeVisible();
+    expect(api.calls('UpgradeCheck')).toHaveLength(1);
+
+    // Mutate the graph while the review stays open: undo the node placed
+    // above. This used to re-fire UpgradeCheck because the effect depended
+    // on the whole `doc`, not just `doc.schema_version`. Focus is set via
+    // JS (not a click) because the modal overlay blocks pointer events on
+    // the canvas, but the canvas div's own keydown handler (which undo goes
+    // through) only needs DOM focus, not visibility.
+    await page.evaluate(() => {
+      (document.querySelector('[data-testid="canvas"]') as HTMLElement | null)?.focus();
+    });
+    await page.keyboard.press('Control+z');
+    await expect(page.locator('.react-flow__node')).toHaveCount(0);
+    await expect(page.getByTestId('upgrade-review')).toBeVisible();
+    // Give a wrongly-refired UpgradeCheck a chance to actually reach the
+    // network before asserting it didn't (W7-13: api.idle() waits for no
+    // in-flight request for 100ms, rather than a flat page.waitForTimeout
+    // regardless of what the network is doing).
+    await api.idle();
+    expect(api.calls('UpgradeCheck')).toHaveLength(1);
+  });
+
   test('7.6.6.5 — Accept stamps new version and closes review', async ({ page, api }) => {
     api.seed({
       upgradeCheckResult: {

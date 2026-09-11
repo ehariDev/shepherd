@@ -70,13 +70,26 @@ test('deleting a non-empty org surfaces the server error', async ({ page, api })
   await expect(page.getByText('test-org')).toBeVisible();
 });
 
-test('non-app-admin cannot see org write affordances', async ({ page, api }) => {
+test('non-app-admin is denied /admin/orgs by direct navigation', async ({ page, api }) => {
+  // W6-S7: routeManifest's requiredRole ('app-admin' for admin/*) denies the
+  // direct navigation before AdminOrgsPage ever mounts, so it never sees
+  // (and thus can never leak) org data or write affordances — the guard
+  // redirects to '/' (and shows a route-denied element on the way) instead
+  // of letting the page render and hide only the write button. See
+  // route-guard.spec.ts for the full persona x route denial matrix.
   await api.loginAs(orgAdmin);
   api.seed({ orgs: [org({ id: 'org-0001', name: 'prod-org', display_name: 'Production Org' })] });
   await page.goto('/admin/orgs');
 
-  await expect(page.getByText('prod-org')).toBeVisible();
-  await expect(page.getByRole('button', { name: /new organisation/i })).toHaveCount(0);
+  await expect(async () => {
+    const onRoot = new URL(page.url()).pathname === '/';
+    const hasDeniedBanner = await page
+      .getByTestId('route-denied')
+      .isVisible()
+      .catch(() => false);
+    expect(onRoot || hasDeniedBanner).toBe(true);
+  }).toPass({ timeout: 5000 });
+  expect(api.calls('AdminService/ListOrgs')).toHaveLength(0);
 });
 
 test('claiming an unclaimed cluster assigns it to an org', async ({ page, api }) => {

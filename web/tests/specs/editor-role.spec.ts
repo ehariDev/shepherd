@@ -11,7 +11,7 @@
  * authors what the org RUNS, and cannot change what the org IS.
  */
 import { basicScenario } from '../fixtures/factories';
-import { orgEditor, reader } from '../fixtures/personas';
+import { localAdmin, orgAdmin, orgEditor, reader } from '../fixtures/personas';
 import { expect, test } from '../fixtures/test';
 
 test('an editor can author pipelines', async ({ page, api }) => {
@@ -53,4 +53,37 @@ test('a viewer still gets a read-only pipelines page', async ({ page, api }) => 
 
   await expect(page.getByTestId('pipeline-new')).toHaveCount(0);
   await expect(page.getByTestId('pipeline-visual-builder')).toHaveCount(0);
+});
+
+test('a reader cannot change where telemetry ships either', async ({ page, api }) => {
+  // The same control as "an editor cannot change where telemetry ships",
+  // one rung down: destinations are gated by useCanAdminister (org admin or
+  // app admin), which a reader clears no more than an editor does.
+  await api.loginAs(reader);
+  await page.goto('/destinations');
+  await expect(page.getByRole('button', { name: /new destination/i })).toHaveCount(0);
+});
+
+test('an org admin can also author pipelines, not just an app admin', async ({ page, api }) => {
+  await api.loginAs(orgAdmin);
+  const s = basicScenario();
+  api.seed({ orgs: [s.org], pipelines: s.pipelines });
+  await page.goto('/pipelines');
+
+  await expect(page.getByTestId('pipeline-new')).toBeVisible();
+  await expect(page.getByTestId('pipeline-visual-builder')).toBeVisible();
+});
+
+test('a local admin can also author pipelines', async ({ page, api }) => {
+  // Unlike every other persona here, local admin's fixture carries no org
+  // membership at all (isAppAdmin bypasses useCanWrite regardless), so the
+  // pipelines list itself never resolves an orgId — this only works because
+  // PipelinesPage renders its header and write affordances unconditionally
+  // and shows "No pipelines yet." rather than an org-required gate.
+  await api.loginAs(localAdmin);
+  api.seed({ orgs: [] });
+  await page.goto('/pipelines');
+
+  await expect(page.getByTestId('pipeline-new')).toBeVisible();
+  await expect(page.getByTestId('pipeline-visual-builder')).toBeVisible();
 });

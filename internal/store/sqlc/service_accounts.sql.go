@@ -12,24 +12,30 @@ import (
 )
 
 const createServiceAccount = `-- name: CreateServiceAccount :one
-INSERT INTO service_accounts (org_id, name, capability, token_hash, created_by)
-VALUES ($1, $2, $3, $4, $5)
-RETURNING id, org_id, name, capability, token_hash, created_by, revoked_at, created_at, updated_at
+INSERT INTO service_accounts (org_id, name, capability, role, token_hash, created_by)
+VALUES ($1, $2, $3, $4, $5, $6)
+RETURNING id, org_id, name, capability, token_hash, created_by, revoked_at, created_at, updated_at, role
 `
 
 type CreateServiceAccountParams struct {
 	OrgID      pgtype.UUID `json:"org_id"`
 	Name       string      `json:"name"`
 	Capability string      `json:"capability"`
+	Role       string      `json:"role"`
 	TokenHash  []byte      `json:"token_hash"`
 	CreatedBy  string      `json:"created_by"`
 }
 
+// role is "editor" or "admin" (W3-1, 0018_service_account_role): the tier
+// checked against a procedure's requirement in
+// internal/mgmtapi.authorizeServiceAccountProcedure, orthogonal to
+// capability (propose vs apply, "may this write at all").
 func (q *Queries) CreateServiceAccount(ctx context.Context, arg CreateServiceAccountParams) (ServiceAccount, error) {
 	row := q.db.QueryRow(ctx, createServiceAccount,
 		arg.OrgID,
 		arg.Name,
 		arg.Capability,
+		arg.Role,
 		arg.TokenHash,
 		arg.CreatedBy,
 	)
@@ -44,12 +50,13 @@ func (q *Queries) CreateServiceAccount(ctx context.Context, arg CreateServiceAcc
 		&i.RevokedAt,
 		&i.CreatedAt,
 		&i.UpdatedAt,
+		&i.Role,
 	)
 	return i, err
 }
 
 const getServiceAccountByID = `-- name: GetServiceAccountByID :one
-SELECT id, org_id, name, capability, token_hash, created_by, revoked_at, created_at, updated_at FROM service_accounts WHERE id = $1 AND revoked_at IS NULL
+SELECT id, org_id, name, capability, token_hash, created_by, revoked_at, created_at, updated_at, role FROM service_accounts WHERE id = $1 AND revoked_at IS NULL
 `
 
 // Only an unrevoked row authenticates — a revoked service account's id
@@ -72,12 +79,13 @@ func (q *Queries) GetServiceAccountByID(ctx context.Context, id pgtype.UUID) (Se
 		&i.RevokedAt,
 		&i.CreatedAt,
 		&i.UpdatedAt,
+		&i.Role,
 	)
 	return i, err
 }
 
 const listServiceAccountsByOrg = `-- name: ListServiceAccountsByOrg :many
-SELECT id, org_id, name, capability, token_hash, created_by, revoked_at, created_at, updated_at FROM service_accounts WHERE org_id = $1 ORDER BY name
+SELECT id, org_id, name, capability, token_hash, created_by, revoked_at, created_at, updated_at, role FROM service_accounts WHERE org_id = $1 ORDER BY name
 `
 
 func (q *Queries) ListServiceAccountsByOrg(ctx context.Context, orgID pgtype.UUID) ([]ServiceAccount, error) {
@@ -99,6 +107,7 @@ func (q *Queries) ListServiceAccountsByOrg(ctx context.Context, orgID pgtype.UUI
 			&i.RevokedAt,
 			&i.CreatedAt,
 			&i.UpdatedAt,
+			&i.Role,
 		); err != nil {
 			return nil, err
 		}

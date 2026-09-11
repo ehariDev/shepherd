@@ -24,9 +24,10 @@ test('top-level completion shows component options', async ({ page, api }) => {
   const ed = await openEditor(page);
   // Type a component prefix to trigger autocomplete
   await ed.pressSequentially('prom');
-  // Small wait for activateOnTyping debounce
-  await page.waitForTimeout(300);
-  // Also try explicit trigger
+  // No arbitrary wait for the activateOnTyping debounce: Control+Space
+  // invokes CodeMirror's startCompletion command directly, bypassing the
+  // typing debounce, and the toBeVisible below already polls for the
+  // tooltip.
   await page.keyboard.press('Control+Space');
   const tooltip = page.locator('.cm-tooltip-autocomplete');
   await expect(tooltip).toBeVisible({ timeout: 5000 });
@@ -40,7 +41,8 @@ test('in-block attribute completion appears after entering block', async ({ page
   const ed = await openEditor(page);
   await ed.pressSequentially('prometheus.scrape "test" {');
   await ed.press('Enter');
-  await page.waitForTimeout(300);
+  // See the top-level completion test: the explicit trigger below bypasses
+  // the typing debounce, so no arbitrary wait is needed here either.
   await page.keyboard.press('Control+Space');
   const tooltip = page.locator('.cm-tooltip-autocomplete');
   await expect(tooltip).toBeVisible({ timeout: 5000 });
@@ -55,7 +57,8 @@ test('enum completion appears after = for attribute with values', async ({ page,
   await ed.pressSequentially('prometheus.scrape "test" {');
   await ed.press('Enter');
   await ed.pressSequentially('  scheme = ');
-  await page.waitForTimeout(300);
+  // See the top-level completion test: the explicit trigger below bypasses
+  // the typing debounce, so no arbitrary wait is needed here either.
   await page.keyboard.press('Control+Space');
   const tooltip = page.locator('.cm-tooltip-autocomplete');
   await expect(tooltip).toBeVisible({ timeout: 5000 });
@@ -68,10 +71,14 @@ test('no completion inside a comment', async ({ page, api }) => {
   api.seed({ orgs: [basicScenario().org] });
   const ed = await openEditor(page);
   await ed.pressSequentially('// this is a comment');
-  await page.waitForTimeout(300);
+  // Fake the clock from here so "wait past the point where a tooltip would
+  // have rendered" is a deterministic, instant clock advance rather than a
+  // real sleep — this is a negative control, so unlike the other cases in
+  // this file it cannot rely on a polling locator assertion alone (there is
+  // nothing to poll for; the assertion is that nothing ever appears).
+  await page.clock.install();
   await page.keyboard.press('Control+Space');
-  // Wait past the point where a tooltip would have rendered.
-  await page.waitForTimeout(500);
+  await page.clock.runFor(500);
   // Deterministic: AlloyEditor registers alloyCompletionSource as the SOLE
   // completion source (autocompletion({ override: [...] })), and the source
   // returns null in comment context — so no autocomplete tooltip may exist.

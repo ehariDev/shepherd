@@ -59,11 +59,17 @@ func (h *WizardHandler) RenderWizard(w http.ResponseWriter, r *http.Request) {
 		respondError(w, http.StatusBadRequest, "bad_request", err.Error())
 		return
 	}
-	req := &mgmtv1.RenderWizardRequest{OrgId: chi.URLParam(r, "org")}
+	req := &mgmtv1.RenderWizardRequest{}
 	if err := protojson.Unmarshal(body, req); err != nil {
 		respondError(w, http.StatusBadRequest, "bad_request", "invalid JSON: "+err.Error())
 		return
 	}
+	// The URL is the authoritative org, and it is what RequireOrgAccess
+	// checked. protojson.Unmarshal resets the whole message, so seeding OrgId
+	// before it silently produced an EMPTY org for any body that omitted
+	// orgId (CommitWizard then 500ed on pipelines.org_id NOT NULL) and would
+	// have let a body name a different org than the one authorized.
+	req.OrgId = chi.URLParam(r, "org")
 	resp, err := h.service.RenderWizard(r.Context(), connect.NewRequest(req))
 	if err != nil {
 		WriteConnectError(w, err)
@@ -79,11 +85,17 @@ func (h *WizardHandler) CommitWizard(w http.ResponseWriter, r *http.Request) {
 		respondError(w, http.StatusBadRequest, "bad_request", err.Error())
 		return
 	}
-	req := &mgmtv1.CommitWizardRequest{OrgId: chi.URLParam(r, "org")}
+	req := &mgmtv1.CommitWizardRequest{}
 	if err := protojson.Unmarshal(body, req); err != nil {
 		respondError(w, http.StatusBadRequest, "bad_request", "invalid JSON: "+err.Error())
 		return
 	}
+	// The URL is the authoritative org, and it is what RequireOrgAccess
+	// checked. protojson.Unmarshal resets the whole message, so seeding OrgId
+	// before it silently produced an EMPTY org for any body that omitted
+	// orgId (CommitWizard then 500ed on pipelines.org_id NOT NULL) and would
+	// have let a body name a different org than the one authorized.
+	req.OrgId = chi.URLParam(r, "org")
 	resp, err := h.service.CommitWizard(r.Context(), connect.NewRequest(req))
 	if err != nil {
 		WriteConnectError(w, err)

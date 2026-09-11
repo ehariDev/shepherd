@@ -59,7 +59,7 @@ func allShepherdMgmtV1Procedures(tb testing.TB) []string {
 // are pinned to the same list by comment cross-reference, and a mismatch
 // would show up as this test flagging (or missing) a procedure the mgmtapi
 // suite already classified differently, so drift cannot hide silently.
-var writeVerbPrefixes = []string{ //nolint:gochecknoglobals // static test fixture, mirrors mgmtapi's
+var writeVerbPrefixes = []string{
 	"Create", "Update", "Delete", "Enable", "Disable", "Revoke", "Claim", "Unclaim", "Rotate", "Set", "Commit",
 }
 
@@ -68,7 +68,7 @@ var writeVerbPrefixes = []string{ //nolint:gochecknoglobals // static test fixtu
 // Create-named procedure that does not require apply capability because it
 // persists a sandboxed dry-run artifact, not production state (G12's
 // nonMutatingNameExceptions doc comment explains why in full).
-var nonMutatingNameExceptions = map[string]bool{ //nolint:gochecknoglobals // static test fixture, mirrors mgmtapi's
+var nonMutatingNameExceptions = map[string]bool{
 	"/shepherd.mgmt.v1.SimulateService/CreateRun": true,
 }
 

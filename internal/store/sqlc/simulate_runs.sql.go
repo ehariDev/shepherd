@@ -28,7 +28,7 @@ RETURNING id, org_id, status, graph, requested_duration_seconds, created_by, cre
 // Claims the single oldest queued run for the caller's connection. Callers
 // must hold a cluster-wide advisory lock (pg_try_advisory_lock) before
 // calling this so MaxConcurrentRuns is enforced regardless of replica count
-// — see internal/simulate.RunWorker.
+// — see internal/simulate/worker.RunWorker.
 func (q *Queries) ClaimQueuedSimulateRun(ctx context.Context) (SimulateRun, error) {
 	row := q.db.QueryRow(ctx, claimQueuedSimulateRun)
 	var i SimulateRun

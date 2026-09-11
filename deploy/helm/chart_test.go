@@ -83,6 +83,27 @@ var _ = Describe("Helm chart: S3 sandbox simulator containment (finding H5)", fu
 
 		BeforeEach(func() { objects = renderSimulatorEnabled() })
 
+		// Red run, 2026-09-11 (kind gate on the merged remediation branch): the
+		// pre-install migration Job inherited SHEPHERD_SIMULATOR_TOKEN from the
+		// shared shepherd.podEnv helper, but the token Secret is an ordinary
+		// chart resource that does not exist yet while pre-install hooks run,
+		// so every install died in CreateContainerConfigError ("secret
+		// shepherd-def-simulator-token not found") until the 5-minute wait
+		// expired. The migration needs the database, never the simulator.
+		It("keeps the simulator token off the pre-install migration Job", func() {
+			job, ok := objects["Job/shepherd-migrate"]
+			Expect(ok).To(BeTrue(), "no Job/shepherd-migrate rendered")
+			env := envOf(containerOf(job, "migrate"))
+			Expect(env).NotTo(HaveKey("SHEPHERD_SIMULATOR_TOKEN"))
+			volumes, _ := podSpecOf(job)["volumes"].([]any) //nolint:errcheck // absent volumes is a pass
+			for _, raw := range volumes {
+				v, _ := raw.(map[string]any) //nolint:errcheck // shape asserted by the key lookup
+				if sec, ok := v["secret"].(map[string]any); ok {
+					Expect(sec["secretName"]).NotTo(Equal("shepherd-simulator-token"))
+				}
+			}
+		})
+
 		It("renders a Deployment and a Service", func() {
 			Expect(objects).To(HaveKey("Deployment/shepherd-simulator"))
 			Expect(objects).To(HaveKey("Service/shepherd-simulator"))
@@ -132,7 +153,7 @@ var _ = Describe("Helm chart: S3 sandbox simulator containment (finding H5)", fu
 			Expect(requests).To(HaveKey("memory"))
 		})
 
-		It("default-denies egress except to its own harness ports and cluster DNS", func() {
+		It("default-denies egress except to its own harness ports — no DNS (D10)", func() {
 			np, ok := objects["NetworkPolicy/shepherd-simulator"]
 			Expect(ok).To(BeTrue(), "no NetworkPolicy rendered")
 
@@ -158,6 +179,53 @@ var _ = Describe("Helm chart: S3 sandbox simulator containment (finding H5)", fu
 				to, ok := rule["to"].([]any)
 				Expect(ok).To(BeTrue())
 				Expect(to).NotTo(BeEmpty())
+
+				for _, peerRaw := range to {
+					peer, ok := peerRaw.(map[string]any)
+					Expect(ok).To(BeTrue())
+					// D10: every harness endpoint the sandboxed Alloy child
+					// process needs is on THIS SAME POD (127.0.0.1) — nothing
+					// it talks to lives in another namespace, so a
+					// namespaceSelector peer here can only be the old
+					// kube-system:53 DNS hole this decision removed.
+					Expect(peer).NotTo(HaveKey("namespaceSelector"),
+						"a namespaceSelector peer reaches outside this Pod's own namespace — D10 dropped "+
+							"cluster DNS egress entirely, so no egress rule should still need one")
+				}
+
+				if ports, hasPorts := rule["ports"].([]any); hasPorts {
+					for _, portRaw := range ports {
+						port, ok := portRaw.(map[string]any)
+						Expect(ok).To(BeTrue())
+						Expect(port["port"]).NotTo(BeEquivalentTo(53),
+							"port 53 (DNS) is still open — D10 dropped the sandbox's DNS egress entirely")
+					}
+				}
+			}
+		})
+
+		It("points the sandboxed Alloy's harness endpoints at loopback, not the simulator Service's DNS name (D10)", func() {
+			cfg := shepherdConfig(objects)
+			sim, ok := cfg["simulator"].(map[string]any)
+			Expect(ok).To(BeTrue(), "shepherd.yaml has no auto-wired simulator block")
+
+			// control_url is dialled by SHEPHERD'S OWN Pod (a different
+			// network namespace), which still needs the Service's DNS name —
+			// only the sandboxed Alloy child process, which shares the
+			// simulator Pod's own netns, can use loopback.
+			Expect(sim["control_url"]).To(ContainSubstring("shepherd-simulator"),
+				"control_url is dialled by Shepherd's own Pod and still needs the simulator Service's name")
+
+			for key, want := range map[string]string{
+				"capture_base_url":  "http://127.0.0.1:9110",
+				"otlp_grpc_address": "127.0.0.1:4317",
+				"syslog_host":       "127.0.0.1",
+				"target_address":    "127.0.0.1:9111",
+			} {
+				Expect(sim[key]).To(Equal(want),
+					"%s is read by the sandboxed Alloy child process INSIDE the simulator Pod's own "+
+						"network namespace — it never needs to resolve the Service's DNS name, and D10 "+
+						"removed the NetworkPolicy's only reason to keep cluster DNS open", key)
 			}
 		})
 
@@ -170,6 +238,92 @@ var _ = Describe("Helm chart: S3 sandbox simulator containment (finding H5)", fu
 			Expect(ok).To(BeTrue())
 			Expect(ingress).To(HaveLen(1), "nothing but the control plane submits runs")
 		})
+	})
+})
+
+// tokenRefs reads back the Secret+key BOTH Deployments source the simulator's
+// bearer token from: the simulator's own SIM_TOKEN and Shepherd's
+// SHEPHERD_SIMULATOR_TOKEN. Whichever of D9's three sources supplied it, a
+// mismatch here means the control API silently rejects every run the moment
+// the two env vars point at different Secrets or keys.
+func tokenRefs(objects map[string]map[string]any) (simSecret, simKey, appSecret, appKey string) {
+	GinkgoHelper()
+	simEnv := envOf(containerOf(objects["Deployment/shepherd-simulator"], "shepherd-simulator"))
+	simEntry, ok := simEnv["SIM_TOKEN"].(map[string]any)
+	Expect(ok).To(BeTrue(), "shepherd-simulator container has no SIM_TOKEN env var")
+	simRef, ok := asMap(simEntry["valueFrom"])["secretKeyRef"].(map[string]any)
+	Expect(ok).To(BeTrue(), "SIM_TOKEN is not sourced from a Secret")
+	simSecret, _ = simRef["name"].(string) //nolint:errcheck // asserted via require below
+	simKey, _ = simRef["key"].(string)     //nolint:errcheck // same
+	Expect(simSecret).NotTo(BeEmpty())
+	Expect(simKey).NotTo(BeEmpty())
+
+	appEnv := envOf(containerOf(objects["Deployment/shepherd"], "shepherd"))
+	appEntry, ok := appEnv["SHEPHERD_SIMULATOR_TOKEN"].(map[string]any)
+	Expect(ok).To(BeTrue(), "shepherd container has no SHEPHERD_SIMULATOR_TOKEN env var")
+	appRef, ok := asMap(appEntry["valueFrom"])["secretKeyRef"].(map[string]any)
+	Expect(ok).To(BeTrue(), "SHEPHERD_SIMULATOR_TOKEN is not sourced from a Secret")
+	appSecret, _ = appRef["name"].(string) //nolint:errcheck // asserted via require below
+	appKey, _ = appRef["key"].(string)     //nolint:errcheck // same
+	Expect(appSecret).NotTo(BeEmpty())
+	Expect(appKey).NotTo(BeEmpty())
+	return simSecret, simKey, appSecret, appKey
+}
+
+var _ = Describe("Helm chart: simulator bearer token (W4-S3, D9)", func() {
+	It("source: simulator.token.existingSecret — both Deployments read it, nothing else renders", func() {
+		objects := renderWith("simulator:\n  token:\n    existingSecret: my-sim-token\n    key: bearer\n")
+
+		simSecret, simKey, appSecret, appKey := tokenRefs(objects)
+		Expect(simSecret).To(Equal("my-sim-token"))
+		Expect(simKey).To(Equal("bearer"))
+		Expect(appSecret).To(Equal("my-sim-token"))
+		Expect(appKey).To(Equal("bearer"))
+
+		Expect(objects).NotTo(HaveKey("Secret/shepherd-simulator-token"),
+			"existingSecret set: the chart must not ALSO generate its own token Secret")
+		Expect(objects).NotTo(HaveKey("ExternalSecret/shepherd-simulator-token"),
+			"existingSecret set: the chart must not ALSO render an ExternalSecret for the token")
+	})
+
+	It("source: External Secrets — both Deployments read the same Secret an ExternalSecret targets", func() {
+		objects := renderWith("externalSecrets:\n  enabled: true\ncnpg:\n  enabled: true\n")
+
+		simSecret, simKey, appSecret, appKey := tokenRefs(objects)
+		Expect(simSecret).To(Equal(appSecret), "the two Deployments must reference the same Secret")
+		Expect(simKey).To(Equal(appKey), "the two Deployments must reference the same key")
+
+		es, ok := objects["ExternalSecret/"+simSecret]
+		Expect(ok).To(BeTrue(), "externalSecrets.enabled must render an ExternalSecret for the simulator token")
+		target, ok := asMap(asMap(es["spec"])["target"])["name"].(string)
+		Expect(ok).To(BeTrue())
+		Expect(target).To(Equal(simSecret), "the ExternalSecret must target the same Secret name both Deployments read")
+
+		Expect(objects).NotTo(HaveKey("Secret/"+simSecret),
+			"externalSecrets.enabled: the chart must not ALSO generate its own token Secret")
+	})
+
+	It("source: chart-generated (neither existingSecret nor External Secrets) — lookup-reuse Secret both Deployments read", func() {
+		objects := renderWith("")
+
+		simSecret, simKey, appSecret, appKey := tokenRefs(objects)
+		Expect(simSecret).To(Equal(appSecret))
+		Expect(simKey).To(Equal(appKey))
+
+		secret, ok := objects["Secret/"+simSecret]
+		Expect(ok).To(BeTrue(), "neither existingSecret nor externalSecrets.enabled: the chart must generate its own token Secret")
+		value, ok := asMap(secret["stringData"])[simKey].(string)
+		Expect(ok).To(BeTrue(), "generated Secret has no %q key", simKey)
+		Expect(value).NotTo(BeEmpty(), "the generated token must not be empty")
+
+		Expect(objects).NotTo(HaveKey("ExternalSecret/"+simSecret),
+			"neither existingSecret nor externalSecrets.enabled: no ExternalSecret should render for the token")
+	})
+
+	It("fails the render when an explicit config.simulator block carries no token", func() {
+		out := renderFailure("config:\n  simulator:\n    enabled: true\n    control_url: \"http://external-sim:8099\"\n")
+		Expect(out).To(ContainSubstring("token"),
+			"the failure must name the missing token, not fail for an unrelated reason:\n%s", out)
 	})
 })
 

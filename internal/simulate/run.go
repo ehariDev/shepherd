@@ -1,6 +1,6 @@
 package simulate
 
-// This file defines the shapes shared between internal/simulate.RunWorker
+// This file defines the shapes shared between internal/simulate/worker.RunWorker
 // (which writes them into simulate_runs' JSONB columns) and
 // internal/mgmtapi's SimulateService (which reads them back into
 // mgmtv1.SimulateRun) — see the run-API spec's FILES section for
@@ -56,7 +56,7 @@ type RunLogLine struct {
 // simulate_runs.component_health entry (ComponentHealth proto message).
 // NodeLabel/Component are resolved from the AUTHORED graph (not the
 // transformed one) at write time, because the simulator's response only
-// echoes node_id via the component_index — see internal/simulate.RunWorker.
+// echoes node_id via the component_index — see internal/simulate/worker.RunWorker.
 type RunComponentHealth struct {
 	NodeID      string `json:"node_id"`
 	NodeLabel   string `json:"node_label"`

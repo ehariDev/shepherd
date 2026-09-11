@@ -23,7 +23,7 @@ import (
 // cases through the REST shim (POST/GET /api/orgs/{org}/simulate/runs...)
 // instead of the Connect procedure — the concrete regression test for the
 // "REST shims bypass auth" failure mode: router.go adds these two routes
-// inside the SAME auth.RequireOrgAccess(st, "org", "orgadmin") group that
+// inside the SAME auth.RequireOrgAccess(st, "org", "orgeditor") group that
 // already wraps /simulate/relabel and /simulate/logs, so a route added
 // outside that group (or a copy-pasted new ungated group) fails these tests.
 var _ = Describe("REST /orgs/{org}/simulate/runs — Run API auth parity", Label("integration"), func() {
@@ -72,7 +72,7 @@ var _ = Describe("REST /orgs/{org}/simulate/runs — Run API auth parity", Label
 		cancel()
 	})
 
-	It("requires org-admin for POST/GET /simulate/runs, denying an org-reader session", func() {
+	It("requires at least org-editor for POST/GET /simulate/runs, denying an org-reader session", func() {
 		resp := postJSON(server, fmt.Sprintf("/orgs/%s/simulate/runs", orgID), minimalRunGraph(orgID), readerCookie)
 		defer resp.Body.Close() //nolint:errcheck // test cleanup
 		Expect(resp.StatusCode).To(Equal(http.StatusForbidden))

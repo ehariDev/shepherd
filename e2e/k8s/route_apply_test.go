@@ -5,7 +5,6 @@ package k8s_test
 import (
 	"context"
 	"fmt"
-	"shepherd/internal/gateway"
 	"strings"
 	"testing"
 	"time"
@@ -20,6 +19,8 @@ import (
 	"sigs.k8s.io/e2e-framework/pkg/features"
 	"sigs.k8s.io/e2e-framework/pkg/utils"
 	gatewayv1 "sigs.k8s.io/gateway-api/apis/v1"
+
+	"shepherd/internal/gateway"
 )
 
 // TestOperatorOwnedGatewayAttachment closes the R1 obligation for D8's

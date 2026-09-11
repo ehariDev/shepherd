@@ -22,6 +22,10 @@ web/.playwright/
 .vscode/
 *.swp
 
+# Python
+__pycache__/
+*.pyc
+
 # Local code-intelligence index
 .codegraph/
 

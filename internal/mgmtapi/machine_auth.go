@@ -24,14 +24,21 @@ const onBehalfOfHeader = "Shepherd-On-Behalf-Of"
 
 // serviceAccountIdentity is a machine caller's identity, populated by
 // newServiceAccountAuthInterceptor and consulted by
-// requireWriteAuthorized/auditLog (helpers.go). It deliberately carries no
-// role — a service account's coarse org access is decided the same way a
-// human session's is (authorizeProcedure in rpc_interceptor.go); what is
-// unique to a machine caller is Capability (G12) and OnBehalfOf (G13).
+// requireWriteAuthorized/auditLog (helpers.go). Role (W3-1) is what makes a
+// machine caller's coarse org access decided the same WAY a human
+// session's is — both are checked against procedureRequirements with
+// auth.RoleSatisfies — without being the same thing: Capability (G12,
+// propose vs apply) and OnBehalfOf (G13) remain unique to a machine caller,
+// since a human session is never capability-scoped or delegated at all.
 type serviceAccountIdentity struct {
-	ID         string
-	OrgID      string
-	Name       string
+	ID    string
+	OrgID string
+	Name  string
+	// Role is "editor" or "admin" (0018_service_account_role), the tier
+	// authorizeServiceAccountProcedure (rpc_interceptor.go) checks against
+	// a procedure's requirement, after the org match. Defaults to "editor"
+	// at creation (CreateServiceAccount) — "admin" is always explicit.
+	Role       string
 	Capability string
 	// OnBehalfOf is the human this machine write is CLAIMED to be for,
 	// read from a request header the caller controls. It is a claim until
@@ -144,7 +151,7 @@ func verifyServiceAccountBasicAuth(ctx context.Context, authHeader string, st *s
 		return serviceAccountIdentity{}, errBadServiceAccountAuth
 	}
 	return serviceAccountIdentity{
-		ID: sa.ID.String(), OrgID: sa.OrgID.String(), Name: sa.Name, Capability: sa.Capability,
+		ID: sa.ID.String(), OrgID: sa.OrgID.String(), Name: sa.Name, Role: sa.Role, Capability: sa.Capability,
 		DelegatedPrincipal: sa.CreatedBy,
 	}, nil
 }

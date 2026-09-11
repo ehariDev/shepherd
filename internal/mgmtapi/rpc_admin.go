@@ -247,17 +247,12 @@ func (s *AdminService) DeleteOrg(ctx context.Context, req *connect.Request[mgmtv
 		return nil, err
 	}
 
-	var clusterCount, pipelineCount int
-	// RAW-SQL-OK: cross-table count with two columns — no sqlc equivalent
-	if err := s.store.Pool().QueryRow(ctx,
-		`SELECT
-			(SELECT count(*) FROM clusters WHERE org_id = $1)::int,
-			(SELECT count(*) FROM pipelines WHERE org_id = $1)::int`,
-		id).Scan(&clusterCount, &pipelineCount); err != nil {
+	content, err := s.store.Queries.CountOrgContent(ctx, id)
+	if err != nil {
 		return nil, connect.NewError(connect.CodeInternal, errors.New("failed to check org content"))
 	}
-	if clusterCount > 0 || pipelineCount > 0 {
-		msg := fmt.Sprintf("org has %d clusters, %d pipelines", clusterCount, pipelineCount)
+	if content.ClusterCount > 0 || content.PipelineCount > 0 {
+		msg := fmt.Sprintf("org has %d clusters, %d pipelines", content.ClusterCount, content.PipelineCount)
 		return nil, connect.NewError(connect.CodeAlreadyExists, &orgNotEmptyError{message: msg})
 	}
 
@@ -282,6 +277,13 @@ type orgNotEmptyError struct {
 }
 
 func (e *orgNotEmptyError) Error() string { return e.message }
+
+// errClusterNotFound is returned by ClaimCluster/UnclaimCluster when the
+// named cluster genuinely does not exist (GetClusterByName's error was
+// pgx.ErrNoRows specifically) — any other lookup failure is mapError(err)
+// instead, so a connection error or similar is never misreported to the
+// caller as "this cluster does not exist".
+var errClusterNotFound = errors.New("cluster not found")
 
 // ListClusters lists all clusters, or only unclaimed clusters when
 // unclaimed=true (matching the legacy ?unclaimed=true query param).
@@ -313,7 +315,10 @@ func (s *AdminService) ClaimCluster(ctx context.Context, req *connect.Request[mg
 	msg := req.Msg
 	cluster, err := s.store.Queries.GetClusterByName(ctx, msg.GetCluster())
 	if err != nil {
-		return nil, connect.NewError(connect.CodeNotFound, errors.New("cluster not found"))
+		if errors.Is(err, pgx.ErrNoRows) {
+			return nil, connect.NewError(connect.CodeNotFound, errClusterNotFound)
+		}
+		return nil, mapError(err)
 	}
 	orgID, err := scanUUID(msg.GetOrgId())
 	if err != nil {
@@ -327,25 +332,43 @@ func (s *AdminService) ClaimCluster(ctx context.Context, req *connect.Request[mg
 }
 
 // UnclaimCluster removes a cluster's org assignment and marks its
-// collectors' serve cache dirty.
+// collectors' serve cache dirty. Both changes happen in one transaction: if
+// the dirty-marking half fails, an unclaimed-but-not-dirtied cluster would
+// leave its collectors serving the previous org's config indefinitely with
+// no visible error, so the whole unclaim rolls back and the caller sees the
+// failure instead of a false "unclaimed" success.
 func (s *AdminService) UnclaimCluster(ctx context.Context, req *connect.Request[mgmtv1.UnclaimClusterRequest]) (*connect.Response[mgmtv1.UnclaimClusterResponse], error) {
 	if err := requireWriteAuthorized(ctx); err != nil {
 		return nil, err
 	}
 	cluster, err := s.store.Queries.GetClusterByName(ctx, req.Msg.GetCluster())
 	if err != nil {
-		return nil, connect.NewError(connect.CodeNotFound, errors.New("cluster not found"))
+		if errors.Is(err, pgx.ErrNoRows) {
+			return nil, connect.NewError(connect.CodeNotFound, errClusterNotFound)
+		}
+		return nil, mapError(err)
 	}
-	if err := s.store.Queries.UnclaimCluster(ctx, cluster.ID); err != nil {
+
+	tx, err := s.store.Pool().Begin(ctx)
+	if err != nil {
+		return nil, connect.NewError(connect.CodeInternal, errors.New("failed to start unclaim"))
+	}
+	defer func() { _ = tx.Rollback(ctx) }() //nolint:errcheck // no-op once committed; rollback error on the success path is expected and harmless
+	txQueries := s.store.Queries.WithTx(tx)
+
+	if err := txQueries.UnclaimCluster(ctx, cluster.ID); err != nil {
 		return nil, connect.NewError(connect.CodeInternal, errors.New("failed to unclaim cluster"))
 	}
-	// RAW-SQL-OK: cluster-scoped dirty marking — no sqlc query covers this join shape
-	if _, err := s.store.Pool().Exec(ctx,
-		`UPDATE serve_cache sc SET dirty = true
-		 FROM collectors c WHERE sc.collector_id = c.id AND c.cluster_id = $1`,
-		cluster.ID); err != nil {
-		s.logger.Warn("unclaim: failed to mark serve_cache dirty", "cluster_id", cluster.ID, "err", err)
+	if err := txQueries.MarkServeCacheDirtyByCluster(ctx, cluster.ID); err != nil {
+		s.logger.Warn("unclaim: failed to mark serve_cache dirty, rolling back", "cluster_id", cluster.ID, "err", err)
+		return nil, connect.NewError(connect.CodeInternal, errors.New("failed to mark serve cache dirty"))
 	}
+
+	if err := tx.Commit(ctx); err != nil {
+		return nil, connect.NewError(connect.CodeInternal, errors.New("failed to commit unclaim"))
+	}
+
+	s.logger.Info("cluster unclaimed", "cluster_id", cluster.ID)
 	return connect.NewResponse(&mgmtv1.UnclaimClusterResponse{Status: "unclaimed"}), nil
 }
 

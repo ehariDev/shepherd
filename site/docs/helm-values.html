@@ -86,7 +86,7 @@
       <p>
         Every value the chart accepts, generated from
         <a href="https://github.com/procoduck/shepherd/blob/main/deploy/helm/shepherd/values.yaml"><code>values.yaml</code></a>
-        in chart <strong>0.9.0</strong>. The descriptions are the chart&rsquo;s own comments, so this
+        in chart <strong>0.10.0</strong>. The descriptions are the chart&rsquo;s own comments, so this
         page cannot describe a value the chart does not have, or miss one it gained.
       </p>
       <p class="note">
@@ -121,10 +121,10 @@
         <thead><tr><th>Key</th><th>Default</th><th>Description</th></tr></thead>
         <tbody>
           <tr><td><code>image.registry</code></td><td><code>&quot;ghcr.io/procoduck&quot;</code></td><td>Default to the released images; set registry: &quot;&quot; to use a bare/local name.</td></tr>
-          <tr><td><code>image.repository</code></td><td><code>shepherd</code></td><td>&mdash;</td></tr>
+          <tr><td><code>image.repository</code></td><td><code>shepherd</code></td><td>repository: the image name, combined with registry above (or used bare if registry is empty) to form the image the chart pulls.</td></tr>
           <tr><td><code>image.tag</code></td><td><code>&quot;&quot;</code></td><td>Empty means the chart&#x27;s own appVersion, so a given chart version installs the Shepherd release it was published and tested with. Override only to pin something else deliberately.</td></tr>
-          <tr><td><code>image.pullPolicy</code></td><td><code>IfNotPresent</code></td><td>&mdash;</td></tr>
-          <tr><td><code>image.pullSecrets</code></td><td><code>[]</code></td><td>&mdash;</td></tr>
+          <tr><td><code>image.pullPolicy</code></td><td><code>IfNotPresent</code></td><td>pullPolicy: standard Kubernetes image pull policy. IfNotPresent is safe here because tag defaults to a specific released version, not a moving tag like &quot;latest&quot;.</td></tr>
+          <tr><td><code>image.pullSecrets</code></td><td><code>[]</code></td><td>pullSecrets: names of existing imagePullSecrets, for a private registry. Empty means the pod pulls with no credentials.</td></tr>
         </tbody>
       </table>
       <h2 id="replicas"><code>replicas</code></h2>
@@ -139,8 +139,8 @@
       <table>
         <thead><tr><th>Key</th><th>Default</th><th>Description</th></tr></thead>
         <tbody>
-          <tr><td><code>service.type</code></td><td><code>ClusterIP</code></td><td>&mdash;</td></tr>
-          <tr><td><code>service.port</code></td><td><code>8080</code></td><td>&mdash;</td></tr>
+          <tr><td><code>service.type</code></td><td><code>ClusterIP</code></td><td>type: the Service&#x27;s kind (ClusterIP, NodePort, LoadBalancer -- standard Kubernetes values). See above for why this is exposed rather than hardcoded to ClusterIP.</td></tr>
+          <tr><td><code>service.port</code></td><td><code>8080</code></td><td>port: the container&#x27;s HTTP port and the port the Service listens on. config.server.listen below must agree with it -- the Deployment&#x27;s containerPort is hardcoded to 8080, not derived from either value.</td></tr>
           <tr><td><code>service.nodePort</code></td><td><code>&quot;&quot;</code></td><td>Only used when type is NodePort. Leave empty to let Kubernetes pick one from the node port range.</td></tr>
         </tbody>
       </table>
@@ -148,28 +148,28 @@
       <table>
         <thead><tr><th>Key</th><th>Default</th><th>Description</th></tr></thead>
         <tbody>
-          <tr><td><code>config.server.listen</code></td><td><code>&quot;:8080&quot;</code></td><td>&mdash;</td></tr>
+          <tr><td><code>config.server.listen</code></td><td><code>&quot;:8080&quot;</code></td><td>listen: host:port the main HTTP server binds. The Deployment&#x27;s containerPort and service.port above are both hardcoded to 8080, so changing this alone does not move where the container is reachable -- keep all three in agreement.</td></tr>
           <tr><td><code>config.server.metrics_listen</code></td><td><code>&quot;:9090&quot;</code></td><td>Metrics listen on their own port; /metrics is never served on <code>listen</code>. The container port, the metrics Service, and the ServiceMonitor are all derived from this value, so changing it here is enough.</td></tr>
-          <tr><td><code>config.server.base_url</code></td><td><code>&quot;https://shepherd.example.internal&quot;</code></td><td>&mdash;</td></tr>
+          <tr><td><code>config.server.base_url</code></td><td><code>&quot;https://shepherd.example.internal&quot;</code></td><td>base_url: Shepherd&#x27;s own externally-reachable URL, no path. Collectors&#x27; remotecfg clients and the beacon&#x27;s remote-write endpoint are both built against it, so it needs to be an address they can actually reach, not just this Service&#x27;s in-cluster name.</td></tr>
           <tr><td><code>config.server.beacon_disabled</code></td><td><code>false</code></td><td>The beacon (docs/gateway-tier-plan.md D6) serves every claimed collector a small baseline pipeline that reports which components it is running and whether they are healthy — component names only, never config text and never raw samples — and mounts an ingest endpoint at /beacon/v1/write authenticated by the same agent token everything else uses.<br>It is ON by default and that is deliberate: the collector nobody knows about is exactly the one that would never opt in. Set this to true to turn it off entirely — no endpoint is mounted and no baseline is served. Opting out is offered because the beacon stores inventory and accepts writes, and an operator who cannot answer for that yet should be able to say no without downgrading.</td></tr>
-          <tr><td><code>config.database.max_conns</code></td><td><code>20</code></td><td>&mdash;</td></tr>
-          <tr><td><code>config.oidc.scopes</code></td><td><code>[&quot;openid&quot;, &quot;profile&quot;, &quot;email&quot;]</code></td><td>&mdash;</td></tr>
-          <tr><td><code>config.auth.session_ttl</code></td><td><code>&quot;8h&quot;</code></td><td>&mdash;</td></tr>
-          <tr><td><code>config.graph.base_url</code></td><td><code>&quot;https://graph.microsoft.com&quot;</code></td><td>&mdash;</td></tr>
-          <tr><td><code>config.agent.inactive_after</code></td><td><code>&quot;5m&quot;</code></td><td>&mdash;</td></tr>
-          <tr><td><code>config.agent.delete_after</code></td><td><code>&quot;24h&quot;</code></td><td>&mdash;</td></tr>
-          <tr><td><code>config.validate.alloy_binary</code></td><td><code>&quot;/usr/local/bin/alloy&quot;</code></td><td>&mdash;</td></tr>
-          <tr><td><code>config.validate.stability_level</code></td><td><code>&quot;experimental&quot;</code></td><td>&mdash;</td></tr>
-          <tr><td><code>config.validate.timeout</code></td><td><code>&quot;10s&quot;</code></td><td>&mdash;</td></tr>
-          <tr><td><code>config.gitsync.tick</code></td><td><code>&quot;3m&quot;</code></td><td>&mdash;</td></tr>
+          <tr><td><code>config.database.max_conns</code></td><td><code>20</code></td><td>max_conns: the maximum size of Shepherd&#x27;s own PostgreSQL connection pool.</td></tr>
+          <tr><td><code>config.oidc.scopes</code></td><td><code>[&quot;openid&quot;, &quot;profile&quot;, &quot;email&quot;]</code></td><td>scopes: OAuth scopes requested at login. This default matches every supported provider&#x27;s minimum; add to it only if your provider requires more to return the claims configured below.</td></tr>
+          <tr><td><code>config.auth.session_ttl</code></td><td><code>&quot;8h&quot;</code></td><td>session_ttl: how long a signed-in session stays valid before the user must sign in again.</td></tr>
+          <tr><td><code>config.graph.base_url</code></td><td><code>&quot;https://graph.microsoft.com&quot;</code></td><td>base_url: the Microsoft Graph API root used to resolve group membership when use_graph_groups is on. Override only for a sovereign cloud (e.g. graph.microsoft.us) whose API root differs from the public cloud.</td></tr>
+          <tr><td><code>config.agent.inactive_after</code></td><td><code>&quot;5m&quot;</code></td><td>inactive_after: mark a collector instance inactive once this long has passed with no check-in.</td></tr>
+          <tr><td><code>config.agent.delete_after</code></td><td><code>&quot;24h&quot;</code></td><td>delete_after: hard-delete a collector instance once this long has passed with no check-in. Longer than inactive_after, so an instance spends time visibly inactive before it disappears.</td></tr>
+          <tr><td><code>config.validate.alloy_binary</code></td><td><code>&quot;/usr/local/bin/alloy&quot;</code></td><td>alloy_binary: path to the bundled <code>alloy</code> binary Stage 2 validation execs. Empty skips Stage 2 entirely (reported as &quot;skipped&quot;, not &quot;valid&quot;, so a broken path is visible rather than silently passing).</td></tr>
+          <tr><td><code>config.validate.stability_level</code></td><td><code>&quot;experimental&quot;</code></td><td>stability_level: passed to <code>alloy validate --stability.level=</code>. One of stable, public-preview, experimental; a typo here fails every pipeline validation and nothing catches it at install time.</td></tr>
+          <tr><td><code>config.validate.timeout</code></td><td><code>&quot;10s&quot;</code></td><td>timeout: how long Stage 2&#x27;s <code>alloy validate</code> exec is allowed to run before it is killed.</td></tr>
+          <tr><td><code>config.gitsync.tick</code></td><td><code>&quot;3m&quot;</code></td><td>tick: how often the git-sync reconciler polls repos that are due for a check, per their own poll interval.</td></tr>
           <tr><td><code>config.tracing.enabled</code></td><td><code>false</code></td><td>Set enabled: true AND an endpoint. Enabled with no endpoint is reported as a misconfiguration in the logs rather than silently doing nothing — an empty trace backend with no explanation is the worst way to find out.</td></tr>
-          <tr><td><code>config.tracing.endpoint</code></td><td><code>&quot;&quot;            # e.g. &quot;opentelemetry-collector.observability.svc:4317&quot;</code></td><td>&mdash;</td></tr>
-          <tr><td><code>config.tracing.protocol</code></td><td><code>&quot;grpc&quot;        # &quot;grpc&quot; (port 4317) or &quot;http&quot; (port 4318)</code></td><td>&mdash;</td></tr>
-          <tr><td><code>config.tracing.insecure</code></td><td><code>true          # normal for an in-cluster collector over the pod network</code></td><td>&mdash;</td></tr>
+          <tr><td><code>config.tracing.endpoint</code></td><td><code>&quot;&quot;</code></td><td>endpoint: the OTLP collector&#x27;s address, e.g. &quot;opentelemetry-collector.observability.svc:4317&quot; -- host:port, no scheme. Required when enabled is true; see enabled above.</td></tr>
+          <tr><td><code>config.tracing.protocol</code></td><td><code>&quot;grpc&quot;</code></td><td>protocol: &quot;grpc&quot; (collector port 4317, the default) or &quot;http&quot; (port 4318) -- which OTLP transport to export spans over.</td></tr>
+          <tr><td><code>config.tracing.insecure</code></td><td><code>true</code></td><td>insecure: skip TLS to the collector. true is normal for an in-cluster collector reached over the pod network; set false for a collector reached over the open network.</td></tr>
           <tr><td><code>config.tracing.sample_ratio</code></td><td><code>0.1</code></td><td>sample_ratio applies only to traces Shepherd ROOTS; an incoming sampling decision is always honoured. Collectors poll continuously, so 1.0 here is a lot of spans.</td></tr>
-          <tr><td><code>config.tracing.service_name</code></td><td><code>&quot;shepherd&quot;</code></td><td>&mdash;</td></tr>
-          <tr><td><code>config.log.level</code></td><td><code>&quot;info&quot;</code></td><td>&mdash;</td></tr>
-          <tr><td><code>config.log.format</code></td><td><code>&quot;json&quot;</code></td><td>&mdash;</td></tr>
+          <tr><td><code>config.tracing.service_name</code></td><td><code>&quot;shepherd&quot;</code></td><td>service_name: the resource.service.name attribute stamped on every exported span, so your trace backend can group Shepherd&#x27;s spans apart from other services.</td></tr>
+          <tr><td><code>config.log.level</code></td><td><code>&quot;info&quot;</code></td><td>level: the minimum log level Shepherd emits, e.g. debug, info, warn, error.</td></tr>
+          <tr><td><code>config.log.format</code></td><td><code>&quot;json&quot;</code></td><td>format: the log encoding Shepherd writes -- &quot;json&quot; for structured logs (the default, suited to log aggregation) or &quot;text&quot; for human-readable output.</td></tr>
         </tbody>
       </table>
       <h2 id="cnpg"><code>cnpg</code></h2>
@@ -177,16 +177,16 @@
       <table>
         <thead><tr><th>Key</th><th>Default</th><th>Description</th></tr></thead>
         <tbody>
-          <tr><td><code>cnpg.enabled</code></td><td><code>false</code></td><td>&mdash;</td></tr>
+          <tr><td><code>cnpg.enabled</code></td><td><code>false</code></td><td>enabled: turn on to let the chart provision the database via CloudNativePG. See the block comment above for what that means and its GitOps caveat.</td></tr>
           <tr><td><code>cnpg.render</code></td><td><code>auto</code></td><td>render: auto | always | never -- when to emit the Cluster object. auto    (default) only when <code>lookup</code> says it is not already there. Correct under the helm CLI; unsafe under GitOps, see above. never   never emit it. What a GitOps deployment sets after bootstrap. always  emit it unconditionally, for bootstrapping or for a pipeline that wants the full desired state.</td></tr>
           <tr><td><code>cnpg.name</code></td><td><code>&quot;&quot;</code></td><td>Cluster name. Empty means &quot;&lt;release&gt;-db&quot;.</td></tr>
           <tr><td><code>cnpg.instances</code></td><td><code>2</code></td><td>Two gives you a primary and one standby, which is the minimum CloudNativePG needs for automated failover. Raise it for more read capacity or headroom.</td></tr>
-          <tr><td><code>cnpg.storage.size</code></td><td><code>10Gi</code></td><td>&mdash;</td></tr>
+          <tr><td><code>cnpg.storage.size</code></td><td><code>10Gi</code></td><td>size: the PersistentVolumeClaim size for the primary and each standby.</td></tr>
           <tr><td><code>cnpg.storage.storageClass</code></td><td><code>&quot;&quot;</code></td><td>Empty uses the cluster&#x27;s default StorageClass.</td></tr>
           <tr><td><code>cnpg.database</code></td><td><code>shepherd</code></td><td>The database and the role that owns it. Shepherd needs no superuser.</td></tr>
-          <tr><td><code>cnpg.owner</code></td><td><code>shepherd</code></td><td>&mdash;</td></tr>
+          <tr><td><code>cnpg.owner</code></td><td><code>shepherd</code></td><td>owner: the role that owns <code>database</code> above; Shepherd connects using this role. See the comment above -- no superuser required.</td></tr>
           <tr><td><code>cnpg.imageName</code></td><td><code>&quot;&quot;</code></td><td>Pinning the image is optional; empty lets the operator choose the version it was built against, which is the one it knows how to upgrade.</td></tr>
-          <tr><td><code>cnpg.resources</code></td><td><code>{}</code></td><td>&mdash;</td></tr>
+          <tr><td><code>cnpg.resources</code></td><td><code>{}</code></td><td>resources: CPU/memory requests and limits for the Postgres instances. Empty means unbounded, same as the app&#x27;s own <code>resources</code> below.</td></tr>
           <tr><td><code>cnpg.extraSpec</code></td><td><code>{}</code></td><td>Merged verbatim into the Cluster spec, for anything this chart does not surface: backup, monitoring, affinity, postgresql.parameters, and so on. See the CloudNativePG API reference.</td></tr>
         </tbody>
       </table>
@@ -195,14 +195,14 @@
       <table>
         <thead><tr><th>Key</th><th>Default</th><th>Description</th></tr></thead>
         <tbody>
-          <tr><td><code>externalSecrets.enabled</code></td><td><code>false</code></td><td>&mdash;</td></tr>
+          <tr><td><code>externalSecrets.enabled</code></td><td><code>false</code></td><td>enabled: turn on to let External Secrets Operator generate the bootstrap Secret in-cluster. See the block comment above for what that means and its GitOps caveat.</td></tr>
           <tr><td><code>externalSecrets.render</code></td><td><code>auto</code></td><td>render: auto | always | never. Identical meaning to cnpg.render above.</td></tr>
           <tr><td><code>externalSecrets.apiVersion</code></td><td><code>external-secrets.io/v1</code></td><td>API versions, exposed because ESO has moved them before. These defaults match ESO v1.x.</td></tr>
-          <tr><td><code>externalSecrets.generatorApiVersion</code></td><td><code>generators.external-secrets.io/v1alpha1</code></td><td>&mdash;</td></tr>
+          <tr><td><code>externalSecrets.generatorApiVersion</code></td><td><code>generators.external-secrets.io/v1alpha1</code></td><td>generatorApiVersion: API version for the Password generator objects (distinct from apiVersion above, which is for the ExternalSecret itself).</td></tr>
           <tr><td><code>externalSecrets.refreshInterval</code></td><td><code>&quot;0&quot;</code></td><td>Do not change. See the note above.</td></tr>
           <tr><td><code>externalSecrets.encryptionKey.length</code></td><td><code>32</code></td><td>32 characters, base64-encoded by the ExternalSecret template into the 32 bytes Shepherd requires. DO NOT CHANGE: Shepherd rejects any other length outright, so a different value here produces an instance that cannot start. Exposed only because the generator requires the field.</td></tr>
           <tr><td><code>externalSecrets.bootstrapAdmin.enabled</code></td><td><code>true</code></td><td>Generate the first administrator&#x27;s password too. Turn this off if you would rather set SHEPHERD_BOOTSTRAP_ADMIN_PASSWORD yourself.</td></tr>
-          <tr><td><code>externalSecrets.bootstrapAdmin.length</code></td><td><code>24</code></td><td>&mdash;</td></tr>
+          <tr><td><code>externalSecrets.bootstrapAdmin.length</code></td><td><code>24</code></td><td>length: character length of the generated bootstrap administrator password.</td></tr>
           <tr><td><code>externalSecrets.bootstrapAdmin.login</code></td><td><code>admin</code></td><td>Read it once it exists with: kubectl get secret &lt;release&gt;-secrets \ -o jsonpath=&#x27;{.data.SHEPHERD_BOOTSTRAP_ADMIN_PASSWORD}&#x27; | base64 -d</td></tr>
         </tbody>
       </table>
@@ -234,19 +234,19 @@
       <table>
         <thead><tr><th>Key</th><th>Default</th><th>Description</th></tr></thead>
         <tbody>
-          <tr><td><code>route.enabled</code></td><td><code>false</code></td><td>&mdash;</td></tr>
-          <tr><td><code>route.hostnames</code></td><td><code>[]</code></td><td>&mdash;</td></tr>
-          <tr><td><code>route.parentRefs</code></td><td><code>[]</code></td><td>&mdash;</td></tr>
+          <tr><td><code>route.enabled</code></td><td><code>false</code></td><td>enabled: turn on to render the HTTPRoute below. See the comment above for why it defaults off.</td></tr>
+          <tr><td><code>route.hostnames</code></td><td><code>[]</code></td><td>hostnames: hostnames this HTTPRoute matches, e.g. [&quot;shepherd.example.com&quot;]. Required alongside parentRefs -- an HTTPRoute with neither routes nothing.</td></tr>
+          <tr><td><code>route.parentRefs</code></td><td><code>[]</code></td><td>parentRefs: the Gateway(s) this HTTPRoute attaches to, e.g. [{name: my-gateway, namespace: gateway-system}]. Required alongside hostnames.</td></tr>
         </tbody>
       </table>
       <h2 id="ingress"><code>ingress</code></h2>
       <table>
         <thead><tr><th>Key</th><th>Default</th><th>Description</th></tr></thead>
         <tbody>
-          <tr><td><code>ingress.enabled</code></td><td><code>false</code></td><td>&mdash;</td></tr>
-          <tr><td><code>ingress.className</code></td><td><code>&quot;&quot;</code></td><td>&mdash;</td></tr>
-          <tr><td><code>ingress.hosts</code></td><td><code>[]</code></td><td>&mdash;</td></tr>
-          <tr><td><code>ingress.tls</code></td><td><code>[]</code></td><td>&mdash;</td></tr>
+          <tr><td><code>ingress.enabled</code></td><td><code>false</code></td><td>enabled: turn on to render the Ingress below. Off by default: like <code>route</code> above, it needs infrastructure (an Ingress controller) a vanilla cluster does not have.</td></tr>
+          <tr><td><code>ingress.className</code></td><td><code>&quot;&quot;</code></td><td>className: the IngressClass to use, e.g. &quot;nginx&quot;. Empty lets the cluster&#x27;s default IngressClass apply.</td></tr>
+          <tr><td><code>ingress.hosts</code></td><td><code>[]</code></td><td>hosts: a list of {host, paths: [{path, pathType}]} entries, the standard Kubernetes Ingress rule shape. Empty renders an Ingress with no rules, which routes nothing.</td></tr>
+          <tr><td><code>ingress.tls</code></td><td><code>[]</code></td><td>tls: standard Kubernetes Ingress TLS entries ({hosts, secretName}), for terminating TLS at the Ingress. Empty configures no TLS here.</td></tr>
         </tbody>
       </table>
       <h2 id="metrics"><code>metrics</code></h2>
@@ -254,13 +254,13 @@
       <table>
         <thead><tr><th>Key</th><th>Default</th><th>Description</th></tr></thead>
         <tbody>
-          <tr><td><code>metrics.enabled</code></td><td><code>true</code></td><td>&mdash;</td></tr>
+          <tr><td><code>metrics.enabled</code></td><td><code>true</code></td><td>enabled: render the metrics Service and expose config.server.metrics_listen&#x27;s port on it. The listener itself always runs regardless; this only controls whether a Service fronts it.</td></tr>
           <tr><td><code>metrics.serviceMonitor.enabled</code></td><td><code>false</code></td><td>Requires the Prometheus Operator&#x27;s CRDs. Off by default because a ServiceMonitor on a cluster without them fails the install.</td></tr>
           <tr><td><code>metrics.serviceMonitor.labels</code></td><td><code>{}</code></td><td>labels the Prometheus Operator selects ServiceMonitors by — commonly something like <code>release: kube-prometheus-stack</code>. Check your Prometheus resource&#x27;s serviceMonitorSelector; without a matching label the ServiceMonitor is created and quietly ignored.</td></tr>
-          <tr><td><code>metrics.serviceMonitor.interval</code></td><td><code>&quot;30s&quot;</code></td><td>&mdash;</td></tr>
-          <tr><td><code>metrics.serviceMonitor.scrapeTimeout</code></td><td><code>&quot;10s&quot;</code></td><td>&mdash;</td></tr>
-          <tr><td><code>metrics.serviceMonitor.relabelings</code></td><td><code>[]</code></td><td>&mdash;</td></tr>
-          <tr><td><code>metrics.serviceMonitor.metricRelabelings</code></td><td><code>[]</code></td><td>&mdash;</td></tr>
+          <tr><td><code>metrics.serviceMonitor.interval</code></td><td><code>&quot;30s&quot;</code></td><td>interval: Prometheus scrape interval for this target. Empty uses the Prometheus Operator&#x27;s own default.</td></tr>
+          <tr><td><code>metrics.serviceMonitor.scrapeTimeout</code></td><td><code>&quot;10s&quot;</code></td><td>scrapeTimeout: how long Prometheus waits for a scrape before giving up. Empty uses the Prometheus Operator&#x27;s own default.</td></tr>
+          <tr><td><code>metrics.serviceMonitor.relabelings</code></td><td><code>[]</code></td><td>relabelings: standard Prometheus Operator relabeling rules applied before scraping (e.g. to rewrite target labels). Empty applies none.</td></tr>
+          <tr><td><code>metrics.serviceMonitor.metricRelabelings</code></td><td><code>[]</code></td><td>metricRelabelings: standard Prometheus Operator relabeling rules applied to each scraped metric after collection (e.g. to drop or rename series). Empty applies none.</td></tr>
         </tbody>
       </table>
       <h2 id="serviceaccount"><code>serviceAccount</code></h2>
@@ -327,10 +327,10 @@
       <table>
         <thead><tr><th>Key</th><th>Default</th><th>Description</th></tr></thead>
         <tbody>
-          <tr><td><code>autoscaling.enabled</code></td><td><code>false</code></td><td>&mdash;</td></tr>
-          <tr><td><code>autoscaling.minReplicas</code></td><td><code>2</code></td><td>&mdash;</td></tr>
-          <tr><td><code>autoscaling.maxReplicas</code></td><td><code>10</code></td><td>&mdash;</td></tr>
-          <tr><td><code>autoscaling.targetCPUUtilizationPercentage</code></td><td><code>80</code></td><td>&mdash;</td></tr>
+          <tr><td><code>autoscaling.enabled</code></td><td><code>false</code></td><td>enabled: hand the replica count to a HorizontalPodAutoscaler. See the block comment above -- REQUIRES resources.requests.cpu.</td></tr>
+          <tr><td><code>autoscaling.minReplicas</code></td><td><code>2</code></td><td>minReplicas: the floor the HPA will not scale below.</td></tr>
+          <tr><td><code>autoscaling.maxReplicas</code></td><td><code>10</code></td><td>maxReplicas: the ceiling the HPA will not scale above.</td></tr>
+          <tr><td><code>autoscaling.targetCPUUtilizationPercentage</code></td><td><code>80</code></td><td>targetCPUUtilizationPercentage: the average CPU utilization, as a percentage of resources.requests.cpu, the HPA scales to maintain.</td></tr>
         </tbody>
       </table>
       <h2 id="networkpolicy"><code>networkPolicy</code></h2>
@@ -338,30 +338,33 @@
       <table>
         <thead><tr><th>Key</th><th>Default</th><th>Description</th></tr></thead>
         <tbody>
-          <tr><td><code>networkPolicy.enabled</code></td><td><code>false</code></td><td>&mdash;</td></tr>
+          <tr><td><code>networkPolicy.enabled</code></td><td><code>false</code></td><td>enabled: render a NetworkPolicy for Shepherd&#x27;s own pods. See the block comment above for what it allows and why it defaults off.</td></tr>
         </tbody>
       </table>
       <h2 id="simulator"><code>simulator</code></h2>
-      <p>----------------------------------------------------------------------------- S3 sandbox simulator (VB-1 §6.4) — ENABLED BY DEFAULT since v0.0.1, after both containment gates closed (docs/project-status.md F5: B-CONTAIN-1 fixed and red/green-proven; NetworkPolicy enforcement verified in a real cluster by e2e/k8s/simulator_containment_test.go&#x27;s probes and kill probe).<br>TO DISABLE: set <code>simulator.enabled: false</code> below (or --set on install) — nothing simulator-related renders, and shepherd&#x27;s config is not wired to it. The compose stacks keep their opt-in <code>sim</code> profile: that is test-environment design (the default <code>make e2e</code> deliberately exercises the simulator-absent path), not the product default.<br>When enabled, shepherd&#x27;s config is wired to this chart&#x27;s simulator Service automatically unless you set <code>config.simulator</code> yourself — an explicit config.simulator block always wins verbatim (see templates/configmap.yaml).<br>It runs USER-AUTHORED Alloy configuration. Every control below is load-bearing, not decoration, and every one is asserted by deploy/helm/chart_test.go so it cannot regress silently: - automountServiceAccountToken: false on its ServiceAccount. Defense in depth, not the only gate — internal/simsvc.Config.SATokenPath makes the binary itself refuse to start if a token is mounted anyway. - a default-deny egress NetworkPolicy. The sandboxed Alloy is a CHILD PROCESS of shepherd-simulator (internal/simsvc/runner.go), not a sibling container, so this Pod&#x27;s own network boundary IS the sandbox&#x27;s boundary. Egress is allowed only to this Pod&#x27;s own harness ports (the capture receivers shepherd-simulator itself serves) and to cluster DNS; nothing else, including the rest of the cluster and the internet. - non-root securityContext, every capability dropped, no privilege escalation, a read-only root filesystem (the run scratch directory is an emptyDir mounted over /tmp). - CPU/memory limits, so one runaway sandboxed config cannot starve the node.<br>See docs/visual-builder-design-VB1.md §6.4 and docs/archive/reviews/s3-sandbox-security-findings.md (finding H5) for why each of these exists.</p>
+      <p>----------------------------------------------------------------------------- S3 sandbox simulator (VB-1 §6.4) — ENABLED BY DEFAULT since v0.0.1, after both containment gates closed (docs/project-status.md F5: B-CONTAIN-1 fixed and red/green-proven; NetworkPolicy enforcement verified in a real cluster by e2e/k8s/simulator_containment_test.go&#x27;s probes and kill probe).<br>TO DISABLE: set <code>simulator.enabled: false</code> below (or --set on install) — nothing simulator-related renders, and shepherd&#x27;s config is not wired to it. The compose stacks keep their opt-in <code>sim</code> profile: that is test-environment design (the default <code>make e2e</code> deliberately exercises the simulator-absent path), not the product default.<br>When enabled, shepherd&#x27;s config is wired to this chart&#x27;s simulator Service automatically unless you set <code>config.simulator</code> yourself — an explicit config.simulator block always wins verbatim (see templates/configmap.yaml).<br>It runs USER-AUTHORED Alloy configuration. Every control below is load-bearing, not decoration, and every one is asserted by deploy/helm/chart_test.go so it cannot regress silently: - automountServiceAccountToken: false on its ServiceAccount. Defense in depth, not the only gate — internal/simsvc.Config.SATokenPath makes the binary itself refuse to start if a token is mounted anyway. - a bearer token (simulator.token below) on the control API. Without one POST /v1/runs was reachable by anything that could route to the Pod at all; every install now authenticates it, from one of three sources. - a default-deny egress NetworkPolicy. The sandboxed Alloy is a CHILD PROCESS of shepherd-simulator (internal/simsvc/runner.go), not a sibling container, so this Pod&#x27;s own network boundary IS the sandbox&#x27;s boundary. Egress is allowed only to this Pod&#x27;s own harness ports (the capture receivers shepherd-simulator itself serves) — nothing else, including cluster DNS (D10: every harness endpoint the sandbox needs is dialled by loopback IP, so it has no legitimate reason to resolve a name at all), the rest of the cluster, or the internet. - non-root securityContext, every capability dropped, no privilege escalation, a read-only root filesystem (the run scratch directory is an emptyDir mounted over /tmp). - CPU/memory limits, so one runaway sandboxed config cannot starve the node. - what this chart CANNOT set: a per-Pod process/PID limit. Kubernetes has no PodSpec field for one (unlike the compose stacks&#x27; <code>pids_limit</code>) — it is a kubelet-level setting (<code>podPidsLimit</code> in KubeletConfiguration, or <code>--pod-max-pids</code>) that belongs to the cluster operator, not this chart. Mitigating factors: the sandboxed Alloy is one process (internal/simsvc runs it directly, no shell fork-bomb surface), and the CPU/memory limits above already bound a runaway config&#x27;s other resource costs.<br>See docs/visual-builder-design-VB1.md §6.4 and docs/archive/reviews/s3-sandbox-security-findings.md (finding H5) for why each of these exists.</p>
       <table>
         <thead><tr><th>Key</th><th>Default</th><th>Description</th></tr></thead>
         <tbody>
-          <tr><td><code>simulator.enabled</code></td><td><code>true</code></td><td>&mdash;</td></tr>
-          <tr><td><code>simulator.image.registry</code></td><td><code>&quot;ghcr.io/procoduck&quot;</code></td><td>&mdash;</td></tr>
-          <tr><td><code>simulator.image.repository</code></td><td><code>shepherd-simulator</code></td><td>&mdash;</td></tr>
-          <tr><td><code>simulator.image.tag</code></td><td><code>&quot;&quot;</code></td><td>&mdash;</td></tr>
-          <tr><td><code>simulator.image.pullPolicy</code></td><td><code>IfNotPresent</code></td><td>&mdash;</td></tr>
+          <tr><td><code>simulator.enabled</code></td><td><code>true</code></td><td>enabled: turn the S3 sandbox simulator on or off. See the block comment above -- ON by default since v0.0.1, after both containment gates closed.</td></tr>
+          <tr><td><code>simulator.image.registry</code></td><td><code>&quot;ghcr.io/procoduck&quot;</code></td><td>registry: the simulator image&#x27;s registry, mirroring image.registry above. Set to &quot;&quot; to use a bare/local name.</td></tr>
+          <tr><td><code>simulator.image.repository</code></td><td><code>shepherd-simulator</code></td><td>repository: the simulator image name, combined with registry above to form the pulled image.</td></tr>
+          <tr><td><code>simulator.image.tag</code></td><td><code>&quot;&quot;</code></td><td>tag: empty means the chart&#x27;s own appVersion, same convention as image.tag above.</td></tr>
+          <tr><td><code>simulator.image.pullPolicy</code></td><td><code>IfNotPresent</code></td><td>pullPolicy: standard Kubernetes pull policy, mirroring image.pullPolicy above.</td></tr>
           <tr><td><code>simulator.image.pullSecrets</code></td><td><code>[]</code></td><td>pullSecrets for the simulator image specifically. Separate from image.pullSecrets because the two images can come from different registries; set both if they come from the same private one.</td></tr>
-          <tr><td><code>simulator.replicas</code></td><td><code>1</code></td><td>&mdash;</td></tr>
-          <tr><td><code>simulator.resources.requests.cpu</code></td><td><code>250m</code></td><td>&mdash;</td></tr>
-          <tr><td><code>simulator.resources.requests.memory</code></td><td><code>256Mi</code></td><td>&mdash;</td></tr>
-          <tr><td><code>simulator.resources.limits.cpu</code></td><td><code>&quot;1&quot;</code></td><td>&mdash;</td></tr>
-          <tr><td><code>simulator.resources.limits.memory</code></td><td><code>512Mi</code></td><td>&mdash;</td></tr>
+          <tr><td><code>simulator.replicas</code></td><td><code>1</code></td><td>replicas: how many simulator Deployment pods run behind the simulator Service and its control API.</td></tr>
+          <tr><td><code>simulator.resources.requests.cpu</code></td><td><code>250m</code></td><td>cpu: minimum CPU reserved for the sandboxed Alloy process and its harness.</td></tr>
+          <tr><td><code>simulator.resources.requests.memory</code></td><td><code>256Mi</code></td><td>memory: minimum memory reserved, same reasoning as cpu above.</td></tr>
+          <tr><td><code>simulator.resources.limits.cpu</code></td><td><code>&quot;1&quot;</code></td><td>cpu: the hard CPU ceiling -- part of §6.4&#x27;s defense against a runaway sandboxed config; see the block comment above.</td></tr>
+          <tr><td><code>simulator.resources.limits.memory</code></td><td><code>512Mi</code></td><td>memory: the hard memory ceiling, same reasoning as cpu above.</td></tr>
           <tr><td><code>simulator.allowedHosts</code></td><td><code>[]</code></td><td>allowedHosts overrides SIM_ALLOWED_HOSTS, the endpoint allowlist that is §6.4&#x27;s defense-in-depth check ON TOP OF the NetworkPolicy. Empty uses the service&#x27;s own built-in default (its own hostname plus localhost).</td></tr>
-          <tr><td><code>simulator.podAnnotations</code></td><td><code>{}</code></td><td>&mdash;</td></tr>
-          <tr><td><code>simulator.nodeSelector</code></td><td><code>{}</code></td><td>&mdash;</td></tr>
-          <tr><td><code>simulator.tolerations</code></td><td><code>[]</code></td><td>&mdash;</td></tr>
-          <tr><td><code>simulator.affinity</code></td><td><code>{}</code></td><td>&mdash;</td></tr>
+          <tr><td><code>simulator.token.value</code></td><td><code>&quot;&quot;</code></td><td>value: pin the shared bearer token to a literal, e.g. for a fixture-driven parity check. Empty lets the chart generate and reuse a random one instead -- see the block comment above for the full precedence.</td></tr>
+          <tr><td><code>simulator.token.existingSecret</code></td><td><code>&quot;&quot;</code></td><td>existingSecret: name of a Secret you already manage holding the token. Highest-precedence option -- see the block comment above.</td></tr>
+          <tr><td><code>simulator.token.key</code></td><td><code>&quot;token&quot;</code></td><td>key: the key within existingSecret (or the chart-generated Secret) that holds the token value.</td></tr>
+          <tr><td><code>simulator.podAnnotations</code></td><td><code>{}</code></td><td>podAnnotations: extra annotations on the simulator pod template, mirroring podAnnotations below but scoped to the simulator Deployment only.</td></tr>
+          <tr><td><code>simulator.nodeSelector</code></td><td><code>{}</code></td><td>nodeSelector: constrain simulator pods to nodes carrying these labels, mirroring nodeSelector below but scoped to the simulator Deployment only.</td></tr>
+          <tr><td><code>simulator.tolerations</code></td><td><code>[]</code></td><td>tolerations: let simulator pods schedule onto tainted nodes, mirroring tolerations below but scoped to the simulator Deployment only.</td></tr>
+          <tr><td><code>simulator.affinity</code></td><td><code>{}</code></td><td>affinity: pod/node affinity rules for the simulator pods, mirroring affinity below but scoped to the simulator Deployment only.</td></tr>
           <tr><td><code>simulator.networkPolicy.extraEgress</code></td><td><code>[]</code></td><td>extraEgress lets an operator open one additional narrow hole (e.g. a split-horizon internal DNS server that is not kube-dns) without editing the template. Empty by default: the harness is everything the sandbox needs, by design.</td></tr>
         </tbody>
       </table>
@@ -408,7 +411,7 @@
 <footer>
   <div class="wrap">
     <div class="foot-left">
-      <span class="pill">v0.3.5</span>
+      <span class="pill">v0.4.0</span>
       <span>self-hosted Grafana Alloy fleet manager</span>
     </div>
     <div class="foot-links">

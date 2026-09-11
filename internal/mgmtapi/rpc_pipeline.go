@@ -9,6 +9,7 @@ import (
 	"strings"
 
 	"connectrpc.com/connect"
+	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/jackc/pgx/v5/pgtype"
 	"github.com/prometheus/alertmanager/pkg/labels"
@@ -22,6 +23,7 @@ import (
 	"shepherd/internal/merge"
 	"shepherd/internal/metrics"
 	"shepherd/internal/schema"
+	"shepherd/internal/serve"
 	"shepherd/internal/signals"
 	"shepherd/internal/store"
 	"shepherd/internal/store/sqlc"
@@ -227,7 +229,12 @@ func (s *PipelineService) checkVisualRenderMatch(_ context.Context, clientConten
 
 // loadPipeline fetches a pipeline by id, mapping an unparsable id to
 // InvalidArgument (400) and a missing row to NotFound (404) — the same two
-// distinct statuses PipelinesHandler.loadPipeline produced.
+// distinct statuses PipelinesHandler.loadPipeline produced. Any OTHER lookup
+// failure (a connection error, a canceled query, anything that is not
+// pgx.ErrNoRows) goes through mapError instead of being folded into the same
+// NotFound — W2-S7b's fix for the "blanket NotFound regardless of actual
+// error" pattern this used to have, mirroring loadOwnedDestination
+// (rpc_destination.go).
 //
 // It also enforces that the pipeline belongs to orgIDStr. The authz interceptor
 // only proves the caller may act on the org NAMED IN THE REQUEST; without this
@@ -245,7 +252,10 @@ func (s *PipelineService) loadPipeline(ctx context.Context, orgIDStr, idStr stri
 	}
 	p, err := s.store.Queries.GetPipelineByID(ctx, id)
 	if err != nil {
-		return sqlc.Pipeline{}, connect.NewError(connect.CodeNotFound, errPipelineNotFound)
+		if errors.Is(err, pgx.ErrNoRows) {
+			return sqlc.Pipeline{}, connect.NewError(connect.CodeNotFound, errPipelineNotFound)
+		}
+		return sqlc.Pipeline{}, mapError(err)
 	}
 	if p.OrgID != orgID {
 		return sqlc.Pipeline{}, connect.NewError(connect.CodeNotFound, errPipelineNotFound)
@@ -756,7 +766,12 @@ func (s *PipelineService) PreviewMatches(ctx context.Context, req *connect.Reque
 
 	matched, matchErr := s.previewMatchedCollectors(ctx, mp, orgID)
 	if matchErr != nil {
-		return nil, connect.NewError(connect.CodeInternal, matchErr)
+		// previewMatchedCollectors returns the raw store error from
+		// ListCollectorsByOrg unwrapped; wrapping it directly in
+		// connect.NewError put that error's text (e.g. a connection string)
+		// on the wire. mapError classifies it and, for the unrecognized
+		// default case, substitutes its own message instead.
+		return nil, mapError(matchErr)
 	}
 	items := make([]*mgmtv1.MatchedCollector, len(matched))
 	for i, m := range matched {
@@ -1073,49 +1088,41 @@ func (s *PipelineService) recomputeOrgCaches(ctx context.Context, orgID pgtype.U
 	}
 	for i := range collectors {
 		c := collectors[i]
-		cl := merge.CollectorLabels{
-			CollectorID: c.ID.String(),
-			Labels:      map[string]string{"role": c.Role, "cluster": c.ClusterName},
-		}
-		result, assembleErr := merge.Assemble(c.ID.String(), c.ClusterName+"/"+c.Role, cl, mergePipelines, "prod", "", merge.WithRoleEnforcement(s.schema))
-		if assembleErr != nil {
-			s.logger.Warn("recomputeOrgCaches: merge failed", "collector_id", c.ID.String(), "err", assembleErr)
+
+		// internal/serve.ComputeServed is the single merge -> append-baseline
+		// -> hash -> Stage-1-validate implementation this eager path shares
+		// with internal/agentapi's lazy recompute (docs/gateway-tier-plan.md
+		// §10). EnforceRoles: true reproduces this path's prior unconditional
+		// merge.WithRoleEnforcement(s.schema) call — including refusing to
+		// serve when s.schema is nil (see ComputeServed's Deps doc comment) —
+		// unlike agentapi's own degrade-on-nil-schema behavior.
+		served, err := serve.ComputeServed(ctx,
+			serve.Deps{Schema: s.schema, EnforceRoles: true, BeaconBaseline: s.beaconBaseline},
+			serve.Collector{ID: c.ID.String(), Cluster: c.ClusterName, Role: c.Role},
+			mergePipelines,
+		)
+		if err != nil {
+			s.logger.Warn("recomputeOrgCaches: computing served config failed", "collector_id", c.ID.String(), "err", err)
 			continue
 		}
-		for _, ex := range result.Exclusions {
+		for _, ex := range served.Exclusions {
 			// Visible per docs/gateway-tier-plan.md §8 rule 2: a pipeline
 			// excluded for a role/signal mismatch is never silent. The
-			// generated header (result.Content) already names it too; this
+			// generated header (served.Content) already names it too; this
 			// log line is what makes it discoverable without opening the
 			// merged config.
 			s.logger.Warn("recomputeOrgCaches: pipeline excluded (role/signal mismatch)",
 				"collector_id", c.ID.String(), "role", c.Role, "pipeline", ex.PipelineName, "reason", ex.Reason)
 		}
-
-		// D6: every collector gets the baseline pipeline here too — see
-		// internal/agentapi.WithBeaconRemoteWrite's doc comment and
-		// beacon.AppendBaseline for why this must be the SAME call the lazy
-		// recompute path makes, not a separate re-implementation.
-		content, appendErr := beacon.AppendBaseline(result.Content, s.beaconBaseline)
-		if appendErr != nil {
+		if served.BaselineErr != nil {
 			s.logger.Warn("recomputeOrgCaches: appending beacon baseline pipeline failed; serving without it",
-				"collector_id", c.ID.String(), "err", appendErr)
-			content = result.Content
-		}
-		hash := result.Hash
-		if content != result.Content {
-			hash = merge.HashContent(content)
+				"collector_id", c.ID.String(), "err", served.BaselineErr)
 		}
 
-		r1 := validate.Stage1(content)
-		if !r1.Valid {
-			s.logger.Warn("recomputeOrgCaches: stage-1 invalid on merged output", "collector_id", c.ID.String())
-			continue
-		}
 		if _, upsertErr := s.store.Queries.UpsertServeCacheConditional(ctx, sqlc.UpsertServeCacheConditionalParams{
 			CollectorID: c.ID,
-			Content:     content,
-			Hash:        hash,
+			Content:     served.Content,
+			Hash:        served.Hash,
 		}); upsertErr != nil {
 			s.logger.Warn("recomputeOrgCaches: upsert failed", "collector_id", c.ID.String(), "err", upsertErr)
 		}

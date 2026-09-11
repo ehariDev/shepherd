@@ -245,7 +245,11 @@ func (gp *graphParser) value(expr ast.Expr) interface{} {
 			return e.Value == "true"
 		case token.NULL:
 			return nil
-		default:
+		case token.ILLEGAL, token.LITERAL, token.EOF, token.COMMENT, token.IDENT,
+			token.OR, token.AND, token.NOT, token.ASSIGN, token.EQ, token.NEQ, token.LT, token.LTE, token.GT, token.GTE,
+			token.ADD, token.SUB, token.MUL, token.DIV, token.MOD, token.POW,
+			token.LCURLY, token.RCURLY, token.LPAREN, token.RPAREN, token.LBRACK, token.RBRACK, token.COMMA, token.DOT,
+			token.TERMINATOR:
 			// Not a literal shape we can model; fall through to the
 			// expression form below.
 		}

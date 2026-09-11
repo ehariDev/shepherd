@@ -150,31 +150,13 @@ func Router(st *store.Store, cfg *config.Config, enc *crypto.Encryptor, logger *
 			r.Get("/destinations/{id}", orgs.GetDestination)
 		})
 
-		// org-admin: writes, plus the org-admin-only services
-		// (WizardService, GitOpsService, AuditService).
-		//
-		// W10 note — this group is deliberately NOT in step with
-		// procedureRequirements any more, and the difference is safe in one
-		// direction only. The pipeline procedures were loosened to
-		// org-reader on the RPC side so a team member can reach the handler
-		// and have AuthorizeOwnership make the fine-grained call
-		// (docs/gateway-tier-plan.md G11); this REST group still demands
-		// org-admin. So the shim is STRICTER, never looser — a team member
-		// gets 403 here rather than scoped write. That is a missing feature
-		// on a legacy surface, not a bypass: the live UI speaks Connect RPC
-		// (web/src/api/transport.ts), and a service account cannot reach
-		// this router at all, since SessionMiddleware only reads the session
-		// cookie and never inspects Authorization.
-		//
-		// Recorded rather than silently fixed because aligning it means
-		// duplicating ownership resolution in the REST shim, and the shim is
-		// on its way out. If it survives, that duplication is the work.
+		// org-editor: pipeline writes/validate and WizardService (D5 — the
+		// REST shim's authoring routes now match Connect's org-editor floor
+		// for these two services; see the org-admin group below for why
+		// pipeline writes are STILL stricter here than Connect's own
+		// org-reader-plus-ownership check).
 		r.Group(func(r chi.Router) {
-			r.Use(auth.RequireOrgAccess(st, "org", "orgadmin"))
-			r.Get("/collectors/{id}/assignments", orgs.ListAssignments)
-			r.Post("/collectors/{id}/assignments", orgs.CreateAssignment)
-			r.Delete("/collectors/{id}/assignments/{group_id}", orgs.DeleteAssignment)
-
+			r.Use(auth.RequireOrgAccess(st, "org", "orgeditor"))
 			r.Post("/pipelines", pipelines.Create)
 			r.Post("/pipelines/validate", pipelines.Validate)
 			r.Put("/pipelines/{id}", pipelines.Update)
@@ -186,6 +168,42 @@ func Router(st *store.Store, cfg *config.Config, enc *crypto.Encryptor, logger *
 			r.Get("/wizards/{kind}", wizards.GetWizardSchema)
 			r.Post("/wizards/render", wizards.RenderWizard)
 			r.Post("/wizards/commit", wizards.CommitWizard)
+		})
+
+		// org-editor: VisualService (except GraphView, org-reader below;
+		// D5, same alignment as pipelines/wizards above).
+		r.Group(func(r chi.Router) {
+			r.Use(auth.RequireOrgAccess(st, "org", "orgeditor"))
+			r.Post("/visual/render", visualHandler.Render)
+			r.Post("/visual/validate", visualHandler.Validate)
+			r.Post("/visual/upgrade-check", visualHandler.UpgradeCheck)
+		})
+
+		// org-admin: writes to what the org IS, plus the org-admin-only
+		// services (GitOpsService, AuditService).
+		//
+		// W10 note — this group is deliberately NOT in step with
+		// procedureRequirements any more, and the difference is safe in one
+		// direction only. The pipeline procedures were loosened to
+		// org-reader on the RPC side so a team member can reach the handler
+		// and have AuthorizeOwnership make the fine-grained call
+		// (docs/gateway-tier-plan.md G11); the org-editor group above still
+		// demands org-editor for the same REST routes. So the shim is
+		// STRICTER, never looser — a team member who is not at least an
+		// editor gets 403 here rather than scoped write. That is a missing
+		// feature on a legacy surface, not a bypass: the live UI speaks
+		// Connect RPC (web/src/api/transport.ts), and a service account
+		// cannot reach this router at all, since SessionMiddleware only
+		// reads the session cookie and never inspects Authorization.
+		//
+		// Recorded rather than silently fixed because aligning it means
+		// duplicating ownership resolution in the REST shim, and the shim is
+		// on its way out. If it survives, that duplication is the work.
+		r.Group(func(r chi.Router) {
+			r.Use(auth.RequireOrgAccess(st, "org", "orgadmin"))
+			r.Get("/collectors/{id}/assignments", orgs.ListAssignments)
+			r.Post("/collectors/{id}/assignments", orgs.CreateAssignment)
+			r.Delete("/collectors/{id}/assignments/{group_id}", orgs.DeleteAssignment)
 
 			r.Post("/destinations", orgs.CreateDestination)
 			r.Put("/destinations/{id}", orgs.UpdateDestination)
@@ -208,12 +226,12 @@ func Router(st *store.Store, cfg *config.Config, enc *crypto.Encryptor, logger *
 			r.Delete("/repo-links/{id}", repoLinks.DeleteRepoLink)
 		})
 
-		// org-admin: VisualService (except GraphView) and SimulateService.
+		// org-editor: SimulateService (D6 — settled at org-editor on every
+		// layer: Connect's procedureRequirements already gated it here,
+		// simulate.proto's comments and docs/visual-builder-design-VB1.md
+		// now say so too).
 		r.Group(func(r chi.Router) {
-			r.Use(auth.RequireOrgAccess(st, "org", "orgadmin"))
-			r.Post("/visual/render", visualHandler.Render)
-			r.Post("/visual/validate", visualHandler.Validate)
-			r.Post("/visual/upgrade-check", visualHandler.UpgradeCheck)
+			r.Use(auth.RequireOrgAccess(st, "org", "orgeditor"))
 			r.Post("/simulate/relabel", simulateHandler.SimulateRelabel)
 			r.Post("/simulate/logs", simulateHandler.SimulateLogs)
 			r.Post("/simulate/runs", simulateHandler.CreateRun)
