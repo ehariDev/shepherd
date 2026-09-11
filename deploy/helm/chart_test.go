@@ -83,6 +83,27 @@ var _ = Describe("Helm chart: S3 sandbox simulator containment (finding H5)", fu
 
 		BeforeEach(func() { objects = renderSimulatorEnabled() })
 
+		// Red run, 2026-09-11 (kind gate on the merged remediation branch): the
+		// pre-install migration Job inherited SHEPHERD_SIMULATOR_TOKEN from the
+		// shared shepherd.podEnv helper, but the token Secret is an ordinary
+		// chart resource that does not exist yet while pre-install hooks run,
+		// so every install died in CreateContainerConfigError ("secret
+		// shepherd-def-simulator-token not found") until the 5-minute wait
+		// expired. The migration needs the database, never the simulator.
+		It("keeps the simulator token off the pre-install migration Job", func() {
+			job, ok := objects["Job/shepherd-migrate"]
+			Expect(ok).To(BeTrue(), "no Job/shepherd-migrate rendered")
+			env := envOf(containerOf(job, "migrate"))
+			Expect(env).NotTo(HaveKey("SHEPHERD_SIMULATOR_TOKEN"))
+			volumes, _ := podSpecOf(job)["volumes"].([]any) //nolint:errcheck // absent volumes is a pass
+			for _, raw := range volumes {
+				v, _ := raw.(map[string]any) //nolint:errcheck // shape asserted by the key lookup
+				if sec, ok := v["secret"].(map[string]any); ok {
+					Expect(sec["secretName"]).NotTo(Equal("shepherd-simulator-token"))
+				}
+			}
+		})
+
 		It("renders a Deployment and a Service", func() {
 			Expect(objects).To(HaveKey("Deployment/shepherd-simulator"))
 			Expect(objects).To(HaveKey("Service/shepherd-simulator"))

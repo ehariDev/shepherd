@@ -86,8 +86,8 @@ spec:
             - secretRef:
                 name: {{ include "shepherd.secretName" . }}
                 optional: true
-          {{- $env := include "shepherd.podEnv" . }}
-          {{- if trim $env }}
+          {{- $env := list (include "shepherd.podEnv" .) (include "shepherd.simulatorTokenEnv" .) | join "\n" | trim }}
+          {{- if $env }}
           env:
             {{- $env | nindent 12 }}
           {{- end }}

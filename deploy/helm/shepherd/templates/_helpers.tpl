@@ -314,6 +314,23 @@ database, and silently connecting somewhere else would be worse than loud.
 {{- if ((.Values.cnpg).enabled) -}}
 {{- $chunks = append $chunks (printf "- name: SHEPHERD_DATABASE_URL\n  valueFrom:\n    secretKeyRef:\n      name: %s-app\n      key: uri" (include "shepherd.cnpgClusterName" .)) -}}
 {{- end -}}
+{{- with .Values.extraEnv -}}
+{{- $chunks = append $chunks (trimSuffix "\n" (toYaml .)) -}}
+{{- end -}}
+{{- join "\n" $chunks -}}
+{{- end }}
+
+{{/*
+Shepherd's SHEPHERD_SIMULATOR_TOKEN env entry, for the app Deployment ONLY.
+
+Deliberately NOT part of shepherd.podEnv: the pre-install migration Job shares
+that helper, and the token Secret is an ordinary chart resource that does not
+exist yet while pre-install hooks run. With the entry in podEnv every install
+died in CreateContainerConfigError ("secret <release>-simulator-token not
+found") until helm's wait expired (kind gate, 2026-09-11). The migration needs
+the database, never the simulator.
+*/}}
+{{- define "shepherd.simulatorTokenEnv" -}}
 {{- if eq (include "shepherd.simulatorAutoWired" .) "true" -}}
 {{- /*
   Only when this chart auto-wires Shepherd to its own simulator -- an
@@ -321,12 +338,8 @@ database, and silently connecting somewhere else would be worse than loud.
   shepherd.configYaml refuses to render at all if it doesn't), so adding this
   env var there too would just be a second, unused source of truth.
 */ -}}
-{{- $chunks = append $chunks (printf "- name: SHEPHERD_SIMULATOR_TOKEN\n  valueFrom:\n    secretKeyRef:\n      name: %s\n      key: %s" (include "shepherd.simulatorTokenSecretName" .) (include "shepherd.simulatorTokenKey" .)) -}}
+{{- printf "- name: SHEPHERD_SIMULATOR_TOKEN\n  valueFrom:\n    secretKeyRef:\n      name: %s\n      key: %s" (include "shepherd.simulatorTokenSecretName" .) (include "shepherd.simulatorTokenKey" .) -}}
 {{- end -}}
-{{- with .Values.extraEnv -}}
-{{- $chunks = append $chunks (trimSuffix "\n" (toYaml .)) -}}
-{{- end -}}
-{{- join "\n" $chunks -}}
 {{- end }}
 
 {{/*
