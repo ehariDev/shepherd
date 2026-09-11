@@ -11,6 +11,184 @@ Categories used here:
 - **RPC only** — the API exists and is callable; there is no UI.
 - **Built, not wired** — the code and tests exist, nothing calls them in production yet.
 
+## v0.4.0
+
+Chart 0.10.0. A repo-wide remediation pass across CI, the Go core, RBAC,
+the sandbox simulator, the visual builder, and the UI shell, plus a large
+jump in test coverage. See
+[UPGRADING.md](deploy/helm/shepherd/UPGRADING.md) for what the chart
+upgrade needs from you — short version: every pod rolls once, for the new
+simulator token.
+
+### Build & CI
+
+- **`govulncheck` now runs in CI**: `ci.yml`'s `build` job runs it on every
+  backend-touching push/PR (`make vulncheck`), and `govulncheck.yml` runs it
+  again every week regardless of code changes, to catch a CVE freshly
+  disclosed against a dependency this repo already pins.
+- New `make guards` (the ten repo-shape checks `lint` depends on, so CI
+  cannot silently run fewer than a local `make lint` does), `make
+  test-cover` (coverage profile, uploaded as a CI artifact and summarized
+  per run), and `scripts/repocheck` (Ginkgo specs asserting the Makefile
+  and the workflow files themselves stay correct, run inside CI's `guards`
+  job).
+- `e2e.yml`'s agent-protocol suite now also runs on push to `main`,
+  path-filtered to what it exercises (D11) — previously merge-queue and
+  manual-dispatch only, and this repo has no merge queue configured, so it
+  effectively never ran.
+- `.github/dependabot.yml` added (gomod, npm, GitHub Actions, Docker;
+  weekly, grouped); every GitHub Action across every workflow is now
+  SHA-pinned.
+- `release.yml` gained a `verify` job (lint, guards, build, `go vet`, `go
+  test`, `helm lint`) that runs before anything is published, a
+  chart-already-published probe before `goreleaser` runs, provenance
+  attestation on release artifacts, and a guard that only semver tags start
+  a release.
+- `make smoke` rewritten around the bootstrap-admin environment variables
+  (`SHEPHERD_BOOTSTRAP_ADMIN_*`) instead of a hardcoded `admin`/`admin`; the
+  dev stack's seed now additionally creates local `editor`/`viewer` users
+  (`editor`/`editor-dev-pass`, `viewer`/`viewer-dev-pass`) on the platform
+  org, so an author who isn't an app admin can be exercised locally without
+  hand-rolling one.
+- `make tools` no longer installs `gofumpt` as a standalone binary
+  (`golangci-lint fmt` already runs it).
+
+### RBAC — Shipped
+
+- **Service accounts now have a role tier** (`editor` or `admin`,
+  independent of their write capability), checked after the existing
+  org-match check on every Connect procedure. Every account that existed
+  before this release is backfilled to `editor`; `admin` is granted only
+  when a `CreateServiceAccount` call explicitly asks for it. An
+  apply-capability account that previously reached org-admin-tier
+  procedures (`RotateTenantRoute`, `DeleteTeam`, `AddTeamMember`,
+  `DeleteCredential`, `ListAudit`, `ListTeamMembers`, and others) purely
+  because its org matched — with no tier check at all — now gets
+  `PermissionDenied` there. See UPGRADING.md.
+- **Local sign-in is throttled**, per login name and per source IP
+  independently (429 + `Retry-After`).
+- No service account can reach an app-admin-tier procedure regardless of
+  its role — refused outright, by construction (a service account's org is
+  never nullable).
+- **OIDC sessions now end at the ID token's own expiry**, even if the
+  session's sliding TTL has not run out — this deployment stores no refresh
+  token to silently renew one. OIDC login now also binds a nonce. Local
+  sessions are unaffected by either change.
+- **Local team-only members now clear the reader floor the same way an
+  OIDC team member does**, in both `authorizeOrgAccess` and
+  `ResolveOrgRole`/`GetMe` — previously only a group-based (OIDC) team
+  membership did.
+- The REST shim's pipeline-write, validate, wizard, and visual endpoint
+  groups now require org-editor (previously admin-only in places); the
+  simulate endpoints require org-editor rather than org-admin on Connect,
+  REST, and in the proto comments that document them.
+
+### Simulator — Shipped
+
+- **The sandbox's control API now requires a bearer token**, sourced
+  `existingSecret` > External Secrets > chart-generated, on both the Helm
+  chart and the client that calls it (a `401` now maps to a diagnosable
+  `simulator_unavailable` rather than an opaque failure).
+- **The sandbox's `NetworkPolicy` no longer allows DNS egress** — the
+  harness endpoints it talks to are now dialled by loopback IP directly, so
+  the sandboxed Alloy process has no legitimate reason to resolve a name at
+  all; the kind suite's DNS probe now expects a denial.
+- The sandboxed Alloy child process now gets a minimal, explicit
+  environment (`PATH`, `HOME`, `TMPDIR`) instead of inheriting the
+  simulator's full one — closing a window where a user-authored pipeline's
+  `sys.env(...)` could read whatever the parent process happened to have,
+  including the new control-API token before this release's containment
+  landed.
+- Stderr captured from a sandbox run is now rune-safe truncated with
+  control characters stripped before it reaches a diagnostic, rather than
+  risking a truncation mid-codepoint or raw control bytes in served output.
+
+### Go core
+
+- **`gitsync` now runs the full three-stage validation gate — syntax,
+  `alloy validate`, and a merge dry-run against the collector's other
+  pipelines — on every synced file**, and fails closed if it has no
+  validator configured. Previously a GitOps-synced file only had to pass
+  Stage 1 (syntax) to reach a pipeline; a file that would fail `alloy
+  validate` or break the merged config for its collector could still land.
+- `internal/serve.ComputeServed` extracted as the single merge → validate →
+  append-baseline recompute path, now shared by both `agentapi` and
+  `mgmtapi` (proven hash-identical to the two paths it replaces).
+- Three more raw-SQL sites replaced with sqlc queries
+  (`MarkServeCacheDirtyByCluster`, `CountOrgContent`,
+  `ListPipelineNamesReferencingDestination`); `check-raw-sql` now catches
+  raw SQL on any connection, not only ones obtained via `Pool()`.
+- `RunWorker` moved to `internal/simulate/worker`, so `internal/simulate`
+  itself is DB-free.
+- The `exhaustive` linter now runs with `default-signifies-exhaustive=false`,
+  which surfaced and closed four switches that were latently
+  non-exhaustive; 18 stale `nolint:gochecknoglobals` directives dropped.
+- `x/crypto` bumped to v0.56.0, `grpc` to v1.83.1.
+
+### UI shell — Shipped
+
+- **Light mode**: follows `prefers-color-scheme` by default, with a toggle
+  that stores an explicit override (`html.light` / `html.dark`); the visual
+  canvas's wire and category colours follow it too.
+- New `components/ui` primitives (`Modal`, `ModalActions`, `DataTable`,
+  `Field`, `Input`, `Select`, `Textarea`, `Banner`, `Section`), adopted
+  across the admin and visual-builder pages; every list/detail page now has
+  a `QueryError` branch instead of silently rendering an empty state on a
+  failed load.
+- **Role-gated routes now redirect at the client**: a route whose manifest
+  entry names a `requiredRole` the current session lacks redirects to `/`
+  with a toast, rather than rendering and failing server calls one at a
+  time (the server remains the actual enforcement).
+- Breadcrumbs now derive from route labels instead of the raw pathname;
+  failed route renders fall back to a shared `RouteErrorFallback`.
+- `GitPage`, `AdminUsersPage`, and `AdminAuthPage` — each previously a
+  single file over 500 lines — split into components.
+- `pnpm lint` is now Biome's read-only check (the one CI runs); the
+  mutating pass is `pnpm lint:fix`. Previously `pnpm lint` mutated files in
+  place, so it could not be used to reproduce what CI actually checks.
+
+### Visual builder — Shipped
+
+- Secret bindings are now authored as an `{"$expr"}` value at the bound
+  prop's instance path, via a binding picker on secret fields that
+  discovers candidate secrets from the overlay; a new L1 diagnostic,
+  `binding_dangling`, flags one that no longer resolves.
+- Connecting a second wire into a scalar input now replaces the existing
+  one (with an Undo toast) instead of leaving the graph in a state the
+  renderer could not represent.
+- Edge order is now stamped on creation, with a control to reorder a
+  fan-in's edges.
+- Draft pipelines autosave to IndexedDB, with a restore-or-discard banner
+  on return.
+- `UpgradeReview` now prunes `attr_removed` props on Accept and refuses to
+  Accept while a `component_removed` diagnostic is still present, and no
+  longer re-fires its check on every mutation.
+- The test corpus is read directly from `internal/visual/testdata`; the
+  `web/` copy `generate-corpus` used to maintain is gone.
+
+### Tests
+
+- A jsdom component-test harness (`@testing-library/react`, `jsdom`) landed
+  with component tests for `QueryError`, `AdminModal`, `AdminConfirmDialog`,
+  `WizardStepper`/`WizardStepFields`, `UpgradeReview`, and `InspectorPanel`.
+- New mocked-Playwright coverage: a route-guard matrix (org-admin /
+  org-editor / reader / nobody across admin routes and `/teams`), the
+  persona-floor guard, a wait-budget guard (no more real-time
+  `waitForTimeout` outside the visual specs), and per-persona cases across
+  destinations, dialogs, query-error states, audit, collector access, the
+  git page, editor role, and RBAC generally.
+- `gitrepo`'s SSH host-key callback is fixed, with a `HOME`-isolated test
+  suite; the e2e SSH GitOps scenario, previously skipped, now runs.
+
+### Known gaps carried forward
+
+- Fullstack Playwright specs for roles, rollout, wizard-commit,
+  matcher-edit, and sandbox-run are not yet written — planned for the next
+  wave, and need the dev stack running.
+- `site/docs/helm-values.html` still renders 64 `values.yaml` leaves with
+  no description (`scripts/values_reference.parse`); the chart's own
+  comments need filling in, tracked separately.
+
 ## v0.3.5
 
 Chart 0.9.0. **A chart-only release — the application is byte-for-byte v0.3.4.**
@@ -705,8 +883,9 @@ No new features; nothing that was gated in v0.0.2 has been ungated.
   which carries no dynamic loader, so the binary was present and unrunnable. Every pipeline save in
   a Helm deployment failed Stage 2; dev and compose stacks silently *skipped* it (they leave the
   binary path empty), which is why no test caught it. Fixed by moving to `distroless/base-nossl`,
-  and `make check-alloy-runnable` now fails the build if it regresses. **This is the reason to
-  upgrade.**
+  and the `check-alloy-runnable` macro (a Makefile `define`, not a target — invoked from
+  `docker-build-local`, not run standalone) now fails the build if it regresses. **This is the
+  reason to upgrade.**
 - **Five of six wizards were absent from the running product.** Their packages were never imported,
   so they never registered; `ListWizards` returned one. Now all six are registered and reachable,
   and the wizard gallery/runner render whatever the backend serves rather than a hardcoded list.
@@ -800,3 +979,8 @@ first.
 ## v0.0.1
 
 Initial release.
+
+- Shipped: the S3 sandbox simulator is `simulator.enabled: true` by default in
+  the Helm chart (`git show v0.0.1:deploy/helm/shepherd/values.yaml`), behind
+  a default-deny NetworkPolicy proven with in-cluster containment probes; set
+  `simulator.enabled=false` per-deployment to turn it off.

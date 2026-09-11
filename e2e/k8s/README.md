@@ -8,9 +8,16 @@ make e2e-k8s          # build images, create cluster, run, destroy
 make e2e-k8s-clean    # remove clusters a killed run left behind
 ```
 
-One cycle is ~500s for six features, including cluster create and destroy. (It was ~200s for
-four before the Gateway API route-conformance and operator-owned-attachment features landed —
-if you add a feature, update this number rather than leaving a stale one to mislead.)
+The suite is nine `func Test*` entries today (`grep -h '^func Test' e2e/k8s/*_test.go | grep -vc TestMain`:
+CNI negative control, Helm install with defaults, Helm install with the simulator on, repeatable
+install, chart-provisioned CNPG/ESO dependencies, simulator containment probes, simulator
+containment kill probe, Gateway operator-owned attachment, Gateway route conformance/tenant
+isolation). The last full-cycle timing on record is ~500s including cluster create and destroy, for six
+features counted by capability group rather than by `func Test` (it was ~200s for four before the
+Gateway API route-conformance and operator-owned-attachment features landed). The suite has grown
+since that measurement and it has not been redone — treat ~500s as a stale floor, not this suite's
+current runtime. If you add a feature or re-time a run, update this paragraph rather than leaving
+a stale number to mislead.
 
 ## Isolation model
 
