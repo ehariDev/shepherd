@@ -13,6 +13,15 @@ Categories used here:
 
 ## Unreleased
 
+### Fixes
+
+- **A stale serve-cache recompute can no longer clear a newer dirty flag.** Every write that
+  invalidates a collector's served config (enable, disable, restore, save, delete, git sync)
+  bumps a generation counter on `serve_cache`; both recompute paths read the generation before
+  loading pipelines and write with a compare-and-swap on it. Before, a recompute that started
+  before a newer mark could land its stale content after the mark and clear the flag, leaving
+  collectors on the old config until the next change. Caught by the restore-flips-enabled spec
+  under CI load. Migration `0020_serve_cache_dirty_seq`.
 ### Build & CI
 
 - **Security scanning that covers what govulncheck cannot.** A `security-scan` workflow runs
