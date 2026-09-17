@@ -178,6 +178,55 @@ var _ = Describe("shepherd.mgmt.v1.FleetService RPC", Label("integration"), func
 		Expect(labels).To(HaveKeyWithValue("environment", "production"))
 	})
 
+	It("marks the per-collector serve cache dirty on label mutations", func() {
+		cluster, err := st.Queries.UpsertCluster(ctx, "labels-cache-dirty")
+		Expect(err).NotTo(HaveOccurred())
+		Expect(st.Queries.ClaimCluster(ctx, sqlc.ClaimClusterParams{ID: cluster.ID, OrgID: orgID})).To(Succeed())
+		collector, err := st.Queries.UpsertCollector(ctx, sqlc.UpsertCollectorParams{ClusterID: cluster.ID, Role: "metrics"})
+		Expect(err).NotTo(HaveOccurred())
+		cookie := createSession(false, []string{"fleet-admin-group"})
+
+		// Seed a clean (not-dirty) serve_cache row, as if this collector was
+		// already served, so a label mutation is the only thing that could
+		// dirty it again.
+		_, err = st.Queries.UpsertServeCacheConditional(ctx, sqlc.UpsertServeCacheConditionalParams{
+			CollectorID: collector.ID, Content: "v1", Hash: "h-v1", DirtySeq: 0,
+		})
+		Expect(err).NotTo(HaveOccurred())
+		row, err := st.Queries.GetServeCache(ctx, collector.ID)
+		Expect(err).NotTo(HaveOccurred())
+		Expect(row.Dirty).To(BeFalse())
+
+		resp := postConnect("/shepherd.mgmt.v1.FleetService/SetCollectorLabel", map[string]any{
+			"orgId": orgID.String(), "collectorId": collector.ID.String(), "key": "team", "value": "payments",
+		}, cookie)
+		Expect(resp.StatusCode).To(Equal(http.StatusOK))
+		decodeBody(resp)
+		row, err = st.Queries.GetServeCache(ctx, collector.ID)
+		Expect(err).NotTo(HaveOccurred())
+		Expect(row.Dirty).To(BeTrue(), "SetCollectorLabel must mark this collector's serve cache dirty")
+		dirtySeqAfterSet := row.DirtySeq
+
+		// Clear the flag again so the next assertion isn't riding on the
+		// mark SetCollectorLabel just made.
+		_, err = st.Queries.UpsertServeCacheConditional(ctx, sqlc.UpsertServeCacheConditionalParams{
+			CollectorID: collector.ID, Content: "v2", Hash: "h-v2", DirtySeq: dirtySeqAfterSet,
+		})
+		Expect(err).NotTo(HaveOccurred())
+		row, err = st.Queries.GetServeCache(ctx, collector.ID)
+		Expect(err).NotTo(HaveOccurred())
+		Expect(row.Dirty).To(BeFalse())
+
+		resp = postConnect("/shepherd.mgmt.v1.FleetService/DeleteCollectorLabel", map[string]any{
+			"orgId": orgID.String(), "collectorId": collector.ID.String(), "key": "team",
+		}, cookie)
+		Expect(resp.StatusCode).To(Equal(http.StatusOK))
+		decodeBody(resp)
+		row, err = st.Queries.GetServeCache(ctx, collector.ID)
+		Expect(err).NotTo(HaveOccurred())
+		Expect(row.Dirty).To(BeTrue(), "DeleteCollectorLabel must mark this collector's serve cache dirty")
+	})
+
 	It("rejects invalid label keys and prevents reader and cross-org label writes", func() {
 		cluster, err := st.Queries.UpsertCluster(ctx, "labels-permissions")
 		Expect(err).NotTo(HaveOccurred())
