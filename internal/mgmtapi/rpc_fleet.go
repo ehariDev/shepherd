@@ -326,6 +326,9 @@ func (s *FleetService) SetCollectorLabel(ctx context.Context, req *connect.Reque
 	}
 	orgID, _ := parseUUID(req.Msg.GetOrgId())
 	auditLogDetail(ctx, s.store, actorFromCtx(ctx), "user", orgID, "collector.label.set", "collector", id.String(), map[string]string{"key": key, "value": value, "previous_value": previous})
+	if cacheErr := s.store.Queries.MarkServeCacheDirty(ctx, id); cacheErr != nil {
+		s.logger.Error("set collector label: marking serve cache dirty", "collector_id", id, "err", cacheErr)
+	}
 	return connect.NewResponse(&mgmtv1.CollectorLabelsResponse{Labels: labels}), nil
 }
 
@@ -362,6 +365,9 @@ func (s *FleetService) DeleteCollectorLabel(ctx context.Context, req *connect.Re
 	}
 	orgID, _ := parseUUID(req.Msg.GetOrgId())
 	auditLogDetail(ctx, s.store, actorFromCtx(ctx), "user", orgID, "collector.label.delete", "collector", id.String(), map[string]string{"key": key, "previous_value": previous})
+	if cacheErr := s.store.Queries.MarkServeCacheDirty(ctx, id); cacheErr != nil {
+		s.logger.Error("delete collector label: marking serve cache dirty", "collector_id", id, "err", cacheErr)
+	}
 	return connect.NewResponse(&mgmtv1.CollectorLabelsResponse{Labels: labels}), nil
 }
 
