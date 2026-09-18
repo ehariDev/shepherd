@@ -167,6 +167,53 @@ func (q *Queries) ListCollectorInstancesByCollector(ctx context.Context, collect
 	return items, nil
 }
 
+const listLatestLocalAttributesByOrg = `-- name: ListLatestLocalAttributesByOrg :many
+SELECT DISTINCT ON (ci.collector_id) ci.collector_id, ci.local_attributes
+FROM collector_instances ci
+JOIN collectors c ON c.id = ci.collector_id
+JOIN clusters cl ON cl.id = c.cluster_id
+WHERE cl.org_id = $1
+  AND ci.unregistered_at IS NULL
+ORDER BY ci.collector_id, ci.last_seen DESC NULLS LAST
+`
+
+type ListLatestLocalAttributesByOrgRow struct {
+	CollectorID     pgtype.UUID     `json:"collector_id"`
+	LocalAttributes json.RawMessage `json:"local_attributes"`
+}
+
+// The bulk read for Phase 2 org-wide matching (LABEL-MATCHING-PLAN.md §6
+// Phase 2 step 1): one query per org-wide Assemble loop (stage3Check,
+// previewMatchedCollectors, recomputeOrgCaches), not one per collector --
+// the plan's explicitly called-out N+1 risk at ~1000-collector scale. The
+// hot path (agentapi's GetConfig) does NOT use this: it already has the
+// current request's local_attributes in hand and must use that, not a
+// re-query that would reflect the previous heartbeat instead of this one.
+//
+// DISTINCT ON (collector_id) + last_seen DESC picks each collector's most
+// recently reporting live instance, the same "last-seen wins" semantics
+// GetLatestCollectorInstanceSummary already uses for one collector, applied
+// here to every collector in the org in a single round trip.
+func (q *Queries) ListLatestLocalAttributesByOrg(ctx context.Context, orgID pgtype.UUID) ([]ListLatestLocalAttributesByOrgRow, error) {
+	rows, err := q.db.Query(ctx, listLatestLocalAttributesByOrg, orgID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []ListLatestLocalAttributesByOrgRow
+	for rows.Next() {
+		var i ListLatestLocalAttributesByOrgRow
+		if err := rows.Scan(&i.CollectorID, &i.LocalAttributes); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const markStaleInstancesInactive = `-- name: MarkStaleInstancesInactive :exec
 UPDATE collector_instances
 SET remote_config_status = 'inactive', updated_at = now()
