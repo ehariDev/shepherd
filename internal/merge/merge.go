@@ -37,29 +37,48 @@ type Pipeline struct {
 	RepoLinkCollectorID string
 }
 
-// CollectorLabels represents the label set used to match pipelines to a collector.
-// It includes built-in labels (cluster, role) plus all key/value pairs from the
-// union of live instance local_attributes (last-seen instance wins per key).
+// CollectorLabels represents the label set used to match pipelines to a
+// collector. It includes the built-in labels (cluster, role) plus whatever
+// adminLabels and localAttrs BuildCollectorLabels was given — this type
+// itself has no opinion on how a caller computed localAttrs (e.g. whether it
+// reflects one instance or several); that's BuildCollectorLabels' caller's
+// responsibility, not this merge step's.
 type CollectorLabels struct {
 	CollectorID string
 	Labels      map[string]string
 }
 
 // BuildCollectorLabels merges the built-in cluster/role labels with a
-// collector's admin-set "Manage labels" (collectors.labels), for callers
-// gated on an org's allow_label_matching flag (procoduck/shepherd#139).
-// Callers not opted in must pass a nil/empty adminLabels — this function
-// applies no gating itself, so an ungated call always merges whatever it is
-// given.
+// collector's admin-set "Manage labels" (adminLabels) and agent-reported
+// local_attributes (localAttrs), for callers gated on the org's
+// allow_label_matching / allow_local_attribute_matching flags respectively
+// (procoduck/shepherd#139). A caller not opted into one of the two sources
+// must pass nil/empty for it — this function applies no gating itself, so it
+// always merges whatever it is given.
 //
-// Any adminLabels key IsReserved rejects is dropped here even though
-// SetCollectorLabel already refuses to write one — defense in depth against
-// a row that predates a key becoming reserved (see docs' "retroactive
-// collision" known issue), and cluster/role are set AFTER that filter so
-// they can never be shadowed by a same-named admin label regardless of
-// iteration order.
-func BuildCollectorLabels(collectorID, cluster, role string, adminLabels map[string]string) CollectorLabels {
-	labels := make(map[string]string, len(adminLabels)+2)
+// Precedence, low to high: localAttrs < adminLabels < {cluster, role}.
+// localAttrs is agent-reported — i.e. reachable via a compromised agent
+// token — and must never be allowed to shadow an admin-set label, mirroring
+// why Fleet Management makes remote-reported data lose to admin-set data.
+// localAttrs keys are lowercased before merging: admin labels are already
+// forced lowercase at write time (SetCollectorLabel), so an unnormalized
+// agent-reported "Team" would otherwise silently fail to match a
+// `team="..."` matcher written in the admin-label convention.
+//
+// Any localAttrs or adminLabels key IsReserved rejects is dropped here even
+// though the write paths already refuse one (defense in depth against a row
+// that predates a key becoming reserved — see docs' "retroactive collision"
+// known issue), and cluster/role are set after both filters so they can
+// never be shadowed regardless of iteration order.
+func BuildCollectorLabels(collectorID, cluster, role string, adminLabels, localAttrs map[string]string) CollectorLabels {
+	labels := make(map[string]string, len(adminLabels)+len(localAttrs)+2)
+	for k, v := range localAttrs {
+		k = strings.ToLower(k)
+		if IsReserved(k) {
+			continue
+		}
+		labels[k] = v
+	}
 	for k, v := range adminLabels {
 		if IsReserved(k) {
 			continue

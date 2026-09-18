@@ -490,7 +490,8 @@ func (r *Reconciler) stage3DryRun(ctx context.Context, link sqlc.RepoLink, candi
 			adminLabels = nil
 		}
 	}
-	cl := merge.BuildCollectorLabels(link.CollectorID.String(), cluster.Name, coll.Role, adminLabels)
+	// localAttrs: nil — PR-8's gated read isn't wired yet (LABEL-MATCHING-PLAN.md §9).
+	cl := merge.BuildCollectorLabels(link.CollectorID.String(), cluster.Name, coll.Role, adminLabels, nil)
 	// No WithRoleEnforcement option: gitsync has no schema registry, so this
 	// deliberately validates the unenforced superset (see doc comment above).
 	assembled, err := merge.Assemble(link.CollectorID.String(), cluster.Name+"/"+coll.Role, cl, mergePipelines, "dev", "")
