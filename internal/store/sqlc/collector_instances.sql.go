@@ -167,6 +167,65 @@ func (q *Queries) ListCollectorInstancesByCollector(ctx context.Context, collect
 	return items, nil
 }
 
+const listLatestLocalAttributesByOrg = `-- name: ListLatestLocalAttributesByOrg :many
+SELECT DISTINCT ON (ci.collector_id) ci.collector_id, ci.local_attributes
+FROM collector_instances ci
+JOIN collectors c ON c.id = ci.collector_id
+JOIN clusters cl ON cl.id = c.cluster_id
+WHERE cl.org_id = $1
+  AND ci.unregistered_at IS NULL
+ORDER BY ci.collector_id, ci.last_seen DESC NULLS LAST
+`
+
+type ListLatestLocalAttributesByOrgRow struct {
+	CollectorID     pgtype.UUID     `json:"collector_id"`
+	LocalAttributes json.RawMessage `json:"local_attributes"`
+}
+
+// The bulk read for Phase 2 org-wide matching (LABEL-MATCHING-PLAN.md §6
+// Phase 2 step 1): one query per org-wide Assemble loop (stage3Check,
+// previewMatchedCollectors, recomputeOrgCaches), not one per collector --
+// the plan's explicitly called-out N+1 risk at ~1000-collector scale. The
+// hot path (agentapi's GetConfig) does NOT use this: it already has the
+// current request's local_attributes in hand and must use that, not a
+// re-query that would reflect the previous heartbeat instead of this one.
+//
+// DISTINCT ON (collector_id) + last_seen DESC picks each collector's most
+// recently reporting live instance, the same "last-seen wins" semantics
+// GetLatestCollectorInstanceSummary already uses for one collector, applied
+// here to every collector in the org in a single round trip.
+//
+// Deliberate simplification, decided 2026-09-18 (LABEL-MATCHING-PLAN.md §5):
+// this returns one INSTANCE's whole attribute blob, not a true per-key union
+// across every live instance a collector has -- docs/spec.md:353 describes
+// the latter ("last-seen instance wins per key"). They're the same result
+// unless a collector genuinely has more than one concurrently-live instance
+// (an HA pair, or briefly during a rolling upgrade) reporting different
+// keys, in which case this can make served config flap on whichever key
+// differs, depending on poll timing. Accepted for now rather than block on
+// it; revisiting means dropping DISTINCT ON to return every live instance
+// per collector and folding them per-key in Go -- still one query, more
+// rows, not the N+1-by-query-count pattern this query exists to avoid.
+func (q *Queries) ListLatestLocalAttributesByOrg(ctx context.Context, orgID pgtype.UUID) ([]ListLatestLocalAttributesByOrgRow, error) {
+	rows, err := q.db.Query(ctx, listLatestLocalAttributesByOrg, orgID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []ListLatestLocalAttributesByOrgRow
+	for rows.Next() {
+		var i ListLatestLocalAttributesByOrgRow
+		if err := rows.Scan(&i.CollectorID, &i.LocalAttributes); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const markStaleInstancesInactive = `-- name: MarkStaleInstancesInactive :exec
 UPDATE collector_instances
 SET remote_config_status = 'inactive', updated_at = now()
