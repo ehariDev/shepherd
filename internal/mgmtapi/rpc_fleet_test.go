@@ -264,6 +264,29 @@ var _ = Describe("shepherd.mgmt.v1.FleetService RPC", Label("integration"), func
 		}
 	})
 
+	It("rejects reserved label keys at write time", func() {
+		cluster, err := st.Queries.UpsertCluster(ctx, "labels-reserved")
+		Expect(err).NotTo(HaveOccurred())
+		Expect(st.Queries.ClaimCluster(ctx, sqlc.ClaimClusterParams{ID: cluster.ID, OrgID: orgID})).To(Succeed())
+		collector, err := st.Queries.UpsertCollector(ctx, sqlc.UpsertCollectorParams{ClusterID: cluster.ID, Role: "metrics"})
+		Expect(err).NotTo(HaveOccurred())
+		cookie := createSession(true, nil)
+		for _, key := range []string{"role", "cluster", "id", "os", "alloy_version", "collector.foo", "shepherd.foo", "ROLE"} {
+			resp := postConnect("/shepherd.mgmt.v1.FleetService/SetCollectorLabel", map[string]any{
+				"orgId": orgID.String(), "collectorId": collector.ID.String(), "key": key, "value": "x",
+			}, cookie)
+			Expect(resp.StatusCode).To(Equal(http.StatusBadRequest), "key %q must be rejected as reserved", key)
+			decodeBody(resp)
+		}
+		// A non-reserved key must still be settable — the reserved check must
+		// not have swallowed the ordinary path.
+		resp := postConnect("/shepherd.mgmt.v1.FleetService/SetCollectorLabel", map[string]any{
+			"orgId": orgID.String(), "collectorId": collector.ID.String(), "key": "team", "value": "platform",
+		}, cookie)
+		Expect(resp.StatusCode).To(Equal(http.StatusOK))
+		Expect(decodeBody(resp)["labels"]).To(HaveKeyWithValue("team", "platform"))
+	})
+
 	It("normalizes label keys and enforces the per-collector label cap", func() {
 		cluster, err := st.Queries.UpsertCluster(ctx, "labels-cap")
 		Expect(err).NotTo(HaveOccurred())
