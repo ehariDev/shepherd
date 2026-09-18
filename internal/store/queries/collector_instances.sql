@@ -97,6 +97,18 @@ LIMIT 1;
 -- recently reporting live instance, the same "last-seen wins" semantics
 -- GetLatestCollectorInstanceSummary already uses for one collector, applied
 -- here to every collector in the org in a single round trip.
+--
+-- Deliberate simplification, decided 2026-09-18 (LABEL-MATCHING-PLAN.md §5):
+-- this returns one INSTANCE's whole attribute blob, not a true per-key union
+-- across every live instance a collector has -- docs/spec.md:353 describes
+-- the latter ("last-seen instance wins per key"). They're the same result
+-- unless a collector genuinely has more than one concurrently-live instance
+-- (an HA pair, or briefly during a rolling upgrade) reporting different
+-- keys, in which case this can make served config flap on whichever key
+-- differs, depending on poll timing. Accepted for now rather than block on
+-- it; revisiting means dropping DISTINCT ON to return every live instance
+-- per collector and folding them per-key in Go -- still one query, more
+-- rows, not the N+1-by-query-count pattern this query exists to avoid.
 SELECT DISTINCT ON (ci.collector_id) ci.collector_id, ci.local_attributes
 FROM collector_instances ci
 JOIN collectors c ON c.id = ci.collector_id
