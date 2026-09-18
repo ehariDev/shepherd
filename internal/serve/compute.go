@@ -58,6 +58,15 @@ type Collector struct {
 	// enabled (procoduck/shepherd#139) — passing nil/empty here reproduces
 	// exactly the pre-#139 {cluster, role}-only behavior.
 	AdminLabels map[string]string
+	// LocalAttrs is the collector's agent-reported local_attributes, to
+	// merge into matching alongside cluster/role and AdminLabels (losing to
+	// both — see merge.BuildCollectorLabels' precedence doc). The caller is
+	// responsible for gating this on the collector's org having
+	// allow_local_attribute_matching enabled — passing nil/empty here
+	// reproduces the pre-local_attributes-matching behavior. Unused by any
+	// caller yet (LABEL-MATCHING-PLAN.md PR-8 is plumbing only until the
+	// gated read lands).
+	LocalAttrs map[string]string
 }
 
 // Result is what a caller stores in serve_cache.
@@ -93,7 +102,7 @@ type Result struct {
 // that. A merged config that fails to parse must never reach serve_cache,
 // role enforcement configured or not.
 func ComputeServed(_ context.Context, deps Deps, coll Collector, pipelines []merge.Pipeline) (Result, error) {
-	cl := merge.BuildCollectorLabels(coll.ID, coll.Cluster, coll.Role, coll.AdminLabels)
+	cl := merge.BuildCollectorLabels(coll.ID, coll.Cluster, coll.Role, coll.AdminLabels, coll.LocalAttrs)
 
 	var opts []merge.AssembleOption
 	if deps.EnforceRoles || deps.Schema != nil {

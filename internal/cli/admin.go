@@ -69,9 +69,9 @@ type pipelineImpact struct {
 
 // auditMatcherImpact is §8's rollout-gate diff, reusable per-org: for every
 // pipeline, it compares merge.MatchesPipeline against
-// merge.BuildCollectorLabels(id, cluster, role, nil) (today's behavior,
+// merge.BuildCollectorLabels(id, cluster, role, nil, nil) (today's behavior,
 // admin labels never enter matching) versus
-// merge.BuildCollectorLabels(id, cluster, role, c.AdminLabels) (the
+// merge.BuildCollectorLabels(id, cluster, role, c.AdminLabels, nil) (the
 // post-wiring behavior) for every collector, and reports every collector
 // whose match status would flip either direction.
 //
@@ -90,8 +90,12 @@ func auditMatcherImpact(pipelines []merge.Pipeline, collectors []auditCollector)
 	for _, p := range pipelines {
 		var added, removed []collectorRef
 		for _, c := range collectors {
-			before := merge.BuildCollectorLabels(c.ID, c.Cluster, c.Role, nil)
-			after := merge.BuildCollectorLabels(c.ID, c.Cluster, c.Role, c.AdminLabels)
+			// localAttrs: nil — this tool audits the admin-label rollout gate
+			// only (LABEL-MATCHING-PLAN.md PR-6); PR-10 adds the
+			// local_attributes-side equivalent as its own extension, not by
+			// threading local attributes through this one.
+			before := merge.BuildCollectorLabels(c.ID, c.Cluster, c.Role, nil, nil)
+			after := merge.BuildCollectorLabels(c.ID, c.Cluster, c.Role, c.AdminLabels, nil)
 			wasMatched, err := merge.MatchesPipeline(p, before)
 			if err != nil {
 				wasMatched = false
