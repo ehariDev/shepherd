@@ -17,6 +17,7 @@ import (
 
 	mgmtv1 "shepherd/gen/shepherd/mgmt/v1"
 	"shepherd/gen/shepherd/mgmt/v1/mgmtv1connect"
+	"shepherd/internal/merge"
 	"shepherd/internal/schema"
 	"shepherd/internal/store"
 	"shepherd/internal/store/sqlc"
@@ -293,6 +294,9 @@ func (s *FleetService) SetCollectorLabel(ctx context.Context, req *connect.Reque
 	key, value := strings.ToLower(req.Msg.GetKey()), req.Msg.GetValue()
 	if !validCollectorLabelKey(key) {
 		return nil, connect.NewError(connect.CodeInvalidArgument, errors.New("label key must be 1-128 bytes using lowercase letters, numbers, '.', '_', '-', or '/'"))
+	}
+	if merge.IsReserved(key) {
+		return nil, connect.NewError(connect.CodeInvalidArgument, errors.New("label key is reserved for built-in use"))
 	}
 	if !validCollectorLabelValue(value) {
 		return nil, connect.NewError(connect.CodeInvalidArgument, errors.New("label value must be 1-512 bytes with no control or format characters"))
