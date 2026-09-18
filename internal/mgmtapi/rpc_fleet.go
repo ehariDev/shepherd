@@ -390,7 +390,8 @@ func (s *FleetService) emitMatchDrift(ctx context.Context, orgID, collectorID, c
 	}
 	cluster, _ := s.store.Queries.GetClusterByID(ctx, clusterID) //nolint:errcheck // empty cluster name is safe in merge
 	pipelines := make([]merge.Pipeline, 0, len(rows))
-	for _, r := range rows {
+	for i := range rows {
+		r := rows[i]
 		var matchers []string
 		if jsonErr := json.Unmarshal(r.Matchers, &matchers); jsonErr != nil {
 			matchers = nil

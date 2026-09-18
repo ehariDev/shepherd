@@ -21,8 +21,14 @@ type DiffEntry struct {
 func DiffMatches(pipelines []Pipeline, before, after CollectorLabels) []DiffEntry {
 	var out []DiffEntry
 	for _, p := range pipelines {
-		wasMatched, _ := MatchesPipeline(p, before)
-		isMatched, _ := MatchesPipeline(p, after)
+		wasMatched, err := MatchesPipeline(p, before)
+		if err != nil {
+			wasMatched = false
+		}
+		isMatched, err := MatchesPipeline(p, after)
+		if err != nil {
+			isMatched = false
+		}
 		if wasMatched == isMatched {
 			continue
 		}
