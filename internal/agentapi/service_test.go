@@ -274,7 +274,7 @@ var _ = Describe("CollectorService", Label("integration"), func() {
 			Expect(err).NotTo(HaveOccurred())
 			_, err = st.Queries.UpdateOrg(ctx, sqlc.UpdateOrgParams{
 				ID: org.ID, DisplayName: org.DisplayName, AdminGroupID: org.AdminGroupID,
-				AllowLocalAttributeMatching: true,
+				AllowLocalAttributeMatching: pgtype.Bool{Bool: true, Valid: true},
 			})
 			Expect(err).NotTo(HaveOccurred())
 
@@ -349,7 +349,7 @@ var _ = Describe("CollectorService", Label("integration"), func() {
 			Expect(err).NotTo(HaveOccurred())
 			_, err = st.Queries.UpdateOrg(ctx, sqlc.UpdateOrgParams{
 				ID: org.ID, DisplayName: org.DisplayName, AdminGroupID: org.AdminGroupID,
-				AllowLocalAttributeMatching: true,
+				AllowLocalAttributeMatching: pgtype.Bool{Bool: true, Valid: true},
 			})
 			Expect(err).NotTo(HaveOccurred())
 
@@ -469,7 +469,7 @@ var _ = Describe("CollectorService", Label("integration"), func() {
 
 			_, err = st3.Queries.UpdateOrg(ctx, sqlc.UpdateOrgParams{
 				ID: org.ID, DisplayName: org.DisplayName, AdminGroupID: org.AdminGroupID,
-				AllowLocalAttributeMatching: true,
+				AllowLocalAttributeMatching: pgtype.Bool{Bool: true, Valid: true},
 			})
 			Expect(err).NotTo(HaveOccurred())
 
@@ -480,7 +480,7 @@ var _ = Describe("CollectorService", Label("integration"), func() {
 
 			_, err = st3.Queries.UpdateOrg(ctx, sqlc.UpdateOrgParams{
 				ID: org.ID, DisplayName: org.DisplayName, AdminGroupID: org.AdminGroupID,
-				AllowLocalAttributeMatching: false,
+				AllowLocalAttributeMatching: pgtype.Bool{Bool: false, Valid: true},
 			})
 			Expect(err).NotTo(HaveOccurred())
 

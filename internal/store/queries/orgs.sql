@@ -19,14 +19,20 @@ FROM (SELECT count(*) AS cluster_count FROM clusters WHERE clusters.org_id = sql
 SELECT * FROM orgs ORDER BY name;
 
 -- name: UpdateOrg :one
+-- allow_label_matching/allow_local_attribute_matching use COALESCE against a
+-- nullable param: a caller that omits either flag (NULL) leaves the org's
+-- current value untouched instead of resetting it to false. This is what
+-- makes the two flags safe for a client that doesn't know about them (e.g.
+-- an org-edit form written before they existed) to update other org fields
+-- without silently disabling fleet-wide matching. See PR-144 review §3.
 UPDATE orgs
 SET display_name    = $2,
     admin_group_id  = $3,
     reader_group_id = $4,
     editor_group_id = sqlc.narg('editor_group_id'),
     allow_experimental_components = sqlc.arg('allow_experimental_components'),
-    allow_label_matching = sqlc.arg('allow_label_matching'),
-    allow_local_attribute_matching = sqlc.arg('allow_local_attribute_matching'),
+    allow_label_matching = COALESCE(sqlc.narg('allow_label_matching'), allow_label_matching),
+    allow_local_attribute_matching = COALESCE(sqlc.narg('allow_local_attribute_matching'), allow_local_attribute_matching),
     updated_at      = now()
 WHERE id = $1
 RETURNING *;
