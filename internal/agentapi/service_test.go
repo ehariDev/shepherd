@@ -10,12 +10,14 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
 	"connectrpc.com/connect"
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgtype"
+	"github.com/jackc/pgx/v5/pgxpool"
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
 	dto "github.com/prometheus/client_model/go"
@@ -36,6 +38,38 @@ import (
 
 // sharedPG is a single container shared across all specs in this suite.
 var sharedPG *testutil.SharedPostgres
+
+// queryCounter is a minimal pgx.QueryTracer that counts Query/QueryRow/Exec
+// calls issued over one pool — used by the PR-9 performance-regression test
+// to prove the local_attributes match-drift hook's byte-compare short-circuit
+// actually skips work, not just that its outcome happens to be a no-op.
+// Mirrors internal/store/local_attributes_scale_test.go's own copy; not
+// shared across packages since it's an unexported test helper in both.
+type queryCounter struct {
+	mu    sync.Mutex
+	count int
+}
+
+func (c *queryCounter) TraceQueryStart(ctx context.Context, _ *pgx.Conn, _ pgx.TraceQueryStartData) context.Context {
+	c.mu.Lock()
+	c.count++
+	c.mu.Unlock()
+	return ctx
+}
+
+func (c *queryCounter) TraceQueryEnd(context.Context, *pgx.Conn, pgx.TraceQueryEndData) {}
+
+func (c *queryCounter) Reset() {
+	c.mu.Lock()
+	c.count = 0
+	c.mu.Unlock()
+}
+
+func (c *queryCounter) Value() int {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	return c.count
+}
 
 func TestAgentAPI(t *testing.T) {
 	RegisterFailHandler(Fail)
@@ -303,6 +337,156 @@ var _ = Describe("CollectorService", Label("integration"), func() {
 			Expect(err).NotTo(HaveOccurred())
 			Expect(resp.Msg.GetContent()).NotTo(ContainSubstring("local-attrs-off-marker"),
 				"flag off: a custom-local-attribute-only matcher must match nothing, same as before #139")
+		})
+
+		// PR-9: match-drift observability for local_attributes, the hot-path
+		// half of §7 (LABEL-MATCHING-PLAN.md), reusing PR-5's diff engine.
+		// Correctness half — a real change (attrs go from cluster/role-only to
+		// also reporting the matched key) must emit exactly one "added" flip,
+		// both as a metric and as an audit_log row.
+		It("emits a match-drift metric and audit row when a poll's local_attributes newly match a pipeline", func() {
+			org, err := st.Queries.CreateOrg(ctx, sqlc.CreateOrgParams{Name: "drift-org", DisplayName: "Drift org", AdminGroupID: "admins"})
+			Expect(err).NotTo(HaveOccurred())
+			_, err = st.Queries.UpdateOrg(ctx, sqlc.UpdateOrgParams{
+				ID: org.ID, DisplayName: org.DisplayName, AdminGroupID: org.AdminGroupID,
+				AllowLocalAttributeMatching: true,
+			})
+			Expect(err).NotTo(HaveOccurred())
+
+			_, err = client.RegisterCollector(ctx, connect.NewRequest(&collectorv1.RegisterCollectorRequest{
+				Id: "drift-instance", Name: "drift-instance",
+				LocalAttributes: map[string]string{"cluster": "drift-cluster", "role": "metrics"},
+			}))
+			Expect(err).NotTo(HaveOccurred())
+			cluster, err := st.Queries.GetClusterByName(ctx, "drift-cluster")
+			Expect(err).NotTo(HaveOccurred())
+			Expect(st.Queries.ClaimCluster(ctx, sqlc.ClaimClusterParams{ID: cluster.ID, OrgID: org.ID})).To(Succeed())
+			_, err = st.Queries.CreatePipeline(ctx, sqlc.CreatePipelineParams{
+				OrgID: org.ID, Name: "drift-pipeline", Contents: "// drift-marker",
+				Matchers: json.RawMessage(`["team=\"platform\""]`), Enabled: true, Source: "ui",
+				WizardState: json.RawMessage(`{}`), CreatedBy: "test", UpdatedBy: "test",
+			})
+			Expect(err).NotTo(HaveOccurred())
+
+			before := counterValue(metrics.PipelineMatchChangesTotal.WithLabelValues("added"))
+
+			// First poll (via RegisterCollector above) reported no "team" key;
+			// this poll adds it — the flip GetConfig's drift hook must catch.
+			_, err = client.GetConfig(ctx, connect.NewRequest(&collectorv1.GetConfigRequest{
+				Id: "drift-instance",
+				LocalAttributes: map[string]string{
+					"cluster": "drift-cluster", "role": "metrics", "team": "platform",
+				},
+			}))
+			Expect(err).NotTo(HaveOccurred())
+
+			Expect(counterValue(metrics.PipelineMatchChangesTotal.WithLabelValues("added"))).To(
+				Equal(before+1), "one pipeline newly matched, one \"added\" flip")
+
+			rows, err := st.Queries.ListAuditLog(ctx, sqlc.ListAuditLogParams{
+				Column1: org.ID, Column3: "pipeline.match.changed", Limit: 10,
+			})
+			Expect(err).NotTo(HaveOccurred())
+			Expect(rows).To(HaveLen(1))
+			Expect(rows[0].Actor).To(Equal("agentapi"))
+			Expect(rows[0].ActorType).To(Equal("system"))
+			Expect(string(rows[0].Detail)).To(ContainSubstring(`"direction":"added"`))
+		})
+
+		// Performance-regression half of PR-9: proves the byte-compare
+		// short-circuit, not just its outcome. Comparing raw query counts
+		// against a hardcoded baseline would be brittle (any unrelated query
+		// GetConfig adds later would break it); instead this compares two
+		// back-to-back polls that report IDENTICAL local_attributes, one with
+		// the org's flag on and one with it off. The byte-compare runs BEFORE
+		// the flag is ever read, so if it's doing its job the two polls issue
+		// the exact same number of queries -- neither touches the org row,
+		// the pipeline list, or the diff engine. A broken short-circuit (the
+		// regression this guards against) would make the flag-on poll issue
+		// strictly more queries than the flag-off one.
+		It("issues the same query count for an unchanged poll whether or not allow_local_attribute_matching is on", func() {
+			dbURL := sharedPG.IsolatedDB(ctx, GinkgoTB())
+			poolCfg, err := pgxpool.ParseConfig(dbURL)
+			Expect(err).NotTo(HaveOccurred())
+			counter := &queryCounter{}
+			poolCfg.ConnConfig.Tracer = counter
+			pool, err := pgxpool.NewWithConfig(ctx, poolCfg)
+			Expect(err).NotTo(HaveOccurred())
+			defer pool.Close()
+			st3 := store.NewWithPool(pool)
+
+			raw := make([]byte, 32)
+			_, _ = rand.Read(raw)
+			secret := base64.URLEncoding.EncodeToString(raw)
+			hash := sha256.Sum256([]byte(secret))
+			tok, err := st3.Queries.CreateAgentToken(ctx, sqlc.CreateAgentTokenParams{
+				Name: "drift-perf-token", TokenHash: hash[:], CreatedBy: "test",
+			})
+			Expect(err).NotTo(HaveOccurred())
+			hdr := "Basic " + base64.StdEncoding.EncodeToString([]byte(tok.ID.String()+":"+secret))
+
+			svc3 := agentapi.New(st3, nil, slog.Default(), nil)
+			authGate3 := agentapi.NewAuthGate(st3, nil)
+			path3, handler3 := collectorv1connect.NewCollectorServiceHandler(svc3, connect.WithRequestGate(authGate3))
+			mux3 := http.NewServeMux()
+			mux3.Handle(path3, handler3)
+			server3 := httptest.NewUnstartedServer(h2c.NewHandler(mux3, &http2.Server{}))
+			server3.Start()
+			defer server3.Close()
+
+			client3 := collectorv1connect.NewCollectorServiceClient(
+				server3.Client(), server3.URL, connect.WithGRPC(),
+				connect.WithInterceptors(connect.UnaryInterceptorFunc(func(next connect.UnaryFunc) connect.UnaryFunc {
+					return func(c context.Context, req connect.AnyRequest) (connect.AnyResponse, error) {
+						req.Header().Set("Authorization", hdr)
+						return next(c, req)
+					}
+				})),
+			)
+
+			org, err := st3.Queries.CreateOrg(ctx, sqlc.CreateOrgParams{Name: "drift-perf-org", DisplayName: "Drift perf org", AdminGroupID: "admins"})
+			Expect(err).NotTo(HaveOccurred())
+			_, err = client3.RegisterCollector(ctx, connect.NewRequest(&collectorv1.RegisterCollectorRequest{
+				Id: "drift-perf-instance", Name: "drift-perf-instance",
+				LocalAttributes: map[string]string{"cluster": "drift-perf-cluster", "role": "metrics"},
+			}))
+			Expect(err).NotTo(HaveOccurred())
+			cluster, err := st3.Queries.GetClusterByName(ctx, "drift-perf-cluster")
+			Expect(err).NotTo(HaveOccurred())
+			Expect(st3.Queries.ClaimCluster(ctx, sqlc.ClaimClusterParams{ID: cluster.ID, OrgID: org.ID})).To(Succeed())
+
+			attrs := map[string]string{"cluster": "drift-perf-cluster", "role": "metrics"}
+
+			// Establish the stored local_attributes (this poll's own flip is
+			// irrelevant -- only the two polls below are measured).
+			_, err = client3.GetConfig(ctx, connect.NewRequest(&collectorv1.GetConfigRequest{Id: "drift-perf-instance", LocalAttributes: attrs}))
+			Expect(err).NotTo(HaveOccurred())
+
+			_, err = st3.Queries.UpdateOrg(ctx, sqlc.UpdateOrgParams{
+				ID: org.ID, DisplayName: org.DisplayName, AdminGroupID: org.AdminGroupID,
+				AllowLocalAttributeMatching: true,
+			})
+			Expect(err).NotTo(HaveOccurred())
+
+			counter.Reset()
+			_, err = client3.GetConfig(ctx, connect.NewRequest(&collectorv1.GetConfigRequest{Id: "drift-perf-instance", LocalAttributes: attrs}))
+			Expect(err).NotTo(HaveOccurred())
+			flagOnUnchangedCount := counter.Value()
+
+			_, err = st3.Queries.UpdateOrg(ctx, sqlc.UpdateOrgParams{
+				ID: org.ID, DisplayName: org.DisplayName, AdminGroupID: org.AdminGroupID,
+				AllowLocalAttributeMatching: false,
+			})
+			Expect(err).NotTo(HaveOccurred())
+
+			counter.Reset()
+			_, err = client3.GetConfig(ctx, connect.NewRequest(&collectorv1.GetConfigRequest{Id: "drift-perf-instance", LocalAttributes: attrs}))
+			Expect(err).NotTo(HaveOccurred())
+			flagOffUnchangedCount := counter.Value()
+
+			Expect(flagOnUnchangedCount).To(Equal(flagOffUnchangedCount),
+				"an unchanged poll must cost the same whether or not the org has opted in -- "+
+					"the byte-compare must short-circuit before the flag (or the pipeline list, or the diff) is ever reached")
 		})
 
 		It("marks a never-reported instance APPLIED once it polls with the served hash", func() {
