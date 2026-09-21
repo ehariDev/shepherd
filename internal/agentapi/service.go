@@ -212,7 +212,7 @@ func (s *Service) GetConfig(
 		}
 		// Cache missing or dirty — recompute now, once per collector at a time.
 		result, recomputeErr, _ := s.sf.Do(coll.ID.String(), func() (any, error) {
-			newContent, newHash, err := s.recomputeServeCache(ctx, coll, orgID)
+			newContent, newHash, err := s.recomputeServeCache(ctx, coll, orgID, attrs)
 			if err != nil {
 				return nil, err
 			}
@@ -491,20 +491,40 @@ func requireClusterRole(attrs map[string]string) (cluster, role string, err erro
 
 // recomputeServeCache assembles and validates the merged config for a single collector.
 // It returns (content, hash, error). On error the caller should serve the previous cached value.
-func (s *Service) recomputeServeCache(ctx context.Context, coll sqlc.Collector, orgID pgtype.UUID) (string, string, error) {
+//
+// reqAttrs is GetConfig's caller-supplied attrs (effectiveAttrs(req.Msg...)) —
+// PR-8b's gated freshness requirement: local_attributes matching on this hot
+// path must use the CURRENT request's self-reported attributes, never a
+// re-query of collector_instances, which would still reflect the previous
+// heartbeat (this function's own upsertCollectorInstance write for the
+// current one hasn't necessarily landed/committed before this read would
+// run). One known, accepted edge: this recompute runs inside GetConfig's
+// singleflight.Do keyed by collector ID (§200), so two nearly-simultaneous
+// polls for the SAME collector reporting DIFFERENT local_attributes can have
+// the "losing" caller's own reqAttrs discarded in favor of whichever request
+// actually executed the closure — same class of narrow, accepted relaxation
+// as PR-7's "latest instance wins" multi-instance simplification (LABEL-
+// MATCHING-PLAN.md §5), not something this change introduces new risk of.
+func (s *Service) recomputeServeCache(ctx context.Context, coll sqlc.Collector, orgID pgtype.UUID, reqAttrs map[string]string) (string, string, error) {
 	enabledPipelines, err := s.store.Queries.ListEnabledPipelinesForMerge(ctx, orgID)
 	if err != nil {
 		return "", "", fmt.Errorf("listing pipelines: %w", err)
 	}
 
-	// Admin labels only participate in matching once the org has opted in
-	// (procoduck/shepherd#139) — an org with the flag off must reproduce
-	// exactly the pre-#139 {cluster, role}-only behavior, byte for byte.
-	var adminLabels map[string]string
-	if org, orgErr := s.store.Queries.GetOrgByID(ctx, orgID); orgErr == nil && org.AllowLabelMatching {
-		if jsonErr := json.Unmarshal(coll.Labels, &adminLabels); jsonErr != nil {
-			s.logger.Warn("recomputeServeCache: decoding collector labels", "collector_id", coll.ID.String(), "err", jsonErr)
-			adminLabels = nil
+	// Admin labels and local_attributes only participate in matching once the
+	// org has opted into each independently (procoduck/shepherd#139) — an org
+	// with both flags off must reproduce exactly the pre-#139 {cluster,
+	// role}-only behavior, byte for byte.
+	var adminLabels, localAttrs map[string]string
+	if org, orgErr := s.store.Queries.GetOrgByID(ctx, orgID); orgErr == nil {
+		if org.AllowLabelMatching {
+			if jsonErr := json.Unmarshal(coll.Labels, &adminLabels); jsonErr != nil {
+				s.logger.Warn("recomputeServeCache: decoding collector labels", "collector_id", coll.ID.String(), "err", jsonErr)
+				adminLabels = nil
+			}
+		}
+		if org.AllowLocalAttributeMatching {
+			localAttrs = reqAttrs
 		}
 	}
 
@@ -552,7 +572,7 @@ func (s *Service) recomputeServeCache(ctx context.Context, coll sqlc.Collector, 
 	// internal/mgmtapi's eager recompute (docs/gateway-tier-plan.md §10).
 	result, err := serve.ComputeServed(ctx,
 		serve.Deps{Schema: s.schema, BeaconBaseline: s.beaconBaseline},
-		serve.Collector{ID: coll.ID.String(), Cluster: clusterName, Role: coll.Role, AdminLabels: adminLabels},
+		serve.Collector{ID: coll.ID.String(), Cluster: clusterName, Role: coll.Role, AdminLabels: adminLabels, LocalAttrs: localAttrs},
 		mergePipelines,
 	)
 	if err != nil {

@@ -229,6 +229,82 @@ var _ = Describe("CollectorService", Label("integration"), func() {
 			return collector, pipeline
 		}
 
+		// PR-8b freshness requirement: the hot path must use the CURRENT
+		// request's local_attributes, never a re-query of collector_instances
+		// (which would still reflect the previous heartbeat — this same
+		// request's own upsertCollectorInstance write isn't what GetConfig
+		// reads back from here). A single GetConfig call reporting a new
+		// matching attribute must be served in that SAME response.
+		It("serves a pipeline matched on local_attributes in the same request that reports them, once allow_local_attribute_matching is on", func() {
+			org, err := st.Queries.CreateOrg(ctx, sqlc.CreateOrgParams{Name: "local-attrs-org", DisplayName: "Local attrs org", AdminGroupID: "admins"})
+			Expect(err).NotTo(HaveOccurred())
+			_, err = st.Queries.UpdateOrg(ctx, sqlc.UpdateOrgParams{
+				ID: org.ID, DisplayName: org.DisplayName, AdminGroupID: org.AdminGroupID,
+				AllowLocalAttributeMatching: true,
+			})
+			Expect(err).NotTo(HaveOccurred())
+
+			_, err = client.RegisterCollector(ctx, connect.NewRequest(&collectorv1.RegisterCollectorRequest{
+				Id: "local-attrs-instance", Name: "local-attrs-instance",
+				LocalAttributes: map[string]string{"cluster": "local-attrs-cluster", "role": "metrics"},
+			}))
+			Expect(err).NotTo(HaveOccurred())
+			cluster, err := st.Queries.GetClusterByName(ctx, "local-attrs-cluster")
+			Expect(err).NotTo(HaveOccurred())
+			Expect(st.Queries.ClaimCluster(ctx, sqlc.ClaimClusterParams{ID: cluster.ID, OrgID: org.ID})).To(Succeed())
+			_, err = st.Queries.CreatePipeline(ctx, sqlc.CreatePipelineParams{
+				OrgID: org.ID, Name: "local-attrs-pipeline", Contents: "// local-attrs-marker",
+				Matchers: json.RawMessage(`["team=\"platform\""]`), Enabled: true, Source: "ui",
+				WizardState: json.RawMessage(`{}`), CreatedBy: "test", UpdatedBy: "test",
+			})
+			Expect(err).NotTo(HaveOccurred())
+
+			// One poll, reporting team=platform for the first time — this
+			// response, not a subsequent one, must already reflect the match.
+			resp, err := client.GetConfig(ctx, connect.NewRequest(&collectorv1.GetConfigRequest{
+				Id: "local-attrs-instance",
+				LocalAttributes: map[string]string{
+					"cluster": "local-attrs-cluster", "role": "metrics", "team": "platform",
+				},
+			}))
+			Expect(err).NotTo(HaveOccurred())
+			Expect(resp.Msg.GetContent()).To(ContainSubstring("local-attrs-marker"),
+				"a pipeline matched on a freshly-reported local attribute must be served in the same request that reported it")
+		})
+
+		// Flag-off byte-identical: an org that never opts in must reproduce
+		// pre-PR-8 behavior exactly, even when the collector reports an
+		// attribute that would otherwise match.
+		It("does not serve a local_attributes-matched pipeline while allow_local_attribute_matching is off", func() {
+			org, err := st.Queries.CreateOrg(ctx, sqlc.CreateOrgParams{Name: "local-attrs-off-org", DisplayName: "Local attrs off org", AdminGroupID: "admins"})
+			Expect(err).NotTo(HaveOccurred())
+
+			_, err = client.RegisterCollector(ctx, connect.NewRequest(&collectorv1.RegisterCollectorRequest{
+				Id: "local-attrs-off-instance", Name: "local-attrs-off-instance",
+				LocalAttributes: map[string]string{"cluster": "local-attrs-off-cluster", "role": "metrics"},
+			}))
+			Expect(err).NotTo(HaveOccurred())
+			cluster, err := st.Queries.GetClusterByName(ctx, "local-attrs-off-cluster")
+			Expect(err).NotTo(HaveOccurred())
+			Expect(st.Queries.ClaimCluster(ctx, sqlc.ClaimClusterParams{ID: cluster.ID, OrgID: org.ID})).To(Succeed())
+			_, err = st.Queries.CreatePipeline(ctx, sqlc.CreatePipelineParams{
+				OrgID: org.ID, Name: "local-attrs-off-pipeline", Contents: "// local-attrs-off-marker",
+				Matchers: json.RawMessage(`["team=\"platform\""]`), Enabled: true, Source: "ui",
+				WizardState: json.RawMessage(`{}`), CreatedBy: "test", UpdatedBy: "test",
+			})
+			Expect(err).NotTo(HaveOccurred())
+
+			resp, err := client.GetConfig(ctx, connect.NewRequest(&collectorv1.GetConfigRequest{
+				Id: "local-attrs-off-instance",
+				LocalAttributes: map[string]string{
+					"cluster": "local-attrs-off-cluster", "role": "metrics", "team": "platform",
+				},
+			}))
+			Expect(err).NotTo(HaveOccurred())
+			Expect(resp.Msg.GetContent()).NotTo(ContainSubstring("local-attrs-off-marker"),
+				"flag off: a custom-local-attribute-only matcher must match nothing, same as before #139")
+		})
+
 		It("marks a never-reported instance APPLIED once it polls with the served hash", func() {
 			// Agents report a RemoteConfigStatus only when they apply a CHANGE, so a
 			// collector that is healthy and polling steadily would otherwise render as
