@@ -57,6 +57,9 @@ type Service struct {
 	// disabled; beacon.AppendBaseline treats that as "leave content
 	// unchanged", never as an error.
 	beaconBaseline beacon.BaselineConfig
+	// driftLimiter bounds how often emitLocalAttrsMatchDrift's expensive
+	// body runs per collector — see drift_ratelimit.go (PR-144 review §8).
+	driftLimiter *driftRateLimiter
 }
 
 // ServiceOption configures optional Service behavior not required by every
@@ -89,7 +92,7 @@ func WithBeaconRemoteWrite(baseURL string, oauth2 *beacon.OAuth2Auth) ServiceOpt
 // degrades the guard rather than taking the fleet offline. Callers that can
 // load a registry must pass it.
 func New(st *store.Store, v *validate.Validator, logger *slog.Logger, reg *schema.Registry, opts ...ServiceOption) *Service {
-	s := &Service{store: st, validator: v, logger: logger.With("component", "agentapi"), schema: reg}
+	s := &Service{store: st, validator: v, logger: logger.With("component", "agentapi"), schema: reg, driftLimiter: newDriftRateLimiter()}
 	for _, opt := range opts {
 		opt(s)
 	}
@@ -101,7 +104,14 @@ func (s *Service) RegisterCollector(
 	ctx context.Context,
 	req *connect.Request[collectorv1.RegisterCollectorRequest],
 ) (*connect.Response[collectorv1.RegisterCollectorResponse], error) {
-	attrs := effectiveAttrs(req.Msg.LocalAttributes, req.Msg.Attributes) //nolint:staticcheck // deprecated field used as fallback
+	// PR-144 review §7: bound/sanitize before this map reaches storage or
+	// matching — see merge.ValidateAttributes's doc comment for why this
+	// must run here (both callers of upsertCollectorInstance, and the
+	// hot-path match-drift/serve-cache logic in GetConfig below, all read
+	// from this same validated map) rather than only inside
+	// upsertCollectorInstance, which the hot path's in-request matching
+	// bypasses entirely.
+	attrs := merge.ValidateAttributes(effectiveAttrs(req.Msg.LocalAttributes, req.Msg.Attributes)) //nolint:staticcheck // deprecated field used as fallback
 
 	cluster, role, err := requireClusterRole(attrs)
 	if err != nil {
@@ -133,7 +143,9 @@ func (s *Service) GetConfig(
 	// points, so shepherd_getconfig_duration_seconds never appeared in
 	// /metrics at all.
 	start := time.Now()
-	attrs := effectiveAttrs(req.Msg.LocalAttributes, req.Msg.Attributes) //nolint:staticcheck // deprecated field used as fallback
+	// See RegisterCollector's identical call for why validation happens here,
+	// before anything derived from attrs is stored or matched against.
+	attrs := merge.ValidateAttributes(effectiveAttrs(req.Msg.LocalAttributes, req.Msg.Attributes)) //nolint:staticcheck // deprecated field used as fallback
 
 	cluster, role, err := requireClusterRole(attrs)
 	if err != nil {
@@ -389,6 +401,12 @@ func (s *Service) emitLocalAttrsMatchDrift(ctx context.Context, orgID pgtype.UUI
 	if len(beforeAttrsJSON) > 0 {
 		_ = json.Unmarshal(beforeAttrsJSON, &beforeAttrs) //nolint:errcheck // malformed prior value degrades to no local attrs
 	}
+	// beforeAttrs == nil on a brand-new instance's first-ever poll (no prior
+	// collector_instances row) intentionally reports its whole
+	// matching-pipeline set as "added" in one shot below — expected, not a
+	// bug: a fresh instance really does go from matching nothing to matching
+	// whatever it matches, and there is no earlier state to diff against
+	// instead (PR-144 review §8).
 	if maps.Equal(beforeAttrs, afterAttrs) {
 		return
 	}
@@ -398,6 +416,28 @@ func (s *Service) emitLocalAttrsMatchDrift(ctx context.Context, orgID pgtype.UUI
 		// matching for such an org (every BuildCollectorLabels call site gates
 		// it the same way), so a "flip" computed here would not reflect what's
 		// actually served.
+		return
+	}
+	collIDStr := coll.ID.String()
+	// PR-144 review §1: attributes changed and the org has opted in, so
+	// whatever gets served for this collector must reflect them — mirrors
+	// the admin-label path (rpc_fleet.go's SetCollectorLabel/DeleteCollectorLabel),
+	// which already does this before computing its own drift. Unconditional
+	// (never rate-limited below): a skipped observability cycle must never
+	// also mean a skipped cache invalidation, or a flapping attribute would
+	// serve stale config for as long as it keeps getting rate-limited.
+	if cacheErr := s.store.Queries.MarkServeCacheDirty(ctx, coll.ID); cacheErr != nil {
+		s.logger.Error("match-drift: marking serve cache dirty", "collector_id", collIDStr, "err", cacheErr)
+	}
+	// PR-144 review §8: the rest of this function (org-wide pipeline scan +
+	// one audit_log write per flipped pipeline) is the expensive part, and
+	// now that MarkServeCacheDirty above actually runs on every real change,
+	// a collector reporting an attribute that flaps faster than any real
+	// poll interval would otherwise redo that scan on every single poll.
+	// Rate-limited per collector, not skipped for correctness — only this
+	// poll's drift bookkeeping is skipped, never the config that gets served.
+	if !s.driftLimiter.allow(collIDStr) {
+		s.logger.Debug("match-drift: rate-limited, skipping this poll's diff", "collector_id", collIDStr)
 		return
 	}
 	rows, err := s.store.Queries.ListEnabledPipelinesForMerge(ctx, orgID)
@@ -430,11 +470,10 @@ func (s *Service) emitLocalAttrsMatchDrift(ctx context.Context, orgID pgtype.UUI
 			adminLabels = nil
 		}
 	}
-	collIDStr := coll.ID.String()
 	before := merge.BuildCollectorLabels(collIDStr, cluster, role, adminLabels, beforeAttrs)
 	after := merge.BuildCollectorLabels(collIDStr, cluster, role, adminLabels, afterAttrs)
 	for _, d := range merge.DiffMatches(pipelines, before, after) {
-		metrics.PipelineMatchChangesTotal.WithLabelValues(d.Direction).Inc()
+		metrics.PipelineMatchChangesTotal.WithLabelValues(d.Direction, "collector.local_attributes.report").Inc()
 		detail, _ := json.Marshal(map[string]string{ //nolint:errcheck // map[string]string always marshals
 			"pipeline_id":   d.PipelineID,
 			"pipeline_name": d.PipelineName,
@@ -623,6 +662,20 @@ func (s *Service) recomputeServeCache(ctx context.Context, coll sqlc.Collector, 
 	// org has opted into each independently (procoduck/shepherd#139) — an org
 	// with both flags off must reproduce exactly the pre-#139 {cluster,
 	// role}-only behavior, byte for byte.
+	//
+	// reqAttrs is per-instance (whichever instance's poll triggered this
+	// recompute), while org-wide paths (recomputeOrgCaches, stage3Check,
+	// previewMatchedCollectors) read a real last-seen-wins query
+	// (ListLatestLocalAttributesByOrg) instead — two different
+	// non-authoritative approximations of "this collector's current local
+	// attrs" for a collector with more than one genuinely concurrent live
+	// instance, which can disagree with each other depending on poll timing.
+	// Flagged, not fixed here (PR-144 review §6) — LABEL-MATCHING-PLAN.md §5
+	// already accepts "last-seen wins, not a true per-key union" as a
+	// deliberate simplification; this is a related but distinct question
+	// (which approximation of last-seen a given path uses) that needs its
+	// own explicit decision before changing, not a bug this function alone
+	// can fix.
 	var adminLabels, localAttrs map[string]string
 	if org, orgErr := s.store.Queries.GetOrgByID(ctx, orgID); orgErr == nil {
 		if org.AllowLabelMatching {
@@ -634,6 +687,14 @@ func (s *Service) recomputeServeCache(ctx context.Context, coll sqlc.Collector, 
 		if org.AllowLocalAttributeMatching {
 			localAttrs = reqAttrs
 		}
+	} else {
+		// PR-144 review §5: this degrades to "both flags off" for this
+		// recompute, and the result gets written straight into serve_cache
+		// with dirty cleared by the caller — a transient DB blip here
+		// silently strips matching out of served config with no signal
+		// otherwise. At minimum, make it observable.
+		s.logger.Warn("recomputeServeCache: org lookup failed, degrading to no admin labels/local attrs", "collector_id", coll.ID.String(), "org_id", orgID.String(), "err", orgErr)
+		metrics.OrgLookupFailuresTotal.WithLabelValues("recompute_serve_cache").Inc()
 	}
 
 	var mergePipelines []merge.Pipeline

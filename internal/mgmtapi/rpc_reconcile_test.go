@@ -160,8 +160,8 @@ var _ = Describe("shepherd.mgmt.v1.FleetService/GetReconciliation", Label("integ
 				ID: orgID, DisplayName: o.DisplayName, AdminGroupID: o.AdminGroupID,
 				ReaderGroupID: o.ReaderGroupID, EditorGroupID: o.EditorGroupID,
 				AllowExperimentalComponents: o.AllowExperimentalComponents,
-				AllowLabelMatching:          on,
-				AllowLocalAttributeMatching: o.AllowLocalAttributeMatching,
+				AllowLabelMatching:          pgtype.Bool{Bool: on, Valid: true},
+				AllowLocalAttributeMatching: pgtype.Bool{Bool: o.AllowLocalAttributeMatching, Valid: true},
 			})
 			Expect(err).NotTo(HaveOccurred())
 		}

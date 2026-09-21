@@ -14,6 +14,8 @@ import (
 	"strings"
 
 	"github.com/prometheus/alertmanager/pkg/labels"
+
+	"shepherd/internal/metrics"
 )
 
 // Pipeline is the minimal representation of a pipeline needed by the merge engine.
@@ -172,6 +174,7 @@ func Assemble(collectorID, collectorDisplayName string, cl CollectorLabels, pipe
 			// header, the same way role enforcement reports its exclusions.
 			// Matchers are also parsed at save now, so reaching this means the
 			// row predates that check or was written outside the API.
+			metrics.MatcherParseErrorsTotal.Inc()
 			unmatchable = append(unmatchable, Exclusion{
 				PipelineName: p.Name,
 				Reason:       fmt.Sprintf("unparsable matcher, excluded: %v", err),

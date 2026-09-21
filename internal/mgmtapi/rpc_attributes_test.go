@@ -88,8 +88,8 @@ var _ = Describe("shepherd.mgmt.v1.FleetService/ListAttributes", Label("integrat
 			ID: orgID, DisplayName: o.DisplayName, AdminGroupID: o.AdminGroupID,
 			ReaderGroupID: o.ReaderGroupID, EditorGroupID: o.EditorGroupID,
 			AllowExperimentalComponents: o.AllowExperimentalComponents,
-			AllowLabelMatching:          labels,
-			AllowLocalAttributeMatching: localAttrs,
+			AllowLabelMatching:          pgtype.Bool{Bool: labels, Valid: true},
+			AllowLocalAttributeMatching: pgtype.Bool{Bool: localAttrs, Valid: true},
 		})
 		Expect(err).NotTo(HaveOccurred())
 	}
