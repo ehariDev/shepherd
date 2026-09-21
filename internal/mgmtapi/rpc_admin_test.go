@@ -157,6 +157,37 @@ var _ = Describe("shepherd.mgmt.v1 AdminService and MeService RPC", Label("integ
 			Expect(updated2["allowLocalAttributeMatching"]).To(BeTrue())
 		})
 
+		It("UpdateOrg leaves both rollout flags untouched when a caller omits them (PR-144 review §3)", func() {
+			appAdmin := createSession(true, nil)
+
+			// Turn both flags on.
+			setResp := postConnect("/shepherd.mgmt.v1.AdminService/UpdateOrg", map[string]any{
+				"orgId": orgIDStr, "displayName": "Flags-On Org", "adminGroupId": "flags-on-admin-group",
+				"allowLabelMatching": true, "allowLocalAttributeMatching": true,
+			}, appAdmin)
+			Expect(setResp.StatusCode).To(Equal(http.StatusOK))
+			set := decodeBody(setResp)
+			Expect(set["allowLabelMatching"]).To(BeTrue())
+			Expect(set["allowLocalAttributeMatching"]).To(BeTrue())
+
+			// A caller that edits an unrelated field (e.g. the admin UI’s
+			// org-edit form, which has no checkboxes for these two flags)
+			// must not send them at all, and the values set above must
+			// survive untouched -- not reset to proto3’s zero value. This is
+			// the regression test for the AdminOrgsPage.tsx flag-reset bug:
+			// the fix is optional proto3 fields (presence-tracked) plus a
+			// COALESCE in UpdateOrg’s SQL, not a client-side promise to
+			// always resend them.
+			editResp := postConnect("/shepherd.mgmt.v1.AdminService/UpdateOrg", map[string]any{
+				"orgId": orgIDStr, "displayName": "Flags-On Org, Renamed", "adminGroupId": "flags-on-admin-group",
+			}, appAdmin)
+			Expect(editResp.StatusCode).To(Equal(http.StatusOK))
+			edited := decodeBody(editResp)
+			Expect(edited["displayName"]).To(Equal("Flags-On Org, Renamed"))
+			Expect(edited["allowLabelMatching"]).To(BeTrue())
+			Expect(edited["allowLocalAttributeMatching"]).To(BeTrue())
+		})
+
 		It("denies ListOrgs for an org-admin session that is not an app admin", func() {
 			orgAdmin := createSession(false, []string{"admin-rpc-admin-group"})
 

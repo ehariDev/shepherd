@@ -527,7 +527,7 @@ var _ = Describe("shepherd.mgmt.v1.FleetService RPC", Label("integration"), func
 		_, err = st.Queries.UpdateOrg(ctx, sqlc.UpdateOrgParams{
 			ID: orgID, DisplayName: "Fleet RPC Org", AdminGroupID: "fleet-admin-group",
 			ReaderGroupID:      pgtype.Text{String: "fleet-reader-group", Valid: true},
-			AllowLabelMatching: true,
+			AllowLabelMatching: pgtype.Bool{Bool: true, Valid: true},
 		})
 		Expect(err).NotTo(HaveOccurred())
 
