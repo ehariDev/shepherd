@@ -480,18 +480,31 @@ func (r *Reconciler) stage3DryRun(ctx context.Context, link sqlc.RepoLink, candi
 		return fmt.Errorf("loading cluster: %w", err)
 	}
 
-	// Admin labels only participate in matching once the org has opted in
-	// (procoduck/shepherd#139) — an org with the flag off must reproduce
-	// exactly the pre-#139 {cluster, role}-only behavior.
-	var adminLabels map[string]string
-	if org, orgErr := r.store.Queries.GetOrgByID(ctx, link.OrgID); orgErr == nil && org.AllowLabelMatching {
+	// Admin labels and local_attributes only participate in matching once the
+	// org has opted into each independently (procoduck/shepherd#139) — an org
+	// with both flags off must reproduce exactly the pre-#139 {cluster,
+	// role}-only behavior.
+	var adminLabels, localAttrs map[string]string
+	org, orgErr := r.store.Queries.GetOrgByID(ctx, link.OrgID)
+	if orgErr == nil && org.AllowLabelMatching {
 		if jsonErr := json.Unmarshal(coll.Labels, &adminLabels); jsonErr != nil {
 			r.logger.Warn("gitsync: decoding collector labels", "collector_id", link.CollectorID.String(), "err", jsonErr)
 			adminLabels = nil
 		}
 	}
-	// localAttrs: nil — PR-8's gated read isn't wired yet (LABEL-MATCHING-PLAN.md §9).
-	cl := merge.BuildCollectorLabels(link.CollectorID.String(), cluster.Name, coll.Role, adminLabels, nil)
+	// Single collector, not an org-wide loop — GetLatestCollectorInstanceSummary
+	// (already used for the collector-list endpoint) rather than PR-7's bulk
+	// ListLatestLocalAttributesByOrg, which exists specifically to avoid N+1
+	// across an org-wide Assemble loop that this dry-run isn't.
+	if orgErr == nil && org.AllowLocalAttributeMatching {
+		if summary, sumErr := r.store.Queries.GetLatestCollectorInstanceSummary(ctx, link.CollectorID); sumErr == nil {
+			if jsonErr := json.Unmarshal(summary.LocalAttributes, &localAttrs); jsonErr != nil {
+				r.logger.Warn("gitsync: decoding local_attributes", "collector_id", link.CollectorID.String(), "err", jsonErr)
+				localAttrs = nil
+			}
+		}
+	}
+	cl := merge.BuildCollectorLabels(link.CollectorID.String(), cluster.Name, coll.Role, adminLabels, localAttrs)
 	// No WithRoleEnforcement option: gitsync has no schema registry, so this
 	// deliberately validates the unenforced superset (see doc comment above).
 	assembled, err := merge.Assemble(link.CollectorID.String(), cluster.Name+"/"+coll.Role, cl, mergePipelines, "dev", "")

@@ -1172,6 +1172,7 @@ func (s *PipelineService) stage3Check(ctx context.Context, p sqlc.Pipeline, orgI
 		return fmt.Errorf("loading collectors: %w", err)
 	}
 	org, _ := s.store.Queries.GetOrgByID(ctx, orgID) //nolint:errcheck // an org lookup failure degrades to no admin labels below, not a Stage 3 failure
+	localAttrs := localAttrsByOrg(ctx, s.store.Queries, orgID, org.AllowLocalAttributeMatching)
 
 	// Assemble merged content for every collector; deduplicate by sha256 hash.
 	type mergedEntry struct {
@@ -1185,8 +1186,7 @@ func (s *PipelineService) stage3Check(ctx context.Context, p sqlc.Pipeline, orgI
 	for i := range collectors {
 		c := collectors[i]
 		cluster, _ := s.store.Queries.GetClusterByID(ctx, c.ClusterID) //nolint:errcheck // empty cluster name is safe in merge
-		// localAttrs: nil — PR-8's gated read isn't wired yet (LABEL-MATCHING-PLAN.md §9).
-		cl := merge.BuildCollectorLabels(c.ID.String(), cluster.Name, c.Role, adminLabelsIfAllowed(org.AllowLabelMatching, c.Labels), nil)
+		cl := merge.BuildCollectorLabels(c.ID.String(), cluster.Name, c.Role, adminLabelsIfAllowed(org.AllowLabelMatching, c.Labels), localAttrs[c.ID.String()])
 		key := cluster.Name + "/" + c.Role
 
 		result, assembleErr := merge.Assemble(c.ID.String(), key, cl, mergePipelines, "dev", "", merge.WithRoleEnforcement(s.schema))
@@ -1271,12 +1271,12 @@ func (s *PipelineService) previewMatchedCollectors(ctx context.Context, p merge.
 		return nil, err
 	}
 	org, _ := s.store.Queries.GetOrgByID(ctx, orgID) //nolint:errcheck // an org lookup failure degrades to no admin labels below
+	localAttrs := localAttrsByOrg(ctx, s.store.Queries, orgID, org.AllowLocalAttributeMatching)
 	var matched []map[string]string
 	for i := range collectors {
 		c := collectors[i]
 		cluster, _ := s.store.Queries.GetClusterByID(ctx, c.ClusterID) //nolint:errcheck // empty cluster name is safe in merge
-		// localAttrs: nil — PR-8's gated read isn't wired yet (LABEL-MATCHING-PLAN.md §9).
-		cl := merge.BuildCollectorLabels(c.ID.String(), cluster.Name, c.Role, adminLabelsIfAllowed(org.AllowLabelMatching, c.Labels), nil)
+		cl := merge.BuildCollectorLabels(c.ID.String(), cluster.Name, c.Role, adminLabelsIfAllowed(org.AllowLabelMatching, c.Labels), localAttrs[c.ID.String()])
 
 		ok, matchErr := merge.MatchesPipeline(p, cl)
 		if matchErr != nil || !ok {
@@ -1303,6 +1303,7 @@ func (s *PipelineService) recomputeOrgCaches(ctx context.Context, orgID pgtype.U
 		return
 	}
 	org, _ := s.store.Queries.GetOrgByID(ctx, orgID) //nolint:errcheck // an org lookup failure degrades to no admin labels below
+	localAttrs := localAttrsByOrg(ctx, s.store.Queries, orgID, org.AllowLocalAttributeMatching)
 	// The dirty generation of every cache row, read BEFORE the pipelines are
 	// loaded: UpsertServeCacheConditional is a compare-and-swap on it, so a
 	// mark that lands after this read (a newer enable/disable/restore/delete)
@@ -1355,7 +1356,7 @@ func (s *PipelineService) recomputeOrgCaches(ctx context.Context, orgID pgtype.U
 		// unlike agentapi's own degrade-on-nil-schema behavior.
 		served, err := serve.ComputeServed(ctx,
 			serve.Deps{Schema: s.schema, EnforceRoles: true, BeaconBaseline: s.beaconBaseline},
-			serve.Collector{ID: c.ID.String(), Cluster: c.ClusterName, Role: c.Role, AdminLabels: adminLabelsIfAllowed(org.AllowLabelMatching, c.Labels)},
+			serve.Collector{ID: c.ID.String(), Cluster: c.ClusterName, Role: c.Role, AdminLabels: adminLabelsIfAllowed(org.AllowLabelMatching, c.Labels), LocalAttrs: localAttrs[c.ID.String()]},
 			mergePipelines,
 		)
 		if err != nil {

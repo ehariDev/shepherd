@@ -533,4 +533,164 @@ var _ = Describe("PipelineService Connect RPC", Label("integration"), func() {
 		}, "5s", "50ms").Should(ContainSubstring("recompute-org-caches-marker"),
 			"the admin-label-matched pipeline must reach this collector's served config once allow_label_matching is on")
 	})
+
+	// PR-8b: the local_attributes half of the same gate, using
+	// allow_local_attribute_matching independently of allow_label_matching —
+	// the two-flag split exists specifically so agent-reported data (reachable
+	// via a compromised agent token) never gates identically to admin-set
+	// data. local_attributes is agent-reported, so it's seeded directly via
+	// UpsertCollectorInstance (mirrors internal/store/local_attributes_scale_test.go)
+	// rather than through a mgmtapi RPC.
+	It("PreviewMatches ignores local_attributes until allow_local_attribute_matching is on, then honors them (#139)", func() {
+		cookie := sessionCookie(true)
+
+		cluster, err := st.Queries.UpsertCluster(ctx, "preview-matches-local-attrs-cluster")
+		Expect(err).NotTo(HaveOccurred())
+		Expect(st.Queries.ClaimCluster(ctx, sqlc.ClaimClusterParams{ID: cluster.ID, OrgID: orgUUID(orgID)})).To(Succeed())
+		collector, err := st.Queries.UpsertCollector(ctx, sqlc.UpsertCollectorParams{ClusterID: cluster.ID, Role: "metrics"})
+		Expect(err).NotTo(HaveOccurred())
+
+		_, err = st.Queries.UpsertCollectorInstance(ctx, sqlc.UpsertCollectorInstanceParams{
+			ID: "preview-matches-local-attrs-instance", CollectorID: collector.ID, Name: "singleton",
+			LocalAttributes: json.RawMessage(`{"team":"platform"}`),
+		})
+		Expect(err).NotTo(HaveOccurred())
+
+		createResp := postConnect("/shepherd.mgmt.v1.PipelineService/CreatePipeline", map[string]any{
+			"org_id": orgID, "name": "team-only-local-attrs-pipe", "contents": `// valid alloy comment`,
+			"matchers": []string{`team="platform"`},
+		}, cookie)
+		Expect(createResp.StatusCode).To(Equal(http.StatusOK))
+		var created struct {
+			ID string `json:"id"`
+		}
+		decodeBody(createResp, &created)
+
+		preview := func() []any {
+			resp := postConnect("/shepherd.mgmt.v1.PipelineService/PreviewMatches", map[string]any{
+				"org_id": orgID, "id": created.ID,
+			}, cookie)
+			Expect(resp.StatusCode).To(Equal(http.StatusOK))
+			var payload struct {
+				Collectors []any `json:"collectors"`
+			}
+			decodeBody(resp, &payload)
+			return payload.Collectors
+		}
+
+		Expect(preview()).To(BeEmpty(), "flag off: a custom-local-attribute-only matcher must match nothing, same as before #139")
+
+		updateResp := postConnect("/shepherd.mgmt.v1.AdminService/UpdateOrg", map[string]any{
+			"orgId": orgID, "displayName": "RPC Pipeline Org", "adminGroupId": "admin-group", "allowLocalAttributeMatching": true,
+		}, cookie)
+		Expect(updateResp.StatusCode).To(Equal(http.StatusOK))
+
+		Expect(preview()).To(HaveLen(1), "flag on: the collector's reported local_attributes must now participate in matching")
+	})
+
+	// Same red-run shape as the admin-labels recomputeOrgCaches test above —
+	// PreviewMatches exercises previewMatchedCollectors, not recomputeOrgCaches,
+	// so it alone would not have caught recomputeOrgCaches missing LocalAttrs.
+	It("EnablePipeline's eager recompute honors local_attributes once allow_local_attribute_matching is on (#139)", func() {
+		cookie := sessionCookie(true)
+
+		cluster, err := st.Queries.UpsertCluster(ctx, "recompute-org-caches-local-attrs-cluster")
+		Expect(err).NotTo(HaveOccurred())
+		Expect(st.Queries.ClaimCluster(ctx, sqlc.ClaimClusterParams{ID: cluster.ID, OrgID: orgUUID(orgID)})).To(Succeed())
+		collector, err := st.Queries.UpsertCollector(ctx, sqlc.UpsertCollectorParams{ClusterID: cluster.ID, Role: "metrics"})
+		Expect(err).NotTo(HaveOccurred())
+
+		_, err = st.Queries.UpsertCollectorInstance(ctx, sqlc.UpsertCollectorInstanceParams{
+			ID: "recompute-org-caches-local-attrs-instance", CollectorID: collector.ID, Name: "singleton",
+			LocalAttributes: json.RawMessage(`{"team":"platform"}`),
+		})
+		Expect(err).NotTo(HaveOccurred())
+
+		updateResp := postConnect("/shepherd.mgmt.v1.AdminService/UpdateOrg", map[string]any{
+			"orgId": orgID, "displayName": "RPC Pipeline Org", "adminGroupId": "admin-group", "allowLocalAttributeMatching": true,
+		}, cookie)
+		Expect(updateResp.StatusCode).To(Equal(http.StatusOK))
+
+		createResp := postConnect("/shepherd.mgmt.v1.PipelineService/CreatePipeline", map[string]any{
+			"org_id": orgID, "name": "recompute-org-caches-local-attrs-pipe", "contents": `// recompute-org-caches-local-attrs-marker`,
+			"matchers": []string{`team="platform"`},
+		}, cookie)
+		Expect(createResp.StatusCode).To(Equal(http.StatusOK))
+		var created struct {
+			ID string `json:"id"`
+		}
+		decodeBody(createResp, &created)
+
+		enableResp := postConnect("/shepherd.mgmt.v1.PipelineService/EnablePipeline", map[string]any{
+			"org_id": orgID, "id": created.ID,
+		}, cookie)
+		Expect(enableResp.StatusCode).To(Equal(http.StatusOK))
+
+		// recomputeOrgCaches runs in a detached goroutine, so this must poll
+		// rather than assert immediately.
+		Eventually(func() string {
+			resp := postConnect("/shepherd.mgmt.v1.FleetService/GetServedConfig", map[string]any{
+				"orgId": orgID, "id": collector.ID.String(),
+			}, cookie)
+			var payload struct {
+				Content string `json:"content"`
+			}
+			decodeBody(resp, &payload)
+			return payload.Content
+		}, "5s", "50ms").Should(ContainSubstring("recompute-org-caches-local-attrs-marker"),
+			"the local-attribute-matched pipeline must reach this collector's served config once allow_local_attribute_matching is on")
+	})
+
+	// Precedence: admin label must win over a same-key local attribute, since
+	// local_attributes is agent-reported (reachable via a compromised agent
+	// token) and must never be allowed to shadow an admin-set label — the
+	// same precedence merge.BuildCollectorLabels enforces in isolation,
+	// proved here end-to-end through both gates at once.
+	It("admin label wins over a same-key local attribute when both flags are on (#139)", func() {
+		cookie := sessionCookie(true)
+
+		cluster, err := st.Queries.UpsertCluster(ctx, "precedence-cluster")
+		Expect(err).NotTo(HaveOccurred())
+		Expect(st.Queries.ClaimCluster(ctx, sqlc.ClaimClusterParams{ID: cluster.ID, OrgID: orgUUID(orgID)})).To(Succeed())
+		collector, err := st.Queries.UpsertCollector(ctx, sqlc.UpsertCollectorParams{ClusterID: cluster.ID, Role: "metrics"})
+		Expect(err).NotTo(HaveOccurred())
+
+		_, err = st.Queries.UpsertCollectorInstance(ctx, sqlc.UpsertCollectorInstanceParams{
+			ID: "precedence-instance", CollectorID: collector.ID, Name: "singleton",
+			LocalAttributes: json.RawMessage(`{"team":"agent-reported"}`),
+		})
+		Expect(err).NotTo(HaveOccurred())
+
+		setLabelResp := postConnect("/shepherd.mgmt.v1.FleetService/SetCollectorLabel", map[string]any{
+			"orgId": orgID, "collectorId": collector.ID.String(), "key": "team", "value": "admin-set",
+		}, cookie)
+		Expect(setLabelResp.StatusCode).To(Equal(http.StatusOK))
+
+		updateResp := postConnect("/shepherd.mgmt.v1.AdminService/UpdateOrg", map[string]any{
+			"orgId": orgID, "displayName": "RPC Pipeline Org", "adminGroupId": "admin-group",
+			"allowLabelMatching": true, "allowLocalAttributeMatching": true,
+		}, cookie)
+		Expect(updateResp.StatusCode).To(Equal(http.StatusOK))
+
+		createResp := postConnect("/shepherd.mgmt.v1.PipelineService/CreatePipeline", map[string]any{
+			"org_id": orgID, "name": "precedence-pipe", "contents": `// valid alloy comment`,
+			"matchers": []string{`team="admin-set"`},
+		}, cookie)
+		Expect(createResp.StatusCode).To(Equal(http.StatusOK))
+		var created struct {
+			ID string `json:"id"`
+		}
+		decodeBody(createResp, &created)
+
+		resp := postConnect("/shepherd.mgmt.v1.PipelineService/PreviewMatches", map[string]any{
+			"org_id": orgID, "id": created.ID,
+		}, cookie)
+		Expect(resp.StatusCode).To(Equal(http.StatusOK))
+		var payload struct {
+			Collectors []any `json:"collectors"`
+		}
+		decodeBody(resp, &payload)
+		Expect(payload.Collectors).To(HaveLen(1),
+			"a matcher on the admin label's value must match: admin label must win over the same-key local attribute")
+	})
 })

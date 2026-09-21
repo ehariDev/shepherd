@@ -144,12 +144,12 @@ func (s *WizardService) previewMatchedCollectors(ctx context.Context, p merge.Pi
 		return nil, err
 	}
 	org, _ := s.store.Queries.GetOrgByID(ctx, orgID) //nolint:errcheck // an org lookup failure degrades to no admin labels below
+	localAttrs := localAttrsByOrg(ctx, s.store.Queries, orgID, org.AllowLocalAttributeMatching)
 	var matched []map[string]string
 	for i := range collectors {
 		c := collectors[i]
 		cluster, _ := s.store.Queries.GetClusterByID(ctx, c.ClusterID) //nolint:errcheck // empty cluster name is safe in merge
-		// localAttrs: nil — PR-8's gated read isn't wired yet (LABEL-MATCHING-PLAN.md §9).
-		cl := merge.BuildCollectorLabels(c.ID.String(), cluster.Name, c.Role, adminLabelsIfAllowed(org.AllowLabelMatching, c.Labels), nil)
+		cl := merge.BuildCollectorLabels(c.ID.String(), cluster.Name, c.Role, adminLabelsIfAllowed(org.AllowLabelMatching, c.Labels), localAttrs[c.ID.String()])
 
 		ok, matchErr := merge.MatchesPipeline(p, cl)
 		if matchErr != nil || !ok {
