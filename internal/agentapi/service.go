@@ -1,12 +1,12 @@
 package agentapi
 
 import (
-	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
 	"log/slog"
+	"maps"
 	"slices"
 	"strings"
 	"time"
@@ -150,16 +150,16 @@ func (s *Service) GetConfig(
 		name = req.Msg.Id
 	}
 
-	// PR-9's byte-compare short-circuit needs the instance's PREVIOUS
-	// local_attributes before upsertCollectorInstance overwrites it. This read
-	// (and the marshal below) run on every poll, so they must stay this cheap:
-	// one extra SELECT plus a byte comparison, never a pipeline list + diff,
-	// for the overwhelmingly common case of unchanged attributes.
+	// PR-9's match-drift short-circuit needs the instance's PREVIOUS
+	// local_attributes before upsertCollectorInstance overwrites it. This
+	// read runs on every poll, so it must stay cheap: one extra SELECT, never
+	// a pipeline list + diff, for the overwhelmingly common case of unchanged
+	// attributes — see emitLocalAttrsMatchDrift's doc comment for why the
+	// comparison itself is over decoded maps, not raw jsonb bytes.
 	var beforeAttrsJSON json.RawMessage
 	if prev, prevErr := s.store.Queries.GetCollectorInstanceByID(ctx, req.Msg.Id); prevErr == nil {
 		beforeAttrsJSON = prev.LocalAttributes
 	}
-	afterAttrsJSON, _ := json.Marshal(attrs) //nolint:errcheck // map[string]string always marshals
 
 	if err := s.upsertCollectorInstance(ctx, req.Msg.Id, name, cluster, role, attrs); err != nil {
 		return nil, connect.NewError(connect.CodeInternal, err)
@@ -210,7 +210,7 @@ func (s *Service) GetConfig(
 		}), nil
 	}
 
-	s.emitLocalAttrsMatchDrift(ctx, orgID, coll, cluster, role, beforeAttrsJSON, afterAttrsJSON)
+	s.emitLocalAttrsMatchDrift(ctx, orgID, coll, cluster, role, beforeAttrsJSON, attrs)
 
 	// Claimed: read from serve cache; recompute if dirty.
 	cache, err := s.store.Queries.GetServeCache(ctx, coll.ID)
@@ -366,17 +366,30 @@ func (s *Service) upsertCollectorInstance(
 // hook stays label-only rather than growing a local_attrs parameter.
 //
 // NOT unconditional: GetConfig calls this on every poll, up to 1000 collectors
-// every 30-60s. The byte-compare against the previous stored value (done by
-// the caller, before upsertCollectorInstance overwrites it) is what keeps this
-// cheap — bytes.Equal is checked FIRST, before any other work, so the
+// every 30-60s. The compare against the previous stored value (done here,
+// before any other work) is what keeps this cheap — checked FIRST, so the
 // overwhelmingly common case (attributes unchanged since the last poll) costs
-// nothing beyond the caller's one extra SELECT plus this comparison, never a
-// pipeline list + Assemble diff.
+// nothing beyond the caller's one extra SELECT plus unmarshaling two small
+// maps, never a pipeline list + Assemble diff.
+//
+// This compares maps, not raw JSON bytes: local_attributes is a Postgres
+// jsonb column, which reformats on every round trip (Postgres's own
+// canonical jsonb text output, not byte-identical to Go's compact
+// json.Marshal) — a byte comparison between what GetCollectorInstanceByID
+// reads back and what json.Marshal just produced would report "changed" on
+// every single poll, even when nothing changed, defeating the short-circuit
+// entirely. maps.Equal is immune to that: it compares decoded content, and
+// costs no more than one JSON unmarshal beyond what this function already
+// needs to build the before/after CollectorLabels below.
 //
 // Best-effort: errors are logged, never returned — a poll must not fail
 // because the drift computation describing its downstream effect failed.
-func (s *Service) emitLocalAttrsMatchDrift(ctx context.Context, orgID pgtype.UUID, coll sqlc.Collector, cluster, role string, beforeAttrsJSON, afterAttrsJSON json.RawMessage) {
-	if bytes.Equal(beforeAttrsJSON, afterAttrsJSON) {
+func (s *Service) emitLocalAttrsMatchDrift(ctx context.Context, orgID pgtype.UUID, coll sqlc.Collector, cluster, role string, beforeAttrsJSON json.RawMessage, afterAttrs map[string]string) {
+	var beforeAttrs map[string]string
+	if len(beforeAttrsJSON) > 0 {
+		_ = json.Unmarshal(beforeAttrsJSON, &beforeAttrs) //nolint:errcheck // malformed prior value degrades to no local attrs
+	}
+	if maps.Equal(beforeAttrs, afterAttrs) {
 		return
 	}
 	org, err := s.store.Queries.GetOrgByID(ctx, orgID)
@@ -417,10 +430,6 @@ func (s *Service) emitLocalAttrsMatchDrift(ctx context.Context, orgID pgtype.UUI
 			adminLabels = nil
 		}
 	}
-	var beforeAttrs, afterAttrs map[string]string
-	_ = json.Unmarshal(beforeAttrsJSON, &beforeAttrs) //nolint:errcheck // malformed prior value degrades to no local attrs
-	_ = json.Unmarshal(afterAttrsJSON, &afterAttrs)    //nolint:errcheck // attrs was just marshaled by this same request
-
 	collIDStr := coll.ID.String()
 	before := merge.BuildCollectorLabels(collIDStr, cluster, role, adminLabels, beforeAttrs)
 	after := merge.BuildCollectorLabels(collIDStr, cluster, role, adminLabels, afterAttrs)
