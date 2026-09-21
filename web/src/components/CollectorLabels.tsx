@@ -45,6 +45,11 @@ export function CollectorAttributes({
       />
       <section className='space-y-3' aria-label='Alloy attributes'>
         <h2 className='text-sm font-medium'>Alloy attributes</h2>
+        <p className='text-xs text-muted-2'>
+          Self-reported via Alloy's remotecfg block. Usable as pipeline matchers once this org's
+          local-attribute matching flag is on (org settings) — independently of "Manage labels"
+          above.
+        </p>
         {collector.instances.length ? (
           collector.instances.map((instance) => (
             <div key={instance.name} className='space-y-2'>

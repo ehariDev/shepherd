@@ -44,6 +44,18 @@ export function PipelineEditorPage() {
     enabled: !!id && !!orgId,
   });
 
+  // Matcher-key suggestions for the input below: every key Shepherd has
+  // actually seen reported org-wide (cluster/role plus any local_attributes
+  // key), so an author discovers what's matchable without reading docs
+  // first. Values aren't suggested — this is a key-only autocomplete; the
+  // matcher's operator/value is still typed by hand.
+  const { data: attributesData } = useQuery({
+    queryKey: ['attributes', orgId],
+    queryFn: () => clients.fleet.listAttributes({ orgId }),
+    enabled: !!orgId,
+  });
+  const matcherKeyOptions = Object.keys(attributesData?.attributes ?? {});
+
   const { data: revisionsData } = useQuery({
     queryKey: ['revisions', orgId, id],
     queryFn: () => clients.pipeline.listRevisions({ orgId: pipeline?.orgId ?? orgId, id: id! }),
@@ -226,7 +238,13 @@ export function PipelineEditorPage() {
               className='flex-1 font-mono text-xs rounded border border-border-strong bg-card px-2 py-1 focus:outline-none focus:ring-1 focus:ring-indigo-500'
               placeholder='cluster="prod"  (Enter to add)'
               disabled={readOnly}
+              list='matcher-key-options'
             />
+            <datalist id='matcher-key-options'>
+              {matcherKeyOptions.map((k) => (
+                <option key={k} value={k} />
+              ))}
+            </datalist>
           </div>
         </div>
 
