@@ -229,6 +229,13 @@ func (s *AdminService) UpdateOrg(ctx context.Context, req *connect.Request[mgmtv
 	if strings.TrimSpace(msg.GetAdminGroupId()) == "" {
 		return nil, connect.NewError(connect.CodeInvalidArgument, errors.New("admin_group_id required"))
 	}
+	// AllowLabelMatching/AllowLocalAttributeMatching are proto3 `optional`
+	// specifically so a caller can omit them: Valid=false tells UpdateOrg's
+	// SQL to COALESCE onto the org's current value instead of overwriting it
+	// with the zero value. This is what keeps an org-edit form that predates
+	// these two fields (or otherwise doesn't set them) from silently
+	// disabling fleet-wide label/attribute matching on every unrelated edit.
+	// See PR-144 review §3.
 	o, err := s.store.Queries.UpdateOrg(ctx, sqlc.UpdateOrgParams{
 		ID:                          id,
 		DisplayName:                 msg.GetDisplayName(),
@@ -236,8 +243,8 @@ func (s *AdminService) UpdateOrg(ctx context.Context, req *connect.Request[mgmtv
 		ReaderGroupID:               pgtype.Text{String: msg.GetReaderGroupId(), Valid: msg.GetReaderGroupId() != ""},
 		EditorGroupID:               pgtype.Text{String: msg.GetEditorGroupId(), Valid: msg.GetEditorGroupId() != ""},
 		AllowExperimentalComponents: msg.GetAllowExperimentalComponents(),
-		AllowLabelMatching:          msg.GetAllowLabelMatching(),
-		AllowLocalAttributeMatching: msg.GetAllowLocalAttributeMatching(),
+		AllowLabelMatching:          pgtype.Bool{Bool: msg.GetAllowLabelMatching(), Valid: msg.AllowLabelMatching != nil},
+		AllowLocalAttributeMatching: pgtype.Bool{Bool: msg.GetAllowLocalAttributeMatching(), Valid: msg.AllowLocalAttributeMatching != nil},
 	})
 	if err != nil {
 		return nil, connect.NewError(connect.CodeInternal, errors.New("failed to update org"))

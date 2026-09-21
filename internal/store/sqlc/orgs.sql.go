@@ -218,8 +218,8 @@ SET display_name    = $2,
     reader_group_id = $4,
     editor_group_id = $5,
     allow_experimental_components = $6,
-    allow_label_matching = $7,
-    allow_local_attribute_matching = $8,
+    allow_label_matching = COALESCE($7, allow_label_matching),
+    allow_local_attribute_matching = COALESCE($8, allow_local_attribute_matching),
     updated_at      = now()
 WHERE id = $1
 RETURNING id, name, display_name, admin_group_id, reader_group_id, created_at, updated_at, tenant_id, editor_group_id, allow_experimental_components, allow_label_matching, allow_local_attribute_matching
@@ -232,10 +232,16 @@ type UpdateOrgParams struct {
 	ReaderGroupID               pgtype.Text `json:"reader_group_id"`
 	EditorGroupID               pgtype.Text `json:"editor_group_id"`
 	AllowExperimentalComponents bool        `json:"allow_experimental_components"`
-	AllowLabelMatching          bool        `json:"allow_label_matching"`
-	AllowLocalAttributeMatching bool        `json:"allow_local_attribute_matching"`
+	AllowLabelMatching          pgtype.Bool `json:"allow_label_matching"`
+	AllowLocalAttributeMatching pgtype.Bool `json:"allow_local_attribute_matching"`
 }
 
+// allow_label_matching/allow_local_attribute_matching use COALESCE against a
+// nullable param: a caller that omits either flag (NULL) leaves the org's
+// current value untouched instead of resetting it to false. This is what
+// makes the two flags safe for a client that doesn't know about them (e.g.
+// an org-edit form written before they existed) to update other org fields
+// without silently disabling fleet-wide matching. See PR-144 review §3.
 func (q *Queries) UpdateOrg(ctx context.Context, arg UpdateOrgParams) (Org, error) {
 	row := q.db.QueryRow(ctx, updateOrg,
 		arg.ID,

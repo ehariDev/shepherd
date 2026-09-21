@@ -367,10 +367,16 @@ type UpdateOrgRequest struct {
 	EditorGroupId string `protobuf:"bytes,5,opt,name=editor_group_id,json=editorGroupId,proto3" json:"editor_group_id,omitempty"`
 	// allow_experimental_components — see Org.allow_experimental_components (#114).
 	AllowExperimentalComponents bool `protobuf:"varint,6,opt,name=allow_experimental_components,json=allowExperimentalComponents,proto3" json:"allow_experimental_components,omitempty"`
-	// allow_label_matching — see Org.allow_label_matching (#139).
-	AllowLabelMatching bool `protobuf:"varint,7,opt,name=allow_label_matching,json=allowLabelMatching,proto3" json:"allow_label_matching,omitempty"`
-	// allow_local_attribute_matching — see Org.allow_local_attribute_matching (#139).
-	AllowLocalAttributeMatching bool `protobuf:"varint,8,opt,name=allow_local_attribute_matching,json=allowLocalAttributeMatching,proto3" json:"allow_local_attribute_matching,omitempty"`
+	// allow_label_matching — see Org.allow_label_matching (#139). Optional:
+	// omitted means "leave this org's current value unchanged," not "set it to
+	// false." A client that doesn't know about this field (e.g. an org-edit
+	// form written before it existed) must not be able to silently disable it
+	// on every unrelated edit.
+	AllowLabelMatching *bool `protobuf:"varint,7,opt,name=allow_label_matching,json=allowLabelMatching,proto3,oneof" json:"allow_label_matching,omitempty"`
+	// allow_local_attribute_matching — see Org.allow_local_attribute_matching
+	// (#139). Optional, same presence semantics and reasoning as
+	// allow_label_matching above.
+	AllowLocalAttributeMatching *bool `protobuf:"varint,8,opt,name=allow_local_attribute_matching,json=allowLocalAttributeMatching,proto3,oneof" json:"allow_local_attribute_matching,omitempty"`
 	unknownFields               protoimpl.UnknownFields
 	sizeCache                   protoimpl.SizeCache
 }
@@ -448,15 +454,15 @@ func (x *UpdateOrgRequest) GetAllowExperimentalComponents() bool {
 }
 
 func (x *UpdateOrgRequest) GetAllowLabelMatching() bool {
-	if x != nil {
-		return x.AllowLabelMatching
+	if x != nil && x.AllowLabelMatching != nil {
+		return *x.AllowLabelMatching
 	}
 	return false
 }
 
 func (x *UpdateOrgRequest) GetAllowLocalAttributeMatching() bool {
-	if x != nil {
-		return x.AllowLocalAttributeMatching
+	if x != nil && x.AllowLocalAttributeMatching != nil {
+		return *x.AllowLocalAttributeMatching
 	}
 	return false
 }
@@ -2837,16 +2843,18 @@ const file_shepherd_mgmt_v1_admin_proto_rawDesc = "" +
 	"\x0eadmin_group_id\x18\x03 \x01(\tR\fadminGroupId\x12&\n" +
 	"\x0freader_group_id\x18\x04 \x01(\tR\rreaderGroupId\x12\x1b\n" +
 	"\ttenant_id\x18\x05 \x01(\tR\btenantId\x12&\n" +
-	"\x0feditor_group_id\x18\x06 \x01(\tR\reditorGroupId\"\xfd\x02\n" +
+	"\x0feditor_group_id\x18\x06 \x01(\tR\reditorGroupId\"\xc3\x03\n" +
 	"\x10UpdateOrgRequest\x12\x15\n" +
 	"\x06org_id\x18\x01 \x01(\tR\x05orgId\x12!\n" +
 	"\fdisplay_name\x18\x02 \x01(\tR\vdisplayName\x12$\n" +
 	"\x0eadmin_group_id\x18\x03 \x01(\tR\fadminGroupId\x12&\n" +
 	"\x0freader_group_id\x18\x04 \x01(\tR\rreaderGroupId\x12&\n" +
 	"\x0feditor_group_id\x18\x05 \x01(\tR\reditorGroupId\x12B\n" +
-	"\x1dallow_experimental_components\x18\x06 \x01(\bR\x1ballowExperimentalComponents\x120\n" +
-	"\x14allow_label_matching\x18\a \x01(\bR\x12allowLabelMatching\x12C\n" +
-	"\x1eallow_local_attribute_matching\x18\b \x01(\bR\x1ballowLocalAttributeMatching\"K\n" +
+	"\x1dallow_experimental_components\x18\x06 \x01(\bR\x1ballowExperimentalComponents\x125\n" +
+	"\x14allow_label_matching\x18\a \x01(\bH\x00R\x12allowLabelMatching\x88\x01\x01\x12H\n" +
+	"\x1eallow_local_attribute_matching\x18\b \x01(\bH\x01R\x1ballowLocalAttributeMatching\x88\x01\x01B\x17\n" +
+	"\x15_allow_label_matchingB!\n" +
+	"\x1f_allow_local_attribute_matching\"K\n" +
 	"\x15SetOrgTenantIDRequest\x12\x15\n" +
 	"\x06org_id\x18\x01 \x01(\tR\x05orgId\x12\x1b\n" +
 	"\ttenant_id\x18\x02 \x01(\tR\btenantId\")\n" +
@@ -3168,6 +3176,7 @@ func file_shepherd_mgmt_v1_admin_proto_init() {
 	if File_shepherd_mgmt_v1_admin_proto != nil {
 		return
 	}
+	file_shepherd_mgmt_v1_admin_proto_msgTypes[4].OneofWrappers = []any{}
 	type x struct{}
 	out := protoimpl.TypeBuilder{
 		File: protoimpl.DescBuilder{
