@@ -19,6 +19,7 @@ import (
 	"shepherd/gen/shepherd/mgmt/v1/mgmtv1connect"
 	"shepherd/internal/auth"
 	"shepherd/internal/gateway"
+	"shepherd/internal/metrics"
 	"shepherd/internal/store"
 	"shepherd/internal/store/sqlc"
 )
@@ -229,6 +230,16 @@ func (s *AdminService) UpdateOrg(ctx context.Context, req *connect.Request[mgmtv
 	if strings.TrimSpace(msg.GetAdminGroupId()) == "" {
 		return nil, connect.NewError(connect.CodeInvalidArgument, errors.New("admin_group_id required"))
 	}
+	// Read before the write (PR-144 review §2, §10d): the only way to know
+	// whether either matching flag's value actually CHANGED, which is what
+	// decides whether the serve cache needs invalidating and what the audit
+	// row's before/after detail should say. UpdateOrg's own WHERE id = $1
+	// would fail identically right after this if the org doesn't exist, so
+	// this doesn't introduce a new failure mode.
+	before, err := s.store.Queries.GetOrgByID(ctx, id)
+	if err != nil {
+		return nil, connect.NewError(connect.CodeNotFound, errors.New("org not found"))
+	}
 	// AllowLabelMatching/AllowLocalAttributeMatching are proto3 `optional`
 	// specifically so a caller can omit them: Valid=false tells UpdateOrg's
 	// SQL to COALESCE onto the org's current value instead of overwriting it
@@ -249,7 +260,50 @@ func (s *AdminService) UpdateOrg(ctx context.Context, req *connect.Request[mgmtv
 	if err != nil {
 		return nil, connect.NewError(connect.CodeInternal, errors.New("failed to update org"))
 	}
+
+	// PR-144 review §2: the flag is documented/assumed to be a kill switch
+	// (turn it off, served config reverts), but nothing invalidated the
+	// serve cache for either direction until now — turning it OFF left
+	// already-cached collectors serving the old, matched config
+	// indefinitely, and turning it ON did nothing until some unrelated
+	// event happened to dirty each collector individually.
+	//
+	// MarkServeCacheDirtyByOrg only, no eager `go recomputeOrgCaches(...)`
+	// (the pattern rpc_pipeline.go's pipeline mutations use): that method
+	// lives on PipelineService, and AdminService has no reference to one —
+	// wiring that cross-service dependency in for a latency nicety wasn't
+	// worth it here. Marking dirty is enough for correctness: the next
+	// GetConfig poll from each affected collector recomputes lazily, the
+	// same mechanism agentapi already relies on for every other
+	// cache-invalidation path.
+	if o.AllowLabelMatching != before.AllowLabelMatching || o.AllowLocalAttributeMatching != before.AllowLocalAttributeMatching {
+		if cacheErr := s.store.Queries.MarkServeCacheDirtyByOrg(ctx, id); cacheErr != nil {
+			s.logger.Error("update org: marking serve cache dirty", "org_id", id.String(), "err", cacheErr)
+		}
+	}
+	metrics.OrgLabelMatchingEnabled.WithLabelValues(o.Name).Set(boolToFloat(o.AllowLabelMatching))
+	metrics.OrgLocalAttributeMatchingEnabled.WithLabelValues(o.Name).Set(boolToFloat(o.AllowLocalAttributeMatching))
+
+	// Unconditional, unlike the cache-dirty call above: docs/spec.md:345's
+	// stated invariant is every mutating management-API handler writes an
+	// audit row, and these two flags are exactly the kind of change worth a
+	// trail for even when this particular call didn't flip either of them
+	// (PR-144 review §10e).
+	auditLogDetail(ctx, s.store, actorFromCtx(ctx), "user", id, "org.update", "org", id.String(), map[string]any{
+		"allow_label_matching_before":           before.AllowLabelMatching,
+		"allow_label_matching_after":            o.AllowLabelMatching,
+		"allow_local_attribute_matching_before": before.AllowLocalAttributeMatching,
+		"allow_local_attribute_matching_after":  o.AllowLocalAttributeMatching,
+	})
 	return connect.NewResponse(toOrgProto(o)), nil
+}
+
+// boolToFloat converts a bool to the 1/0 a Prometheus gauge expects.
+func boolToFloat(b bool) float64 {
+	if b {
+		return 1
+	}
+	return 0
 }
 
 // DeleteOrg deletes an org.

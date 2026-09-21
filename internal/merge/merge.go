@@ -15,6 +15,8 @@ import (
 	"time"
 
 	"github.com/prometheus/alertmanager/pkg/labels"
+
+	"shepherd/internal/metrics"
 )
 
 // Pipeline is the minimal representation of a pipeline needed by the merge engine.
@@ -173,6 +175,7 @@ func Assemble(collectorID, collectorDisplayName string, cl CollectorLabels, pipe
 			// header, the same way role enforcement reports its exclusions.
 			// Matchers are also parsed at save now, so reaching this means the
 			// row predates that check or was written outside the API.
+			metrics.MatcherParseErrorsTotal.Inc()
 			unmatchable = append(unmatchable, Exclusion{
 				PipelineName: p.Name,
 				Reason:       fmt.Sprintf("unparsable matcher, excluded: %v", err),
@@ -210,13 +213,9 @@ func Assemble(collectorID, collectorDisplayName string, cl CollectorLabels, pipe
 	if len(selected) == 0 {
 		// Empty config (nothing matched, or role enforcement excluded everything that did).
 		content := buildHeader(collectorID, collectorDisplayName, version, generatedAt, nil, exclusions)
-		return AssembleResult{Content: content, Hash: HashContent(content), Exclusions: exclusions}, nil
+		hashContent := hashableContent("", collectorID, collectorDisplayName, version, nil, exclusions)
+		return AssembleResult{Content: content, Hash: HashContent(hashContent), Exclusions: exclusions}, nil
 	}
-
-	var sb strings.Builder
-
-	// Header comment.
-	sb.WriteString(buildHeader(collectorID, collectorDisplayName, version, generatedAt, selected, exclusions))
 
 	// Check for sanitized-name collisions before assembling.
 	seen := make(map[string]string, len(selected)) // blockName → pipeline name
@@ -231,33 +230,56 @@ func Assemble(collectorID, collectorDisplayName string, cl CollectorLabels, pipe
 		seen[blockName] = p.Name
 	}
 
-	// Declare-wrapped blocks.
+	// Declare-wrapped blocks. Built into its own builder, separate from the
+	// header, so hashableContent below can substitute a fixed timestamp for
+	// the header without duplicating this loop.
+	var body strings.Builder
 	for i, p := range selected {
 		if i > 0 {
-			sb.WriteString("\n")
+			body.WriteString("\n")
 		}
 		blockName := "pipe_" + SanitizeName(p.Name)
-		fmt.Fprintf(&sb, "declare %q {\n", blockName)
+		fmt.Fprintf(&body, "declare %q {\n", blockName)
 		// Indent pipeline contents by one level.
 		for _, line := range strings.Split(p.Contents, "\n") {
 			if line == "" {
-				sb.WriteString("\n")
+				body.WriteString("\n")
 			} else {
-				sb.WriteString("  " + line + "\n")
+				body.WriteString("  " + line + "\n")
 			}
 		}
-		sb.WriteString("}\n")
-		fmt.Fprintf(&sb, "%s \"default\" { }\n", blockName)
+		body.WriteString("}\n")
+		fmt.Fprintf(&body, "%s \"default\" { }\n", blockName)
 	}
 
-	content := sb.String()
-	return AssembleResult{Content: content, Hash: HashContent(content), Exclusions: exclusions}, nil
+	content := buildHeader(collectorID, collectorDisplayName, version, generatedAt, selected, exclusions) + body.String()
+	hashContent := hashableContent(body.String(), collectorID, collectorDisplayName, version, selected, exclusions)
+	return AssembleResult{Content: content, Hash: HashContent(hashContent), Exclusions: exclusions}, nil
 }
 
 // HashContent computes hex(sha256(content)).
 func HashContent(content string) string {
 	h := sha256.Sum256([]byte(content))
 	return hex.EncodeToString(h[:])
+}
+
+// hashTimestampPlaceholder replaces buildHeader's live generatedAt timestamp
+// when computing what gets hashed (never what gets served as Content) --
+// see hashableContent. Without this, every recompute produces a new Hash
+// purely from the header's timestamp changing, even when the merged
+// pipeline set is byte-identical, which needlessly churns the served
+// content's hash and triggers an Alloy config reload on every
+// heartbeat-driven recompute (PR-144 review §11b).
+const hashTimestampPlaceholder = "1970-01-01T00:00:00Z"
+
+// hashableContent rebuilds the header with a fixed, deterministic timestamp
+// instead of buildHeader's real (live, or caller-supplied) generatedAt, so
+// Hash is stable across recomputes that produce byte-identical served
+// output. body is the non-empty case's already-built declare-blocks string
+// (empty for the empty-selection case, which has no body at all) -- this
+// never re-derives it, just prefixes the placeholder header.
+func hashableContent(body, collectorID, displayName, version string, pipelines []Pipeline, exclusions []Exclusion) string {
+	return buildHeader(collectorID, displayName, version, hashTimestampPlaceholder, pipelines, exclusions) + body
 }
 
 // buildHeader returns the header comment for a merged config. exclusions

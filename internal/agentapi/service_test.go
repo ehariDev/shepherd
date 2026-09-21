@@ -368,7 +368,7 @@ var _ = Describe("CollectorService", Label("integration"), func() {
 			})
 			Expect(err).NotTo(HaveOccurred())
 
-			before := counterValue(metrics.PipelineMatchChangesTotal.WithLabelValues("added"))
+			before := counterValue(metrics.PipelineMatchChangesTotal.WithLabelValues("added", "collector.local_attributes.report"))
 
 			// First poll (via RegisterCollector above) reported no "team" key;
 			// this poll adds it — the flip GetConfig's drift hook must catch.
@@ -380,7 +380,7 @@ var _ = Describe("CollectorService", Label("integration"), func() {
 			}))
 			Expect(err).NotTo(HaveOccurred())
 
-			Expect(counterValue(metrics.PipelineMatchChangesTotal.WithLabelValues("added"))).To(
+			Expect(counterValue(metrics.PipelineMatchChangesTotal.WithLabelValues("added", "collector.local_attributes.report"))).To(
 				Equal(before+1), "one pipeline newly matched, one \"added\" flip")
 
 			rows, err := st.Queries.ListAuditLog(ctx, sqlc.ListAuditLogParams{

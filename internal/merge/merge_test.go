@@ -224,13 +224,33 @@ var _ = Describe("Assemble", func() {
 		Expect(r.Content).To(ContainSubstring(`pipe_mypipe "default" { }`))
 	})
 
-	It("hash equals sha256hex of content", func() {
+	It("hash is stable across recomputes even when generatedAt differs (PR-144 review §11b)", func() {
+		// Hash must NOT vary with the header’s timestamp -- otherwise every
+		// recompute produces a new hash purely from the clock ticking, even
+		// when the merged pipeline set is byte-identical, needlessly
+		// churning served content and triggering an Alloy config reload on
+		// every heartbeat-driven recompute. Content, unlike Hash, is
+		// allowed (expected) to differ, since operators still see a real
+		// timestamp in the served config’s header comment.
+		pipelines := []merge.Pipeline{
+			{Name: "p", Contents: "x", Matchers: []string{`cluster="test"`}, Source: "ui"},
+		}
+		r1, err := merge.Assemble("coll-uuid-1", "test/metrics", cl, pipelines, "dev", "2024-01-01T00:00:00Z")
+		Expect(err).NotTo(HaveOccurred())
+		r2, err := merge.Assemble("coll-uuid-1", "test/metrics", cl, pipelines, "dev", "2025-06-01T00:00:00Z")
+		Expect(err).NotTo(HaveOccurred())
+		Expect(r1.Content).NotTo(Equal(r2.Content))
+		Expect(r1.Hash).To(Equal(r2.Hash))
+	})
+
+	It("hash equals sha256hex of content once the header’s timestamp is normalized", func() {
 		pipelines := []merge.Pipeline{
 			{Name: "p", Contents: "x", Matchers: []string{`cluster="test"`}, Source: "ui"},
 		}
 		r, err := merge.Assemble("coll-uuid-1", "test/metrics", cl, pipelines, "dev", "2024-01-01T00:00:00Z")
 		Expect(err).NotTo(HaveOccurred())
-		Expect(r.Hash).To(Equal(merge.HashContent(r.Content)))
+		normalized := strings.Replace(r.Content, "2024-01-01T00:00:00Z", "1970-01-01T00:00:00Z", 1)
+		Expect(r.Hash).To(Equal(merge.HashContent(normalized)))
 	})
 
 	It("excludes unmatched pipelines", func() {
