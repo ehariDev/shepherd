@@ -390,7 +390,12 @@ var _ = Describe("CollectorService", Label("integration"), func() {
 			Expect(rows).To(HaveLen(1))
 			Expect(rows[0].Actor).To(Equal("agentapi"))
 			Expect(rows[0].ActorType).To(Equal("system"))
-			Expect(string(rows[0].Detail)).To(ContainSubstring(`"direction":"added"`))
+			var detail map[string]string
+			Expect(json.Unmarshal(rows[0].Detail, &detail)).To(Succeed())
+			// Not a raw substring match: audit_log.detail is jsonb, which
+			// reformats on read-back (Postgres's own canonical spacing, not
+			// byte-identical to whatever was marshaled before insertion).
+			Expect(detail["direction"]).To(Equal("added"))
 		})
 
 		// Performance-regression half of PR-9: proves the byte-compare
