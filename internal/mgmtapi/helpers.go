@@ -5,11 +5,13 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"log/slog"
 	"net/http"
 
 	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/jackc/pgx/v5/pgtype"
 
+	"shepherd/internal/metrics"
 	"shepherd/internal/store"
 	"shepherd/internal/store/sqlc"
 )
@@ -60,6 +62,19 @@ func localAttrsByOrg(ctx context.Context, q *sqlc.Queries, orgID pgtype.UUID, al
 		out[row.CollectorID.String()] = attrs
 	}
 	return out
+}
+
+// logOrgLookupFailure logs and meters a GetOrgByID failure on a
+// matching/serve path (PR-144 review §5). Every one of stage3Check,
+// previewMatchedCollectors (both copies), and recomputeOrgCaches already
+// degrades such a failure to "both matching flags off" rather than failing
+// the request — this makes that degradation observable (a structured log
+// line plus metrics.OrgLookupFailuresTotal) instead of silent. callSite is
+// a small fixed set of names, one per call site, kept as a metric label
+// deliberately (see OrgLookupFailuresTotal's own doc comment).
+func logOrgLookupFailure(logger *slog.Logger, callSite string, orgID pgtype.UUID, err error) {
+	logger.Warn("org lookup failed, degrading to no admin labels/local attrs", "call_site", callSite, "org_id", orgID.String(), "err", err)
+	metrics.OrgLookupFailuresTotal.WithLabelValues(callSite).Inc()
 }
 
 // respondJSON writes v as a JSON response with the given status code.

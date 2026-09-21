@@ -109,12 +109,23 @@ LIMIT 1;
 -- it; revisiting means dropping DISTINCT ON to return every live instance
 -- per collector and folding them per-key in Go -- still one query, more
 -- rows, not the N+1-by-query-count pattern this query exists to avoid.
+--
+-- remote_config_status != 'inactive' (PR-144 review §11a): unregistered_at
+-- alone doesn't catch an instance that stopped polling without a clean
+-- unregister -- it would otherwise keep contributing a months-stale
+-- attribute blob to org-wide matching/previews forever. Reuses the
+-- lifecycle sweeper's own staleness signal (Sweeper.sweep ->
+-- MarkStaleInstancesInactive, internal/agentapi/sweeper.go) rather than a
+-- second, independently-tuned last_seen cutoff here -- same filter shape
+-- CountActiveInstances already uses in this file for the same "is this
+-- instance actually live" question.
 SELECT DISTINCT ON (ci.collector_id) ci.collector_id, ci.local_attributes
 FROM collector_instances ci
 JOIN collectors c ON c.id = ci.collector_id
 JOIN clusters cl ON cl.id = c.cluster_id
 WHERE cl.org_id = $1
   AND ci.unregistered_at IS NULL
+  AND (ci.remote_config_status IS NULL OR ci.remote_config_status != 'inactive')
 ORDER BY ci.collector_id, ci.last_seen DESC NULLS LAST;
 
 -- name: ListCollectorInstancesByCollector :many

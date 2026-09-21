@@ -1171,7 +1171,10 @@ func (s *PipelineService) stage3Check(ctx context.Context, p sqlc.Pipeline, orgI
 	if err != nil {
 		return fmt.Errorf("loading collectors: %w", err)
 	}
-	org, _ := s.store.Queries.GetOrgByID(ctx, orgID) //nolint:errcheck // an org lookup failure degrades to no admin labels below, not a Stage 3 failure
+	org, orgErr := s.store.Queries.GetOrgByID(ctx, orgID)
+	if orgErr != nil {
+		logOrgLookupFailure(s.logger, "stage3_check", orgID, orgErr)
+	}
 	localAttrs := localAttrsByOrg(ctx, s.store.Queries, orgID, org.AllowLocalAttributeMatching)
 
 	// Assemble merged content for every collector; deduplicate by sha256 hash.
@@ -1270,7 +1273,10 @@ func (s *PipelineService) previewMatchedCollectors(ctx context.Context, p merge.
 	if err != nil {
 		return nil, err
 	}
-	org, _ := s.store.Queries.GetOrgByID(ctx, orgID) //nolint:errcheck // an org lookup failure degrades to no admin labels below
+	org, orgErr := s.store.Queries.GetOrgByID(ctx, orgID)
+	if orgErr != nil {
+		logOrgLookupFailure(s.logger, "preview_matched_collectors_pipeline", orgID, orgErr)
+	}
 	localAttrs := localAttrsByOrg(ctx, s.store.Queries, orgID, org.AllowLocalAttributeMatching)
 	var matched []map[string]string
 	for i := range collectors {
@@ -1302,7 +1308,10 @@ func (s *PipelineService) recomputeOrgCaches(ctx context.Context, orgID pgtype.U
 		s.logger.Warn("recomputeOrgCaches: listing collectors failed", "err", err)
 		return
 	}
-	org, _ := s.store.Queries.GetOrgByID(ctx, orgID) //nolint:errcheck // an org lookup failure degrades to no admin labels below
+	org, orgErr := s.store.Queries.GetOrgByID(ctx, orgID)
+	if orgErr != nil {
+		logOrgLookupFailure(s.logger, "recompute_org_caches", orgID, orgErr)
+	}
 	localAttrs := localAttrsByOrg(ctx, s.store.Queries, orgID, org.AllowLocalAttributeMatching)
 	// The dirty generation of every cache row, read BEFORE the pipelines are
 	// loaded: UpsertServeCacheConditional is a compare-and-swap on it, so a
