@@ -98,6 +98,15 @@ func (r *certReloader) ClientCAs() *x509.CertPool {
 // newCertReloader (initial load) and by internal/cli/serve.go's SIGHUP
 // handler (forced reload on operator request); Run calls it only after
 // statChanged reports a difference.
+//
+// The certificate and the client-CA bundle are reloaded as two independent
+// steps, each keeping its own last-good value on failure — not one
+// all-or-nothing unit. They used to be coupled: a transient or corrupt
+// client_ca_file failure aborted the whole Reload before the certificate was
+// ever stored, so a perfectly good certificate rotation was silently
+// discarded right along with the CA bundle it had nothing to do with. Now a
+// CA-bundle failure is reported (see the returned error) but never blocks an
+// otherwise-valid certificate from taking effect.
 func (r *certReloader) Reload() error {
 	r.mu.Lock()
 	defer r.mu.Unlock()
@@ -118,40 +127,37 @@ func (r *certReloader) Reload() error {
 	}
 	cert.Leaf = leaf
 
-	var pool *x509.CertPool
-	if r.caFile != "" {
-		pemBytes, err := os.ReadFile(r.caFile)
-		if err != nil {
-			metrics.TLSCertReloadsTotal.WithLabelValues("failure").Inc()
-			return fmt.Errorf("reading client CA file: %w", err)
-		}
-		pool = x509.NewCertPool()
-		if ok := pool.AppendCertsFromPEM(pemBytes); !ok {
-			metrics.TLSCertReloadsTotal.WithLabelValues("failure").Inc()
-			return fmt.Errorf("no certificates found in %s", r.caFile)
-		}
-	}
-
+	// The certificate is known-good: store and stamp it now, independent of
+	// whatever happens with the client-CA bundle below.
 	r.cert.Store(&cert)
-	if pool != nil {
-		r.caPool.Store(pool)
-	}
-	// Stamps are refreshed here (not just before Reload runs) so that a
-	// forced Reload — SIGHUP or the initial load — leaves Run's next poll
-	// tick with nothing to do, rather than reloading the same unchanged
-	// files a second time.
 	if s, err := statStamp(r.certFile); err == nil {
 		r.lastCert = s
 	}
 	if s, err := statStamp(r.keyFile); err == nil {
 		r.lastKey = s
 	}
+	metrics.TLSCertNotAfter.Set(float64(leaf.NotAfter.Unix()))
+
+	var caErr error
 	if r.caFile != "" {
-		if s, err := statStamp(r.caFile); err == nil {
-			r.lastCA = s
+		if pemBytes, err := os.ReadFile(r.caFile); err != nil {
+			caErr = fmt.Errorf("reading client CA file: %w", err)
+		} else {
+			pool := x509.NewCertPool()
+			if ok := pool.AppendCertsFromPEM(pemBytes); !ok {
+				caErr = fmt.Errorf("no certificates found in %s", r.caFile)
+			} else {
+				r.caPool.Store(pool)
+				if s, err := statStamp(r.caFile); err == nil {
+					r.lastCA = s
+				}
+			}
 		}
 	}
-	metrics.TLSCertNotAfter.Set(float64(leaf.NotAfter.Unix()))
+	if caErr != nil {
+		metrics.TLSCertReloadsTotal.WithLabelValues("failure").Inc()
+		return fmt.Errorf("certificate reloaded, but the client CA bundle was not (kept the last good one): %w", caErr)
+	}
 	metrics.TLSCertReloadsTotal.WithLabelValues("success").Inc()
 	return nil
 }
@@ -212,7 +218,10 @@ func (r *certReloader) pollOnce(logger *slog.Logger) {
 		return
 	}
 	if err := r.Reload(); err != nil {
-		logger.Warn("TLS certificate reload failed; continuing to serve the last good certificate", "err", err)
+		// err may report only a client-CA bundle problem — the certificate
+		// itself can have rotated fine in the same call (see Reload's
+		// comment), so this is not always "nothing changed."
+		logger.Warn("TLS reload had a problem; each of the certificate and client-CA bundle keeps whichever it last loaded successfully", "err", err)
 		return
 	}
 	logger.Info("TLS certificate reloaded")

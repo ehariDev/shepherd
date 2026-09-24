@@ -184,11 +184,16 @@ kubectl -n shepherd port-forward svc/shepherd 8080:8080</code></pre>
       </p>
       <p>
         A private CA needs trusting on both ends. <code>tls.collectorCA.secretName</code> mounts it and
-        wires <code>server.tls.collector_ca_file</code>, which is what makes the beacon's own served
-        pipeline trust it &mdash; see the <a href="collectors.html#tls">collectors page</a> for what a
-        collector's own <code>remotecfg</code> block needs added by hand, since Shepherd cannot inject
-        that one. mTLS (<code>server.tls.client_auth</code>), the certificate's minimum TLS version, and
-        the reload interval are set through <code>config.server.tls.*</code> directly &mdash; see
+        sets <code>server.tls.collector_ca_file</code> in Shepherd's own config &mdash; that part is
+        shipped. <strong>Not shipped yet:</strong> Shepherd reading that value back out and actually
+        injecting it into the beacon's served pipeline is a separate, not-yet-built piece (blocked on a
+        maintainer's sign-off, since it changes served-config content); see the
+        <a href="https://github.com/procoduck/shepherd/blob/main/CHANGELOG.md">changelog</a> for current
+        status before relying on it. Either way, a collector's own <code>remotecfg</code> block needs
+        its <code>tls_config</code> added by hand &mdash; see the
+        <a href="collectors.html#tls">collectors page</a> &mdash; since Shepherd cannot inject that one
+        regardless. mTLS (<code>server.tls.client_auth</code>), the certificate's minimum TLS version,
+        and the reload interval are set through <code>config.server.tls.*</code> directly &mdash; see
         <a href="configuration.html#tls">Configuration</a> for the full key list.
       </p>
 
