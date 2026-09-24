@@ -104,6 +104,34 @@ func SanitizeName(name string) string {
 	return r
 }
 
+// CompileMatchers parses each raw Alertmanager-style matcher string, returning
+// the compiled matchers or the first parse error. The error is wrapped
+// exactly as validateSaveInput's historical inline loop did
+// (internal/mgmtapi/rpc_pipeline.go), so callers mapping this error to
+// CodeInvalidArgument see unchanged text.
+func CompileMatchers(raw []string) ([]*labels.Matcher, error) {
+	compiled := make([]*labels.Matcher, 0, len(raw))
+	for _, ms := range raw {
+		m, err := labels.ParseMatcher(ms)
+		if err != nil {
+			return nil, fmt.Errorf("matcher %q is not valid: %w", ms, err)
+		}
+		compiled = append(compiled, m)
+	}
+	return compiled, nil
+}
+
+// matchesCompiled reports whether every pre-compiled matcher matches cl (AND).
+func matchesCompiled(matchers []*labels.Matcher, cl CollectorLabels) bool {
+	for _, m := range matchers {
+		v := cl.Labels[m.Name]
+		if !m.Matches(v) {
+			return false
+		}
+	}
+	return true
+}
+
 // MatchesPipeline reports whether the pipeline matches the collector label set.
 // Git pipelines are matched by collector ID, not by label matchers.
 // UI/wizard pipelines with zero matchers match nothing.
@@ -114,17 +142,11 @@ func MatchesPipeline(p Pipeline, cl CollectorLabels) (bool, error) {
 	if len(p.Matchers) == 0 {
 		return false, nil
 	}
-	for _, ms := range p.Matchers {
-		m, err := labels.ParseMatcher(ms)
-		if err != nil {
-			return false, fmt.Errorf("parsing matcher %q: %w", ms, err)
-		}
-		v := cl.Labels[m.Name]
-		if !m.Matches(v) {
-			return false, nil
-		}
+	compiled, err := CompileMatchers(p.Matchers)
+	if err != nil {
+		return false, err
 	}
-	return true, nil
+	return matchesCompiled(compiled, cl), nil
 }
 
 // AssembleResult is the output of the merge engine for a single collector.
@@ -151,61 +173,73 @@ func Assemble(collectorID, collectorDisplayName string, cl CollectorLabels, pipe
 		opt(&cfg)
 	}
 
-	// Select pipelines.
-	var selected []Pipeline
-	// Pipelines whose matchers could not be parsed. Reported like role
-	// exclusions rather than aborting the assembly -- see below.
-	var unmatchable []Exclusion
-	for _, p := range pipelines {
-		if p.Source == "git" {
-			if p.RepoLinkCollectorID == cl.CollectorID {
-				selected = append(selected, p)
-			}
-			continue
-		}
-		matched, err := MatchesPipeline(p, cl)
-		if err != nil {
-			// One unparsable matcher used to abort the whole assembly, which
-			// meant a single bad pipeline froze config serving for every
-			// collector in the org -- and, for a collector with no cache row
-			// yet, produced an EMPTY served config that wiped what it was
-			// already running. Exclude just the offender and say so in the
-			// header, the same way role enforcement reports its exclusions.
-			// Matchers are also parsed at save now, so reaching this means the
-			// row predates that check or was written outside the API.
-			unmatchable = append(unmatchable, Exclusion{
-				PipelineName: p.Name,
-				Reason:       fmt.Sprintf("unparsable matcher, excluded: %v", err),
-			})
-			continue
-		}
-		if matched {
-			selected = append(selected, p)
-		}
-	}
-
-	// Stable sort: git pipelines first (already filtered above into selected in
-	// pipeline order), then ui/wizard pipelines by name.
-	// Re-sort all by name for full determinism.
-	slices.SortStableFunc(selected, func(a, b Pipeline) int {
-		return strings.Compare(a.Name, b.Name)
-	})
-
 	if cfg.enforcementRequested && cfg.registry == nil {
 		return AssembleResult{}, errors.New(
 			"merge: role enforcement was requested but the schema registry is nil — " +
 				"refusing to serve unenforced config that would look enforced")
 	}
-	// Both exclusion sources reach the header: unparsable matchers were
-	// collected above, role mismatches come from enforceRoles. Append, never
-	// replace — a broken matcher must stay visible in the served header even
-	// when role enforcement is on (which is every production deployment).
-	exclusions := unmatchable
+
+	var selected []Pipeline
+	var exclusions []Exclusion
+
 	if cfg.registry != nil {
-		var roleExclusions []Exclusion
-		selected, roleExclusions = enforceRoles(selected, cl, cfg.registry)
-		exclusions = append(exclusions, roleExclusions...)
+		// Enforced path: Evaluate is the single decision point (match, then
+		// derive signals, then enforce role) that reconcileServed and the
+		// matcher preview handler also call — see
+		// docs/plans/2026-09-24-matcher-targeting-unified-plan.md §0 item 4 —
+		// so this can no longer drift from them the way the old two-pass
+		// select-then-enforceRoles split once did.
+		for _, p := range pipelines {
+			result, evalErr := Evaluate(p, cl, cfg.registry)
+			switch {
+			case result.Served:
+				selected = append(selected, p)
+			case evalErr != nil:
+				// Matched-but-excluded (role/signal mismatch, signal
+				// derivation failure) or unparsable-matcher: worth a header
+				// line. An ordinary non-match or a zero-matcher pipeline
+				// (evalErr == nil) needs none — same as before this change.
+				exclusions = append(exclusions, Exclusion{PipelineName: p.Name, Reason: evalErr.Error()})
+			}
+		}
+	} else {
+		// Unenforced: matcher/collector-ID selection only, no signal/role
+		// check (Assemble's pre-W1 behavior). Still relied on by gitsync's
+		// dry-run validation, which has no schema registry to enforce with.
+		for _, p := range pipelines {
+			if p.Source == "git" {
+				if p.RepoLinkCollectorID == cl.CollectorID {
+					selected = append(selected, p)
+				}
+				continue
+			}
+			matched, err := MatchesPipeline(p, cl)
+			if err != nil {
+				// One unparsable matcher used to abort the whole assembly, which
+				// meant a single bad pipeline froze config serving for every
+				// collector in the org -- and, for a collector with no cache row
+				// yet, produced an EMPTY served config that wiped what it was
+				// already running. Exclude just the offender and say so in the
+				// header, the same way role enforcement reports its exclusions.
+				// Matchers are also parsed at save now, so reaching this means the
+				// row predates that check or was written outside the API.
+				exclusions = append(exclusions, Exclusion{
+					PipelineName: p.Name,
+					Reason:       fmt.Sprintf("unparsable matcher, excluded: %v", err),
+				})
+				continue
+			}
+			if matched {
+				selected = append(selected, p)
+			}
+		}
 	}
+
+	// Stable sort: selection order above mixes git and ui/wizard pipelines in
+	// input order — re-sort all by name for full determinism.
+	slices.SortStableFunc(selected, func(a, b Pipeline) int {
+		return strings.Compare(a.Name, b.Name)
+	})
 
 	if len(selected) == 0 {
 		// Empty config (nothing matched, or role enforcement excluded everything that did).

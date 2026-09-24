@@ -1,11 +1,9 @@
 package merge
 
 import (
-	"fmt"
 	"strings"
 
 	"shepherd/internal/schema"
-	"shepherd/internal/signals"
 )
 
 // Exclusion records one pipeline that matched a collector's labels but was
@@ -73,68 +71,6 @@ func WithRoleEnforcement(reg *schema.Registry) AssembleOption {
 		c.registry = reg
 		c.enforcementRequested = true
 	}
-}
-
-// enforceRoles filters selected (already label/matcher-matched) pipelines by
-// signals.Enforce against the collector's role, returning the pipelines that
-// pass and a record of every exclusion, in selected's order.
-//
-// Unproven signal sets (Signals.Proven() == false — an unrecognized
-// top-level component, or, only if internal/signals' wire-type table has
-// drifted from the pinned schema artifact, an unclassified wire type) are
-// treated as carrying every signal, never as carrying only what WAS proven.
-// Combined is a floor in that case, not the true set; checking the floor
-// against a restrictive role's allow-list would let an under-counted
-// pipeline through. This only bites roles with a real allow-list
-// (metrics/logs/receiver) — "singleton" is Unrestricted and short-circuits
-// in signals.Enforce regardless of the checked set, so an unrecognized
-// component newer than the pinned schema cannot break self-monitoring
-// pipelines just by existing. See docs/gateway-tier-plan.md §5's W1 note:
-// "must not silently downgrade a mismatch to a warning" — treating unproven
-// as safe-by-default would be exactly that downgrade in disguise.
-func enforceRoles(selected []Pipeline, cl CollectorLabels, reg *schema.Registry) ([]Pipeline, []Exclusion) {
-	role := cl.Labels["role"]
-	kept := make([]Pipeline, 0, len(selected))
-	var exclusions []Exclusion
-
-	for _, p := range selected {
-		sig, err := signals.Derive(p.Contents, reg)
-		if err != nil {
-			exclusions = append(exclusions, Exclusion{
-				PipelineName: p.Name,
-				Reason:       commentSafe(fmt.Sprintf("signal derivation failed, excluded fail-safe: %v", err)),
-			})
-			continue
-		}
-
-		checkSet := sig.Combined
-		var unprovenNote string
-		if !sig.Proven() {
-			checkSet = signals.NewSet(signals.All...)
-			unprovenNote = fmt.Sprintf(" (signal set not provable: unknown components %v, unclassified wire types %v — assumed worst-case)",
-				unknownComponentNames(sig.Unknown), sig.Unclassified)
-		}
-
-		if enforceErr := signals.Enforce(role, checkSet); enforceErr != nil {
-			exclusions = append(exclusions, Exclusion{
-				PipelineName: p.Name,
-				Reason:       commentSafe(enforceErr.Error() + unprovenNote),
-			})
-			continue
-		}
-		kept = append(kept, p)
-	}
-	return kept, exclusions
-}
-
-// unknownComponentNames extracts just the component names from a
-// []signals.UnknownComponent, for compact display in an exclusion reason.
-func unknownComponentNames(u []signals.UnknownComponent) []string {
-	names := make([]string, len(u))
-	for i, c := range u {
-		names[i] = c.Component
-	}
-	return names
 }
 
 // commentSafe collapses any embedded line break to a space. Everything the

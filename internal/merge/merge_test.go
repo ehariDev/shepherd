@@ -113,6 +113,28 @@ var _ = Describe("MatchesPipeline", func() {
 	)
 })
 
+var _ = Describe("CompileMatchers", func() {
+	It("compiles every matcher and preserves order", func() {
+		compiled, err := merge.CompileMatchers([]string{`cluster="prod-eu-1"`, `role="metrics"`})
+		Expect(err).NotTo(HaveOccurred())
+		Expect(compiled).To(HaveLen(2))
+		Expect(compiled[0].Name).To(Equal("cluster"))
+		Expect(compiled[1].Name).To(Equal("role"))
+	})
+
+	It("wraps the first parse error exactly as validateSaveInput's historical inline loop did", func() {
+		_, err := merge.CompileMatchers([]string{`cluster="prod-eu-1"`, `not a matcher`})
+		Expect(err).To(HaveOccurred())
+		Expect(err.Error()).To(HavePrefix(`matcher "not a matcher" is not valid: `))
+	})
+
+	It("returns an empty slice, not an error, for zero matchers", func() {
+		compiled, err := merge.CompileMatchers(nil)
+		Expect(err).NotTo(HaveOccurred())
+		Expect(compiled).To(BeEmpty())
+	})
+})
+
 var _ = Describe("BuildCollectorLabels", func() {
 	It("merges admin labels in alongside the built-in cluster/role labels", func() {
 		cl := merge.BuildCollectorLabels("coll-1", "prod-eu-1", "metrics", map[string]string{"team": "platform"}, nil)

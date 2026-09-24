@@ -13,7 +13,6 @@ import (
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/jackc/pgx/v5/pgtype"
-	"github.com/prometheus/alertmanager/pkg/labels"
 	"google.golang.org/protobuf/encoding/protojson"
 	"google.golang.org/protobuf/types/known/structpb"
 
@@ -448,11 +447,8 @@ func (s *PipelineService) validateSaveInput(ctx context.Context, in pipelineSave
 	// never fail, so errMatchersInvalid was unreachable and an unparsable
 	// matcher was accepted with a 200 -- surfacing only later, at merge time,
 	// where it used to abort assembly for the whole org.
-	for _, m := range in.Matchers {
-		if _, perr := labels.ParseMatcher(m); perr != nil {
-			return nil, connect.NewError(connect.CodeInvalidArgument,
-				fmt.Errorf("matcher %q is not valid: %w", m, perr))
-		}
+	if _, perr := merge.CompileMatchers(in.Matchers); perr != nil {
+		return nil, connect.NewError(connect.CodeInvalidArgument, perr)
 	}
 
 	matchersJSON, err := json.Marshal(in.Matchers)
