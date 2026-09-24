@@ -132,7 +132,8 @@ export type Collector = Message<"shepherd.mgmt.v1.Collector"> & {
   instances: CollectorInstance[];
 
   /**
-   * UI-managed grouping labels, independent of Alloy attributes and pipeline matching.
+   * UI-managed grouping labels. Participate in pipeline matching when the
+   * org has allow_label_matching enabled (see internal/merge.BuildCollectorLabels).
    *
    * @generated from field: map<string, string> labels = 12;
    */
