@@ -61,6 +61,17 @@ archives:
     ids: [shepherd, shepherd-simulator]
     formats: [tar.gz]
     name_template: "{{ .ProjectName }}_{{ .Version }}_{{ .Os }}_{{ .Arch }}"
+    # The systemd unit + example config/env, so a bare-metal/VM install
+    # never has to clone the repo just to get deploy/systemd/* -- see the
+    # Linux service docs page. LICENSE/README.md are goreleaser's own
+    # archive defaults; listed explicitly so this whole set doesn't depend
+    # on that default staying the same across a goreleaser upgrade.
+    files:
+      - deploy/systemd/shepherd.service
+      - deploy/systemd/shepherd.yaml.example
+      - deploy/systemd/shepherd.env.example
+      - LICENSE
+      - README.md
   # The MCP archive: the client-side binary, per desktop OS/arch. Windows ships
   # as a zip (the platform convention) with the usual .exe.
   - id: mcp

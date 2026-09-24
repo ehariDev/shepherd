@@ -20,7 +20,7 @@
       <h2 id="tls">Over HTTPS</h2>
       <p>
         When Shepherd terminates TLS itself (<a href="kubernetes.html#tls">Kubernetes</a> or a
-        bare-metal/VM install running as a systemd service), point <code>remotecfg</code> at the HTTPS
+        <a href="linux-service.html">bare-metal/VM systemd install</a>), point <code>remotecfg</code> at the HTTPS
         URL and add a <code>tls_config</code> block if the certificate was issued by a private CA —
         the same thing your browser's trust store handles for you, spelled out for the collector
         instead:

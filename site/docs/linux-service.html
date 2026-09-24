@@ -1,0 +1,334 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Linux service (systemd) &mdash; Shepherd docs</title>
+<meta name="description" content="Run Shepherd as a systemd service on RHEL 8/9 or a compatible rebuild, from the released server tarball.">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;650;700&amp;family=JetBrains+Mono:wght@400;500;600&amp;display=swap" rel="stylesheet">
+<link rel="stylesheet" href="../styles.css">
+</head>
+<body>
+
+<nav class="nav">
+  <div class="wrap">
+    <a class="brand" href="../index.html">
+      <svg width="22" height="22" viewBox="0 0 24 24" fill="none" aria-hidden="true">
+        <path d="M12 2.5 4 6v6c0 5.2 3.4 9.4 8 10.5 4.6-1.1 8-5.3 8-10.5V6l-8-3.5Z" stroke="var(--accent)" stroke-width="1.6" stroke-linejoin="round"/>
+        <path d="M8.5 12.2 11 14.7l4.8-5" stroke="var(--accent)" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/>
+      </svg>
+      Shepherd
+    </a>
+    <div class="nav-links">
+      <a href="../index.html#features">Features</a>
+      <a href="../index.html#architecture">Architecture</a>
+      <a href="index.html">Docs</a>
+      <a class="btn btn-outline" href="https://github.com/procoduck/shepherd">GitHub</a>
+    </div>
+  </div>
+</nav>
+
+<div class="docs-body">
+  <div class="wrap docs-shell">
+<aside class="docs-nav" id="docs-nav">
+  <p class="docs-nav-label">Documentation</p>
+  <p class="docs-nav-cat">Get started</p>
+  <ul>
+    <li><a href="quickstart.html">Quickstart</a></li>
+  </ul>
+  <p class="docs-nav-cat">About</p>
+  <ul>
+    <li><a href="overview.html">What Shepherd is</a></li>
+    <li><a href="roles.html">Roles and access</a></li>
+  </ul>
+  <p class="docs-nav-cat">Install</p>
+  <ul>
+    <li><a href="requirements.html">Requirements</a></li>
+    <li><a href="kubernetes.html">Kubernetes (Helm)</a></li>
+    <li><a href="linux-service.html" class="active" aria-current="page">Linux service (systemd)</a></li>
+    <li><a href="database.html">Database</a></li>
+    <li><a href="secrets.html">Secrets</a></li>
+    <li><a href="configuration.html">Configuration</a></li>
+    <li><a href="local-development.html">Running from source</a></li>
+  </ul>
+  <p class="docs-nav-cat">Fleet</p>
+  <ul>
+    <li><a href="agent-tokens.html">Agent tokens</a></li>
+    <li><a href="collectors.html">Connect a collector</a></li>
+  </ul>
+  <p class="docs-nav-cat">Pipelines</p>
+  <ul>
+    <li><a href="authoring.html">Authoring pipelines</a></li>
+    <li><a href="matchers.html">Matchers and validation</a></li>
+    <li><a href="gitops.html">GitOps</a></li>
+  </ul>
+  <p class="docs-nav-cat">Access control</p>
+  <ul>
+    <li><a href="single-sign-on.html">Single sign-on</a></li>
+    <li><a href="users-and-teams.html">Users and teams</a></li>
+  </ul>
+  <p class="docs-nav-cat">Sandbox</p>
+  <ul>
+    <li><a href="simulation.html">Sandbox simulation</a></li>
+  </ul>
+  <p class="docs-nav-cat">Automation</p>
+  <ul>
+    <li><a href="mcp.html">AI agent (MCP)</a></li>
+  </ul>
+  <p class="docs-nav-cat">Reference</p>
+  <ul>
+    <li><a href="helm-values.html">Helm values</a></li>
+    <li><a href="resources.html">Further reading</a></li>
+  </ul>
+</aside>
+
+    <div class="docs-main">
+      <nav class="crumbs" aria-label="Breadcrumb"><a href="index.html">Docs</a><span aria-hidden="true">/</span><span>Install</span><span aria-hidden="true">/</span><span class="crumb-here">Linux service (systemd)</span></nav>
+      <div class="docs-content">
+<h1>Linux service (systemd)</h1>
+      <p>
+        Shepherd runs equally well as a plain systemd service &mdash; no Kubernetes required. This
+        page targets <strong>RHEL 8/9</strong> and compatible rebuilds (Rocky Linux, AlmaLinux, Oracle
+        Linux); the unit itself is portable systemd and works unmodified on other distributions, but
+        the package-manager and SELinux/firewalld steps below are RHEL-specific.
+      </p>
+      <p class="note">
+        <strong>Download the <code>server</code> tarball from a
+        <a href="https://github.com/procoduck/shepherd/releases">release</a>.</strong> It ships
+        <code>shepherd</code>, <code>shepherd-simulator</code>, the systemd unit and both example
+        config files under <code>deploy/systemd/</code>.
+      </p>
+
+      <h2 id="user">1. Create the service account</h2>
+      <div class="code-block" data-lang="shell">
+        <div class="code-head"><span>shell</span><button class="copy-btn" type="button">Copy</button></div>
+        <pre><code>useradd --system --no-create-home --shell /sbin/nologin shepherd</code></pre>
+      </div>
+
+      <h2 id="binary">2. Install the binary</h2>
+      <div class="code-block" data-lang="shell">
+        <div class="code-head"><span>shell</span><button class="copy-btn" type="button">Copy</button></div>
+        <pre><code>install -o root -g root -m 0755 shepherd /usr/local/bin/shepherd
+restorecon -v /usr/local/bin/shepherd</code></pre>
+      </div>
+      <p class="note">
+        <strong>SELinux ports need no extra step here.</strong> Run from <code>/usr/local/bin</code>,
+        Shepherd's process type is the generic <code>unconfined_service_t</code>, which may bind any
+        port &mdash; unlike an httpd-labelled process, there is no <code>semanage port -a</code> to
+        run. Confirm with <code>ausearch -m AVC -ts recent</code> after your first start; a clean
+        result there is the actual proof, not this note.
+      </p>
+
+      <h2 id="alloy">3. Install Alloy</h2>
+      <p>Stage 2 of pipeline validation execs the <code>alloy</code> binary. Without it, every
+      validation reports <em>skipped</em>, not <em>valid</em> &mdash; silently weaker, not broken.
+      Install it from Grafana's own repository:</p>
+      <div class="code-block" data-lang="shell">
+        <div class="code-head"><span>shell</span><button class="copy-btn" type="button">Copy</button></div>
+        <pre><code>cat &gt; /etc/yum.repos.d/grafana.repo &lt;&lt;'EOF'
+[grafana]
+name=grafana
+baseurl=https://rpm.grafana.com
+repo_gpgcheck=1
+enabled=1
+gpgcheck=1
+gpgkey=https://rpm.grafana.com/gpg.key
+EOF
+dnf install -y alloy</code></pre>
+      </div>
+      <p>Point <code>validate.alloy_binary</code> in <code>shepherd.yaml</code> at
+      <code>/usr/bin/alloy</code> (dnf's default install path). Match the version to
+      <code>ALLOY_IMAGE</code>/<code>ALLOY_VERSION</code> in the release's
+      <code>deploy/versions.env</code> &mdash; Stage 2 is only meaningful against the same Alloy your
+      fleet actually runs.</p>
+
+      <h2 id="postgres">4. PostgreSQL 16</h2>
+      <p>On RHEL 8/9, PostgreSQL ships as an AppStream module with several stream versions available
+      side by side &mdash; pick 16 explicitly, since the module's own default is usually older:</p>
+      <div class="code-block" data-lang="shell">
+        <div class="code-head"><span>shell</span><button class="copy-btn" type="button">Copy</button></div>
+        <pre><code>dnf module enable -y postgresql:16
+dnf install -y postgresql-server
+postgresql-setup --initdb
+systemctl enable --now postgresql</code></pre>
+      </div>
+      <p class="note">
+        <strong>RHEL 10 dropped AppStream modularity</strong> &mdash; there <code>dnf install
+        postgresql-server</code> alone installs 16 directly, no <code>module enable</code> step.
+        If you are on the PGDG repository instead of the distribution's own package, follow
+        <a href="https://www.postgresql.org/download/linux/redhat/">PostgreSQL's own RHEL
+        instructions</a> in place of the two commands above; everything from
+        <code>SHEPHERD_DATABASE_URL</code> onward is unaffected either way.
+      </p>
+      <p>Create the role and database, then set the connection string in
+      <code>shepherd.env</code> (never in <code>shepherd.yaml</code> &mdash; see
+      <a href="#config">Configuration files</a> below):</p>
+      <div class="code-block" data-lang="shell">
+        <div class="code-head"><span>shell</span><button class="copy-btn" type="button">Copy</button></div>
+        <pre><code>sudo -u postgres psql -c "CREATE USER shepherd WITH PASSWORD '&lt;choose-one&gt;';"
+sudo -u postgres psql -c "CREATE DATABASE shepherd OWNER shepherd;"</code></pre>
+      </div>
+
+      <h2 id="certificates">5. Certificates</h2>
+      <p>RHEL's own PKI layout, which the shipped unit and example config both assume:</p>
+      <table>
+        <thead><tr><th>Path</th><th>Owner</th><th>Mode</th></tr></thead>
+        <tbody>
+          <tr><td><code>/etc/pki/tls/certs/shepherd.crt</code></td><td><code>root:root</code></td><td><code>0644</code></td></tr>
+          <tr><td><code>/etc/pki/tls/private/shepherd.key</code></td><td><code>root:shepherd</code></td><td><code>0640</code></td></tr>
+        </tbody>
+      </table>
+      <div class="code-block" data-lang="shell">
+        <div class="code-head"><span>shell</span><button class="copy-btn" type="button">Copy</button></div>
+        <pre><code>chown root:shepherd /etc/pki/tls/private/shepherd.key
+chmod 640 /etc/pki/tls/private/shepherd.key
+restorecon -Rv /etc/pki/tls</code></pre>
+      </div>
+      <p class="note warn">
+        <strong>A certificate copied in from a home directory keeps <code>user_home_t</code> and
+        will be denied</strong> even with the file permissions above correct &mdash; SELinux checks
+        the type, not just the Unix mode bits. <code>restorecon -Rv /etc/pki/tls</code> after copying
+        anything in relabels it to <code>cert_t</code>, the type <code>/etc/pki/tls</code> already
+        carries by default.
+      </p>
+
+      <h2 id="renewal">6. Renewal</h2>
+      <p>Shepherd's certificate hot-reload (polling every <code>server.tls.reload_interval</code>,
+      default 30s, plus <code>systemctl reload shepherd</code> for an immediate one) means a renewal
+      hook only needs to <em>replace the files</em> &mdash; no coordination with Shepherd's process
+      beyond that.</p>
+      <p><strong>certmonger</strong> (IdM/FreeIPA-issued certificates):</p>
+      <div class="code-block" data-lang="shell">
+        <div class="code-head"><span>shell</span><button class="copy-btn" type="button">Copy</button></div>
+        <pre><code>getcert request -f /etc/pki/tls/certs/shepherd.crt -k /etc/pki/tls/private/shepherd.key \
+  -C "systemctl reload shepherd"</code></pre>
+      </div>
+      <p><strong>certbot</strong> (Let's Encrypt or another ACME CA):</p>
+      <div class="code-block" data-lang="shell">
+        <div class="code-head"><span>shell</span><button class="copy-btn" type="button">Copy</button></div>
+        <pre><code>certbot certonly --deploy-hook "systemctl reload shepherd" ...</code></pre>
+      </div>
+      <p>Neither hook is strictly required: the poll alone picks up a renewed file within
+      <code>reload_interval</code>, so a renewal tool with no hook support still works, just not
+      instantly.</p>
+
+      <h2 id="firewalld">7. firewalld</h2>
+      <div class="code-block" data-lang="shell">
+        <div class="code-head"><span>shell</span><button class="copy-btn" type="button">Copy</button></div>
+        <pre><code>firewall-cmd --permanent --add-port=8443/tcp
+firewall-cmd --reload</code></pre>
+      </div>
+
+      <h2 id="crypto-policies">8. crypto-policies and FIPS</h2>
+      <p>
+        <strong>Go does not read RHEL's system-wide crypto-policies</strong> (<code>update-crypto-policies</code>).
+        <code>server.tls.min_version</code> is Shepherd's own, independent control; the default,
+        TLS 1.2, is already within RHEL's <code>DEFAULT</code> policy, so there is nothing to
+        reconcile in the common case.
+      </p>
+      <p class="note warn">
+        <strong>FIPS 140-3 mode is documented as untested, not unsupported.</strong> Go's native FIPS
+        mode can be requested with <code>Environment=GODEBUG=fips140=on</code> in the unit, but this
+        has not been validated end to end on a FIPS-enabled host. Treat it as a starting point for
+        your own validation, not a claim.
+      </p>
+
+      <h2 id="collector-trust">9. Trust on collectors</h2>
+      <p>
+        A collector's Alloy needs to trust whatever issued Shepherd's certificate. Either trust it at
+        the OS level, or point <code>remotecfg</code> at it directly &mdash; see
+        <a href="collectors.html#tls">Connect a collector</a> for the <code>tls_config</code> block.
+      </p>
+      <div class="code-block" data-lang="shell">
+        <div class="code-head"><span>shell</span><button class="copy-btn" type="button">Copy</button></div>
+        <pre><code># OS-level trust (private CA), on the collector host:
+cp private-ca.pem /etc/pki/ca-trust/source/anchors/
+update-ca-trust</code></pre>
+      </div>
+
+      <h2 id="config">10. Configuration files</h2>
+      <p>Install both example files from the tarball's <code>deploy/systemd/</code>, filled in:</p>
+      <table>
+        <thead><tr><th>File</th><th>Owner / mode</th><th>Holds</th></tr></thead>
+        <tbody>
+          <tr><td><code>/etc/shepherd/shepherd.yaml</code></td><td><code>root:shepherd</code>, <code>0640</code></td><td>Everything non-secret &mdash; <code>server.tls.*</code>, <code>validate.alloy_binary</code>, and so on. See <a href="configuration.html">Configuration</a> for the full key list.</td></tr>
+          <tr><td><code>/etc/shepherd/shepherd.env</code></td><td><code>root:shepherd</code>, <code>0640</code></td><td><code>SHEPHERD_DATABASE_URL</code>, <code>SHEPHERD_SECURITY_ENCRYPTION_KEY</code>, <code>SHEPHERD_BOOTSTRAP_ADMIN_PASSWORD</code> &mdash; never in the YAML file.</td></tr>
+        </tbody>
+      </table>
+
+      <h2 id="install">11. Install and start the unit</h2>
+      <div class="code-block" data-lang="shell">
+        <div class="code-head"><span>shell</span><button class="copy-btn" type="button">Copy</button></div>
+        <pre><code>cp deploy/systemd/shepherd.service /etc/systemd/system/shepherd.service
+systemctl daemon-reload
+systemctl enable --now shepherd</code></pre>
+      </div>
+      <p>
+        <code>ExecStartPre</code> runs <code>shepherd migrate up</code> before every start, so the
+        schema is always current before <code>serve</code> begins &mdash; the same ordering the Helm
+        chart's migration Job gives you.
+      </p>
+
+      <h2 id="verifying">12. Verifying</h2>
+      <div class="code-block" data-lang="shell">
+        <div class="code-head"><span>shell</span><button class="copy-btn" type="button">Copy</button></div>
+        <pre><code>systemctl status shepherd
+shepherd healthcheck --tls --insecure-skip-verify --addr localhost:8443
+journalctl -u shepherd -f
+
+# Certificate rotation without a restart:
+systemctl reload shepherd
+journalctl -u shepherd -n 5   # look for "SIGHUP: TLS certificate reloaded"</code></pre>
+      </div>
+      <p class="note">
+        <strong><code>--insecure-skip-verify</code> is for exactly this case</strong> &mdash; a
+        localhost check against a certificate whose SAN is the public hostname, not localhost.
+        Supply <code>--ca-file</code> instead once you have one, or omit both flags entirely and let
+        the system trust store decide, the same as any other HTTPS client.
+      </p>
+        <nav class="page-nav" aria-label="Pagination">
+          <a class="page-nav-prev" href="kubernetes.html"><span>Previous</span><strong>Kubernetes (Helm)</strong></a>
+          <a class="page-nav-next" href="database.html"><span>Next</span><strong>Database</strong></a>
+        </nav>
+      </div>
+    </div>
+
+    <aside class="docs-toc">
+      <p class="toc-label">On this page</p>
+      <ul>
+        <li><a href="#user">1. Create the service account</a></li>
+        <li><a href="#binary">2. Install the binary</a></li>
+        <li><a href="#alloy">3. Install Alloy</a></li>
+        <li><a href="#postgres">4. PostgreSQL 16</a></li>
+        <li><a href="#certificates">5. Certificates</a></li>
+        <li><a href="#renewal">6. Renewal</a></li>
+        <li><a href="#firewalld">7. firewalld</a></li>
+        <li><a href="#crypto-policies">8. crypto-policies and FIPS</a></li>
+        <li><a href="#collector-trust">9. Trust on collectors</a></li>
+        <li><a href="#config">10. Configuration files</a></li>
+        <li><a href="#install">11. Install and start the unit</a></li>
+        <li><a href="#verifying">12. Verifying</a></li>
+      </ul>
+    </aside>
+  </div>
+</div>
+
+<footer>
+  <div class="wrap">
+    <div class="foot-left">
+      <span class="pill">v0.10.0</span>
+      <span>self-hosted Grafana Alloy fleet manager</span>
+    </div>
+    <div class="foot-links">
+      <a href="https://github.com/procoduck/shepherd">GitHub</a>
+      <a href="index.html">Docs</a>
+      <a href="../index.html">Home</a>
+    </div>
+  </div>
+</footer>
+
+<script src="../docs.js" defer></script>
+</body>
+</html>

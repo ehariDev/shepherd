@@ -35,9 +35,23 @@ Categories used here:
   liveness/readiness probes to HTTPS, and optionally mounts a private collector CA
   (`tls.collectorCA`) — see [Kubernetes](https://procoduck.github.io/shepherd/docs/kubernetes.html#tls).
   Off by default (`tls.enabled: false`); the chart refuses to render `tls.enabled: true` with neither a
-  Secret nor cert-manager configured, rather than mounting nothing. A bare-metal/VM install as a RHEL
-  systemd service, and opt-in CA injection into the beacon's own served pipeline
-  (`server.tls.collector_ca_file`), are follow-on work — not shipped in this entry.
+  Secret nor cert-manager configured, rather than mounting nothing. The pre-install migration Job
+  shares its `shepherd.yaml` body with the runtime Deployment by design, so it needed the same TLS
+  Secret mount, and (for the cert-manager path) hook ordering ahead of it — found by actually
+  installing the chart against a cluster with cert-manager, not by `helm template`.
+
+  **RHEL 8/9 systemd service** (and compatible rebuilds: Rocky, AlmaLinux, Oracle Linux — the unit
+  itself is portable systemd; RHEL-specific are the package-manager and SELinux/firewalld steps).
+  `deploy/systemd/shepherd.service` + `shepherd.yaml.example` + `shepherd.env.example` ship in the
+  `server` release tarball. See
+  [Linux service (systemd)](https://procoduck.github.io/shepherd/docs/linux-service.html) for the full
+  install: the service account, Alloy from Grafana's RPM repo, PostgreSQL 16, the RHEL certificate
+  layout and SELinux relabeling, certmonger/certbot renewal hooks, and firewalld. Verified by actually
+  running the shipped unit — hardening directives included — on AlmaLinux 8 and AlmaLinux 9: migration,
+  serve, HTTPS with HTTP/2 over ALPN, and `systemctl reload` all confirmed against the real binary, not
+  just rendered. Opt-in CA injection into the beacon's own served pipeline
+  (`server.tls.collector_ca_file`) is the one piece still open — blocked on a maintainer's Ask-first
+  answer on served-config content format.
 
 - **Collector label keys are reserved against built-in matcher facts.** Groundwork for letting
   admin-set collector labels participate in pipeline matching (#139): `SetCollectorLabel` now rejects

@@ -135,16 +135,23 @@ MCP interface (W11). Each is a §4 item below.
 ### Native TLS + RHEL systemd service · see plan at project root, `2026-09-23-native-tls-plan.md`
 
 PR1 (Go core: `server.tls.*` config, cert hot-reload, ALPN-negotiated HTTP/2, `shepherd healthcheck
---tls`, and the Helm chart's `tls:` block / cert-manager support) is built and unit/chart-tested —
-see `CHANGELOG.md` Unreleased. Not yet closed: an `e2e/k8s` spec proving the chart actually installs
-and serves HTTPS against a real cluster with cert-manager (needs a new pinned dependency,
-`CERT_MANAGER_CHART_VERSION`, following the same pattern `chart_deps_test.go` uses for CNPG/External
-Secrets); the RHEL 8/9 systemd unit + install docs (PR2); and opt-in collector-CA injection into the
-beacon's served pipeline (PR3, blocked on a maintainer's Ask-first answer — served-config content
-format is a served-config hashing change per AGENTS.md). RHEL 8/9 is the hard-required target;
-SELinux-enforcing verification is a known gap on this branch's own dev machine (WSL2's kernel carries
-no SELinux LSM, confirmed against three EL distros) and needs a real VM or cloud host, independent of
-which RHEL version is targeted.
+--tls`, and the Helm chart's `tls:` block / cert-manager support) and PR2 (RHEL 8/9 systemd service:
+`deploy/systemd/`, ships in the `server` release tarball, plus the Linux service docs page) are both
+built and tested — see `CHANGELOG.md` Unreleased. Both verified against real deployments, not just
+`helm template`/unit tests: a real kind cluster with cert-manager (found and fixed a real bug this
+way — the migration Job's shared ConfigMap needed the same TLS mount and hook ordering the Deployment
+gets), and the shipped systemd unit actually running on AlmaLinux 8 and AlmaLinux 9 (1:1 RHEL 8/9
+rebuilds) with real PostgreSQL 16 and real Alloy v1.19.2 — migration, serve, HTTPS/HTTP2, and
+`systemctl reload` all confirmed. Not yet closed: an automated `e2e/k8s` spec for what was verified
+manually above (needs a new pinned dependency, `CERT_MANAGER_CHART_VERSION`, following the same
+pattern `chart_deps_test.go` uses for CNPG/External Secrets); and opt-in collector-CA injection into
+the beacon's served pipeline (PR3, blocked on a maintainer's Ask-first answer — served-config content
+format is a served-config hashing change per AGENTS.md). SELinux-enforcing behavior and firewalld's
+nftables backend are both unverified on this branch's own dev machine — not a RHEL-version gap, a WSL2
+kernel one (no SELinux LSM at all, confirmed against three EL distros; firewalld's nftables backend
+errors for the same class of reason) — a real VM or cloud RHEL 8/9 host is needed for those two
+specifically. Everything else in the unit (all hardening directives, the TLS listener, cert reload)
+does not depend on either and is verified for real.
 
 Closed features (F5 sandbox simulation, F-SIGNAL-SERVE) are in `docs/archive/completed-2026-09-11.md`.
 F-REVISIONS closed — see `CHANGELOG.md` v0.6.0 "Pipelines — Shipped"; its plan is archived at

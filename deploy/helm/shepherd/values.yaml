@@ -105,7 +105,10 @@ tls:
   # AGENTS.md "Ask first": this sub-feature changes served-config content and
   # needs a maintainer's answer before it ships (task §5.5).
   collectorCA:
+    # secretName: the Secret holding the private CA's certificate. Empty
+    # mounts nothing -- see the block comment above for what this wires.
     secretName: ""
+    # key: the key within secretName holding the CA certificate.
     key: ca.crt
   certManager:
     # enabled: let cert-manager issue and renew the certificate instead of
@@ -117,7 +120,9 @@ tls:
     # Required when certManager.enabled -- a Certificate with no issuerRef.name
     # requests nothing.
     issuerRef:
+      # name: the Issuer/ClusterIssuer's own name. Required alongside kind.
       name: ""
+      # kind: Issuer (namespace-scoped) or ClusterIssuer (cluster-scoped).
       kind: ClusterIssuer
     # dnsNames: SANs on the issued certificate, e.g.
     # ["shepherd.example.internal"]. Required alongside issuerRef.

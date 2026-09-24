@@ -47,6 +47,7 @@
   <ul>
     <li><a href="requirements.html">Requirements</a></li>
     <li><a href="kubernetes.html">Kubernetes (Helm)</a></li>
+    <li><a href="linux-service.html">Linux service (systemd)</a></li>
     <li><a href="database.html">Database</a></li>
     <li><a href="secrets.html">Secrets</a></li>
     <li><a href="configuration.html">Configuration</a></li>
@@ -158,11 +159,11 @@
           <tr><td><code>tls.secretName</code></td><td><code>&quot;&quot;</code></td><td>secretName: an existing kubernetes.io/tls Secret (keys tls.crt, tls.key) to mount read-only. Leave empty when certManager.enabled issues one for you -- the chart then uses certManager&#x27;s own secretName.</td></tr>
           <tr><td><code>tls.port</code></td><td><code>8443</code></td><td>port: what Shepherd listens on once TLS is enabled. Becomes config.server.listen AND the container/Service port -- see the block comment above for why this is the single source of truth once TLS is on.</td></tr>
           <tr><td><code>tls.minVersion</code></td><td><code>&quot;1.2&quot;</code></td><td>minVersion: &quot;1.2&quot; (default) or &quot;1.3&quot;. Feeds config.server.tls.min_version unless you set that key yourself.</td></tr>
-          <tr><td><code>tls.collectorCA.secretName</code></td><td><code>&quot;&quot;</code></td><td>&mdash;</td></tr>
-          <tr><td><code>tls.collectorCA.key</code></td><td><code>ca.crt</code></td><td>&mdash;</td></tr>
+          <tr><td><code>tls.collectorCA.secretName</code></td><td><code>&quot;&quot;</code></td><td>secretName: the Secret holding the private CA&#x27;s certificate. Empty mounts nothing -- see the block comment above for what this wires.</td></tr>
+          <tr><td><code>tls.collectorCA.key</code></td><td><code>ca.crt</code></td><td>key: the key within secretName holding the CA certificate.</td></tr>
           <tr><td><code>tls.certManager.enabled</code></td><td><code>false</code></td><td>enabled: let cert-manager issue and renew the certificate instead of bringing your own Secret. Requires cert-manager and its CRDs installed already; the chart does not install operators (same convention as cnpg.enabled / externalSecrets.enabled above).</td></tr>
-          <tr><td><code>tls.certManager.issuerRef.name</code></td><td><code>&quot;&quot;</code></td><td>&mdash;</td></tr>
-          <tr><td><code>tls.certManager.issuerRef.kind</code></td><td><code>ClusterIssuer</code></td><td>&mdash;</td></tr>
+          <tr><td><code>tls.certManager.issuerRef.name</code></td><td><code>&quot;&quot;</code></td><td>name: the Issuer/ClusterIssuer&#x27;s own name. Required alongside kind.</td></tr>
+          <tr><td><code>tls.certManager.issuerRef.kind</code></td><td><code>ClusterIssuer</code></td><td>kind: Issuer (namespace-scoped) or ClusterIssuer (cluster-scoped).</td></tr>
           <tr><td><code>tls.certManager.dnsNames</code></td><td><code>[]</code></td><td>dnsNames: SANs on the issued certificate, e.g. [&quot;shepherd.example.internal&quot;]. Required alongside issuerRef.</td></tr>
         </tbody>
       </table>

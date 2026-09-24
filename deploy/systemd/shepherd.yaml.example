@@ -1,0 +1,45 @@
+# Example /etc/shepherd/shepherd.yaml for a RHEL 8/9 (or compatible: Rocky,
+# AlmaLinux, Oracle Linux) systemd install from the released server tarball.
+# Secrets (SHEPHERD_DATABASE_URL, SHEPHERD_SECURITY_ENCRYPTION_KEY,
+# SHEPHERD_BOOTSTRAP_ADMIN_PASSWORD) do NOT go here -- this file is readable
+# by the shepherd group (see shepherd.service's 0640 root:shepherd
+# permissions note below); they go in shepherd.env.example instead.
+#
+# Install at /etc/shepherd/shepherd.yaml, owned root:shepherd, mode 0640.
+
+server:
+  # :8443 is this unit's convention, not a requirement -- match whatever you
+  # open in firewalld (see the Linux service docs page) and put in
+  # certmonger/certbot's renewal hook target.
+  listen: ":8443"
+  # The externally-reachable URL collectors and the beacon's remote-write
+  # endpoint are built against -- must be reachable from every collector,
+  # not just this host.
+  base_url: "https://shepherd.example.internal:8443"
+  tls:
+    # RHEL's own certificate layout (see the Linux service docs page for the
+    # SELinux label and permissions each of these needs):
+    cert_file: /etc/pki/tls/certs/shepherd.crt
+    key_file: /etc/pki/tls/private/shepherd.key
+    # Uncomment to trust client certificates presented by collectors or the
+    # UI's own reverse proxy, if any sits in front (plumbing only -- no
+    # identity mapping from the certificate yet):
+    # client_auth: require_and_verify
+    # client_ca_file: /etc/pki/tls/certs/client-ca.pem
+
+validate:
+  # Stage 2 pipeline validation execs this binary. Empty (the default)
+  # SKIPS Stage 2 entirely -- install Alloy from Grafana's own RPM repo
+  # first (see the Linux service docs page), or every pipeline validation
+  # silently reports "skipped" instead of catching a real error.
+  alloy_binary: /usr/bin/alloy
+  stability_level: experimental
+
+simulator:
+  # The S3 sandbox simulator runs USER-AUTHORED Alloy configuration and
+  # depends on the Kubernetes chart's containment controls (a dedicated
+  # Pod, a default-deny NetworkPolicy, dropped capabilities -- see
+  # deploy/helm/shepherd/values.yaml's simulator block) to be safe to
+  # enable at all. None of that exists on a bare systemd host, so this
+  # stays off here; there is no equivalent containment to turn on instead.
+  enabled: false
