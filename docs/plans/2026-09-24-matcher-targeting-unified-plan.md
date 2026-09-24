@@ -240,12 +240,16 @@ conflicting rules)
 
 ## 4. Security considerations
 
-1. **Enumeration oracle, existing and expanded.** Once `PreviewMatches` accepts an arbitrary draft
-   matcher set (this plan) from an `org-reader`, a reader can iterate label values across the whole org's
-   fleet — `cluster=~".+"` then binary-search on value — even for collectors their team doesn't own. This
-   is decision 10's gap. **Action:** scope the collector snapshot fed into the evaluator by the caller's
-   effective team access before Phase 3 ships the draft-preview path, not after. Add a regression test
-   asserting a Team A reader's preview response never contains a Team B-only collector.
+1. **Enumeration oracle, existing and expanded — team-scoping action RETRACTED, 2026-09-24 (see Phase 1
+   task 1.5).** Once `PreviewMatches` accepts an arbitrary draft matcher set (this plan) from an
+   `org-reader`, a reader can iterate label values across the whole org's fleet — `cluster=~".+"` then
+   binary-search on value. This is real and unaffected by the note below: it stays exactly as risky as
+   `org-reader` visibility into the org's fleet already is everywhere else in the app (the fleet page,
+   `stage3Check`, `recomputeOrgCaches` all show the same org-wide collector set to any org-reader). What
+   is **not** real: "even for collectors their team doesn't own" — investigated in task 1.5, no
+   team-to-collector ownership model exists, and no other read path in the app is team-scoped, so there is
+   no narrower set to scope down to. Do not add team-scoping to Phase 3's draft-preview path on this
+   item's authority; it was written on the same mistaken premise task 1.5 corrected.
 2. **Draft path skips the org-ownership check `loadPipeline` normally provides.** The `id=""` /
    draft-only call has no pipeline row to check ownership against. It must still validate the caller's
    `org_id` against their session (not fall back to a zero UUID the way today's handler does on a bad
@@ -424,13 +428,23 @@ anything is built on top of the duplicated logic.
   already exists on the DB row per `reconcileServed`'s own use of `repoLinkCollectorID(ep.RepoLinkCollectorID)`, `rpc_reconcile.go:105`).
   *Verify:* new test previewing a git-sourced pipeline asserts it returns its actual linked collector,
   not zero — fails on current `main`.
-- **1.5 — Scope `previewMatchedCollectors`'s collector set by team ownership** (decision 10 / §4 item 1).
-  `rpc_pipeline.go:1268-1288` currently calls `ListCollectorsByOrg` unfiltered. Add the same team-scoping
-  `authorizeOwnership`/G11 applies elsewhere, or confirm with whoever owns G11's original design that
-  fleet-wide preview visibility for any org-reader is actually intended (it may be — worth a one-line
-  confirmation either way rather than silently changing existing behavior).
-  *Verify:* new test — a Team A org-reader's preview of a Team A pipeline never includes a Team-B-only
-  collector in the response.
+- **1.5 — RESOLVED as no-op, 2026-09-24 (decision 10 / §4 item 1 / §7 open question 2).** Investigated
+  before implementing, per this document's own open question 2. Finding: **the premise doesn't match the
+  code.** `loadPipeline` (used by `GetPipeline` and every other pipeline RPC) enforces only that a
+  pipeline belongs to the request's org — it does **not** call `authorizeOwnership`/G11; G11 gates
+  **writes** only (Create/Update/Delete/Enable/Disable), never reads. Any org-reader can already
+  `GetPipeline` any pipeline in the org today, team-owned or not. Separately, **there is no team-to-
+  collector ownership model at all** — `teams`/`owner_team_id` own *pipelines*; the only per-collector
+  access concept, `group_assignments` (IdP group → collector), is used solely as one of several fallback
+  paths to decide whether a session clears the org-reader *floor* in `authorizeOrgAccess`, never to filter
+  which collectors a reader sees afterward. Every other org-wide collector listing
+  (`ListCollectorsByOrg` via `previewMatchedCollectors`, `recomputeOrgCaches`, `stage3Check`, the fleet
+  page) shows the whole org's fleet uniformly once that floor is cleared, by any path. Scoping
+  `previewMatchedCollectors` alone would be a new, one-off restriction inconsistent with how every other
+  read in the app works, built on an ownership axis (team → collector) that doesn't exist as data.
+  **Decision (repo owner, 2026-09-24): confirmed intentional — org-reader is an all-or-nothing floor for
+  an org's fleet visibility, not further scoped by team. No code change.** Superseded by decision 10 and
+  §4 item 1's framing above, which assumed the gap existed as described.
 - **1.6 — Add a repo-wide guard against recurrence.** A `repocheck` rule (alongside existing ones in
   `scripts/repocheck/`) that fails on a `merge.CollectorLabels{` struct literal appearing outside
   `internal/merge` itself — this is exactly the pattern `reconcileServed` used and the class of bug this
@@ -607,10 +621,11 @@ anything is built on top of the duplicated logic.
 
 1. **How many currently-enabled pipelines have zero matchers today?** (Phase 0, task 0.3.) Answers
    whether decision 4's grandfathering needs a one-time owner notification alongside it.
-2. **Confirm `previewMatchedCollectors`'s org-wide (not team-scoped) visibility is intentional or a bug**
-   (§3 decision 10 / Phase 1 task 1.5) before changing it — it may be a deliberate "any reader can see
-   the whole fleet's shape" design choice tied to G11's original intent, not necessarily wrong, but it
-   should be a decision on record, not silent.
+2. **RESOLVED 2026-09-24 — see Phase 1 task 1.5.** `previewMatchedCollectors`'s org-wide (not team-scoped)
+   visibility is confirmed intentional, not a bug: no team-to-collector ownership model exists to scope
+   by, reads are never team-gated anywhere in the codebase (only writes, via G11), and every other
+   org-wide collector listing shows the whole fleet once the org-reader floor is cleared by any path. No
+   code change.
 3. **`LABEL-MATCHING-PLAN.md`, cited by nine commit messages and `docs/spec.md` §6.1 as the authoritative
    design doc behind the already-shipped admin-label/local-attribute matching work, could not be found**
    anywhere reachable from this session (exhaustive `git log --all -S`, every branch/tag, working tree,
@@ -717,9 +732,9 @@ Phase 3 if capacity allows — it touches no file Phase 3 touches.
    defers. That's intentional (it's a product/API-contract call, not an architecture call this document
    should make unilaterally), but it means Phase 3 task 3.2 cannot fully close until someone answers it.
    Flag explicitly to whoever picks up Phase 3.
-4. **The security section's team-scoping fix (Phase 1 task 1.5) is framed as fixing an existing gap,
-   discovered as a side effect of this review, not something either source plan flagged.** Because it's
-   a pre-existing information-disclosure issue independent of this feature, consider whether it should
-   be pulled out and fixed/disclosed on its own faster timeline rather than waiting for Phase 1 of this
-   larger plan — that's a judgment call for whoever owns security triage, not one this document makes for
-   them.
+4. **RESOLVED 2026-09-24 — this "gap" was never real.** This item originally worried that Phase 1 task
+   1.5's team-scoping fix should ship faster than the rest of this plan, being a pre-existing
+   information-disclosure issue independent of this feature. Task 1.5's investigation found there is no
+   team-to-collector ownership model in the codebase for such scoping to apply to, and org-wide fleet
+   visibility for any org-reader is the codebase's consistent, confirmed-intentional design everywhere
+   else. Nothing to pull out or fast-track.
