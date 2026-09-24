@@ -288,3 +288,41 @@ func TestCertReloaderClientCARotates(t *testing.T) {
 		t.Fatal("ClientCAs() returned the same pool after rotating client_ca_file")
 	}
 }
+
+// TestCertReloaderCertRotatesEvenWhenClientCAReloadFails proves the
+// certificate and the client-CA bundle are reloaded independently: a corrupt
+// client_ca_file must not discard an otherwise-valid certificate rotation
+// that arrived in the same Reload() call, and the last-good CA pool must
+// stay in place until a valid replacement shows up.
+func TestCertReloaderCertRotatesEvenWhenClientCAReloadFails(t *testing.T) {
+	dir := t.TempDir()
+	certFile, keyFile := writeCertFiles(t, dir, 1, time.Now().Add(time.Hour))
+	caPEM, _ := generateCert(t, 100, time.Now().Add(time.Hour))
+	caFile := filepath.Join(dir, "ca.pem")
+	if err := os.WriteFile(caFile, caPEM, 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	r, err := newCertReloader(certFile, keyFile, caFile)
+	if err != nil {
+		t.Fatalf("newCertReloader: %v", err)
+	}
+	goodPool := r.ClientCAs()
+
+	// Rotate the certificate to a new serial and, in the same cycle, corrupt
+	// the CA bundle.
+	writeCertFiles(t, dir, 2, time.Now().Add(time.Hour))
+	if err := os.WriteFile(caFile, []byte("not a CA bundle"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := r.Reload(); err == nil {
+		t.Fatal("Reload with a corrupt client_ca_file returned nil error, want an error naming the CA problem")
+	}
+	if got := leafSerial(t, mustGet(t, r)); got != 2 {
+		t.Fatalf("serial after a CA-only reload failure = %d, want 2 (the certificate must still have rotated)", got)
+	}
+	if r.ClientCAs() != goodPool {
+		t.Fatal("ClientCAs() changed after a failed CA reload; want the last good pool kept")
+	}
+}

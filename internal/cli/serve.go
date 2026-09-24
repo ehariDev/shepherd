@@ -88,7 +88,10 @@ func runServe(*cobra.Command, []string) error {
 				return
 			case <-hup:
 				if err := s.ReloadTLS(); err != nil {
-					l.Warn("SIGHUP: TLS certificate reload failed; continuing to serve the last good certificate", "err", err)
+					// err may report only a client-CA bundle problem — the
+					// certificate itself can have rotated fine in the same
+					// call (see certReloader.Reload's comment).
+					l.Warn("SIGHUP: TLS reload had a problem; each of the certificate and client-CA bundle keeps whichever it last loaded successfully", "err", err)
 				} else if c.Server.TLS.Enabled() {
 					l.Info("SIGHUP: TLS certificate reloaded")
 				} else {

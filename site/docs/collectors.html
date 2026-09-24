@@ -136,11 +136,11 @@
         <strong>Shepherd cannot add this block for you.</strong> <code>remotecfg</code> is the
         collector's own bootstrap config — it is what the collector reads <em>before</em> it has ever
         talked to Shepherd, so nothing Shepherd serves can reach it. This is separate from the beacon's
-        own <code>tls_config</code> (<code>server.tls.collector_ca_file</code>), which Shepherd
-        <em>does</em> inject automatically into the served baseline pipeline that reports the
-        collector's self-monitoring metrics back — see the
-        <a href="https://github.com/procoduck/shepherd/blob/main/CHANGELOG.md">changelog</a> once that
-        lands.
+        own <code>tls_config</code> (<code>server.tls.collector_ca_file</code>) — <strong>not shipped
+        yet</strong>: Shepherd accepts and stores that setting today, but does not yet inject it into
+        the served baseline pipeline that reports the collector's self-monitoring metrics back. See the
+        <a href="https://github.com/procoduck/shepherd/blob/main/CHANGELOG.md">changelog</a> for when
+        that lands.
       </p>
         <nav class="page-nav" aria-label="Pagination">
           <a class="page-nav-prev" href="agent-tokens.html"><span>Previous</span><strong>Agent tokens</strong></a>

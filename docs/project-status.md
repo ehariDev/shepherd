@@ -142,11 +142,18 @@ built and tested — see `CHANGELOG.md` Unreleased. Both verified against real d
 way — the migration Job's shared ConfigMap needed the same TLS mount and hook ordering the Deployment
 gets), and the shipped systemd unit actually running on AlmaLinux 8 and AlmaLinux 9 (1:1 RHEL 8/9
 rebuilds) with real PostgreSQL 16 and real Alloy v1.19.2 — migration, serve, HTTPS/HTTP2, and
-`systemctl reload` all confirmed. Not yet closed: an automated `e2e/k8s` spec for what was verified
-manually above (needs a new pinned dependency, `CERT_MANAGER_CHART_VERSION`, following the same
-pattern `chart_deps_test.go` uses for CNPG/External Secrets); and opt-in collector-CA injection into
-the beacon's served pipeline (PR3, blocked on a maintainer's Ask-first answer — served-config content
-format is a served-config hashing change per AGENTS.md). SELinux-enforcing behavior and firewalld's
+`systemctl reload` all confirmed. The automated `e2e/k8s` spec for what was verified manually above is
+now also written (`e2e/k8s/tls_test.go`, pinned via the new `CERT_MANAGER_CHART_VERSION` dependency,
+following the same pattern `chart_deps_test.go` uses for CNPG/External Secrets) — compiles and vets
+clean under the `e2ek8s` build tag, but has not itself been run end-to-end yet (agents don't run
+`make e2e-k8s` per AGENTS.md; it will run for real the first time a PR touching `deploy/helm/**` or
+`e2e/k8s/**` opens, per `.github/workflows/e2e-k8s.yml`'s existing path filter). Not yet closed:
+opt-in collector-CA injection into the beacon's served pipeline (PR3, blocked on a maintainer's
+Ask-first answer — served-config content format is a served-config hashing change per AGENTS.md). The
+Helm/config side of that (`tls.collectorCA`, `server.tls.collector_ca_file`) is already shipped and
+tested — only `internal/beacon/render.go` reading it back out and injecting a `tls_config` block into
+the served pipeline is the missing piece; the docs pages were previously overclaiming this as already
+wired end-to-end and have been corrected to say so plainly. SELinux-enforcing behavior and firewalld's
 nftables backend are both unverified on this branch's own dev machine — not a RHEL-version gap, a WSL2
 kernel one (no SELinux LSM at all, confirmed against three EL distros; firewalld's nftables backend
 errors for the same class of reason) — a real VM or cloud RHEL 8/9 host is needed for those two
