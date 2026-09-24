@@ -61,14 +61,24 @@ spec:
             name: {{ include "shepherd.fullname" . }}
         - name: tmp
           emptyDir: {}
+        {{- if (.Values.tls).enabled }}
+        - name: tls
+          secret:
+            secretName: {{ include "shepherd.tlsSecretName" . }}
+        {{- if (((.Values.tls).collectorCA).secretName) }}
+        - name: tls-ca
+          secret:
+            secretName: {{ .Values.tls.collectorCA.secretName }}
+        {{- end }}
+        {{- end }}
       containers:
         - name: shepherd
           image: {{ include "shepherd.image" . }}
           imagePullPolicy: {{ .Values.image.pullPolicy }}
           args: ["serve", "--config", "/etc/shepherd/shepherd.yaml"]
           ports:
-            - name: http
-              containerPort: 8080
+            - name: {{ include "shepherd.appPortName" . }}
+              containerPort: {{ include "shepherd.appPort" . | int }}
               protocol: TCP
             # Metrics are served on their own listener, never on the main one
             # (internal/server: /metrics on :8080 is explicitly 404-guarded).
@@ -82,6 +92,16 @@ spec:
               mountPath: /etc/shepherd
             - name: tmp
               mountPath: /tmp
+            {{- if (.Values.tls).enabled }}
+            - name: tls
+              mountPath: /etc/shepherd/tls
+              readOnly: true
+            {{- if (((.Values.tls).collectorCA).secretName) }}
+            - name: tls-ca
+              mountPath: /etc/shepherd/tls-ca
+              readOnly: true
+            {{- end }}
+            {{- end }}
           envFrom:
             - secretRef:
                 name: {{ include "shepherd.secretName" . }}
@@ -96,13 +116,19 @@ spec:
           livenessProbe:
             httpGet:
               path: /healthz
-              port: http
+              port: {{ include "shepherd.appPortName" . }}
+              {{- if (.Values.tls).enabled }}
+              scheme: HTTPS
+              {{- end }}
             initialDelaySeconds: 5
             periodSeconds: 10
           readinessProbe:
             httpGet:
               path: /readyz
-              port: http
+              port: {{ include "shepherd.appPortName" . }}
+              {{- if (.Values.tls).enabled }}
+              scheme: HTTPS
+              {{- end }}
             initialDelaySeconds: 5
             periodSeconds: 10
           {{- with .Values.resources }}

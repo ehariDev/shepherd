@@ -7,12 +7,21 @@ metadata:
 spec:
   type: {{ .Values.service.type }}
   ports:
-    - name: http
+    - name: {{ include "shepherd.appPortName" . }}
       port: {{ .Values.service.port }}
-      targetPort: http
+      targetPort: {{ include "shepherd.appPortName" . }}
       protocol: TCP
-      {{- with .Values.service.appProtocol }}
-      appProtocol: {{ . }}
+      {{- /*
+        h2c is a cleartext-HTTP/2 hint and cannot apply once TLS is on, so
+        "https" always wins over service.appProtocol here -- unlike
+        config.server.listen (see values.yaml's tls block comment), there is
+        no scenario where an operator-set appProtocol should survive TLS
+        being enabled.
+      */}}
+      {{- if (.Values.tls).enabled }}
+      appProtocol: https
+      {{- else if .Values.service.appProtocol }}
+      appProtocol: {{ .Values.service.appProtocol }}
       {{- end }}
       {{- if and (eq .Values.service.type "NodePort") .Values.service.nodePort }}
       nodePort: {{ .Values.service.nodePort }}

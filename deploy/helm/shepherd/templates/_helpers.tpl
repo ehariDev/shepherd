@@ -259,6 +259,51 @@ field.
 {{- end }}
 
 {{/*
+The port Shepherd's MAIN listener serves on, and the name ("http" or "https")
+the Deployment's containerPort, the Service, and the probes all use for it.
+
+Derived from tls.enabled/tls.port rather than config.server.metrics_listen's
+"parse it out of the listen string" approach above, because once TLS is on,
+tls.port is the single source of truth for config.server.listen too (see the
+tls block's comment in values.yaml) -- there is no separate listen string to
+parse it back out of.
+*/}}
+{{- define "shepherd.appPort" -}}
+{{- if ((.Values.tls).enabled) -}}
+{{- .Values.tls.port -}}
+{{- else -}}
+8080
+{{- end -}}
+{{- end }}
+
+{{- define "shepherd.appPortName" -}}
+{{- if ((.Values.tls).enabled) -}}
+https
+{{- else -}}
+http
+{{- end -}}
+{{- end }}
+
+{{/*
+The Secret name the "tls" volume mounts: cert-manager's issued Secret when
+certManager.enabled (defaulting to "<fullname>-tls" unless secretName pins a
+different name for the Certificate to write to), otherwise secretName
+verbatim. Fails the render with a clear message when tls.enabled is set with
+neither -- otherwise the Deployment would reference a Secret volume with an
+empty or absent backing Secret, and kubelet would refuse to start the pod
+with an opaque "not found" error instead of a message pointing at the fix.
+*/}}
+{{- define "shepherd.tlsSecretName" -}}
+{{- if (((.Values.tls).certManager).enabled) -}}
+{{- .Values.tls.secretName | default (printf "%s-tls" (include "shepherd.fullname" .)) -}}
+{{- else if ((.Values.tls).secretName) -}}
+{{- .Values.tls.secretName -}}
+{{- else -}}
+{{- fail "tls.enabled is true but neither tls.secretName nor tls.certManager.enabled is set -- the chart has no Secret to mount. Either point secretName at an existing kubernetes.io/tls Secret, or set tls.certManager.enabled (and issuerRef) to have cert-manager issue one." -}}
+{{- end -}}
+{{- end }}
+
+{{/*
 The CNPG Cluster's name. Defaults to "<fullname>-db" rather than reusing the
 release name, so the Cluster and the Deployment cannot collide.
 */}}
@@ -412,6 +457,32 @@ an unauthenticated control API silently.
       "otlp_grpc_address" "127.0.0.1:4317"
       "syslog_host" "127.0.0.1"
       "target_address" "127.0.0.1:9111") }}
+{{- end }}
+{{- /*
+  TLS auto-wiring (task §5.6). config.server.tls, if the operator set it
+  explicitly, always wins verbatim -- same "explicit config wins" rule the
+  simulator block above follows, just scoped to the "tls" sub-key rather than
+  the whole "server" section, since server also carries listen/base_url/etc.
+  an operator still wants chart/env defaults for. config.server.listen is
+  NOT given the same escape hatch: see values.yaml's tls block comment for
+  why tls.port is the sole source of truth for it once TLS is on, matching
+  how shepherd.metricsPort already treats the metrics port as derived rather
+  than separately configured.
+*/ -}}
+{{- if ((.Values.tls).enabled) }}
+{{- $server := $cfg.server | default dict }}
+{{- if not (hasKey $server "tls") }}
+{{- $tlsCfg := dict
+      "cert_file" "/etc/shepherd/tls/tls.crt"
+      "key_file" "/etc/shepherd/tls/tls.key"
+      "min_version" (.Values.tls.minVersion | default "1.2") }}
+{{- if (((.Values.tls).collectorCA).secretName) }}
+{{- $_ := set $tlsCfg "collector_ca_file" (printf "/etc/shepherd/tls-ca/%s" (.Values.tls.collectorCA.key | default "ca.crt")) }}
+{{- end }}
+{{- $_ := set $server "tls" $tlsCfg }}
+{{- end }}
+{{- $_ := set $server "listen" (printf ":%v" .Values.tls.port) }}
+{{- $_ := set $cfg "server" $server }}
 {{- end }}
 {{- toYaml $cfg }}
 {{- end }}

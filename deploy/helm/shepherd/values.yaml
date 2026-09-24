@@ -56,12 +56,80 @@ service:
   # Shepherd serves equally well.
   appProtocol: kubernetes.io/h2c
 
+# -----------------------------------------------------------------------------
+# Native TLS: let Shepherd terminate HTTPS itself, no reverse proxy needed.
+#
+# OFF by default -- cleartext (h2c on :8080) keeps working unchanged, so no
+# existing install changes behaviour on upgrade. Turn it on and the chart:
+#   - mounts `secretName` (a standard kubernetes.io/tls Secret: tls.crt/tls.key)
+#     read-only at /etc/shepherd/tls and points config.server.tls.cert_file /
+#     key_file at it -- unless you set config.server.tls yourself, which
+#     always wins verbatim (see templates/configmap.yaml's shepherd.configYaml).
+#   - overrides config.server.listen to ":<port>", the same "derived so it
+#     cannot drift apart" reasoning config.server.metrics_listen's container
+#     port already uses -- once TLS is on, `port` below is the ONLY thing that
+#     decides what Shepherd listens on; a config.server.listen you set
+#     yourself is ignored while tls.enabled is true.
+#   - renames the container/Service port from "http" to "https", switches the
+#     liveness/readiness probes to `scheme: HTTPS`, and sets the Service's
+#     appProtocol to "https" (h2c makes no sense once TLS is on).
+#   - optionally renders a cert-manager Certificate (certManager.enabled) that
+#     produces `secretName` for you, instead of you managing that Secret.
+#
+# mTLS (client_auth) and the collector-CA beacon injection are configured
+# through config.server.tls.* directly (client_auth, client_ca_file,
+# collector_ca_file) -- see the Configuration docs page for the full key list
+# and env var bindings. This block only covers the Kubernetes-specific parts:
+# what Secret to mount and how to expose the port.
+tls:
+  # enabled: turn on to mount `secretName` (or the cert-manager Certificate
+  # below) and switch the container/Service/probes to HTTPS. Requires either
+  # secretName or certManager.enabled -- the chart refuses to render with
+  # neither, since that would mount nothing and leave TLS unable to start.
+  enabled: false
+  # secretName: an existing kubernetes.io/tls Secret (keys tls.crt, tls.key)
+  # to mount read-only. Leave empty when certManager.enabled issues one for
+  # you -- the chart then uses certManager's own secretName.
+  secretName: ""
+  # port: what Shepherd listens on once TLS is enabled. Becomes
+  # config.server.listen AND the container/Service port -- see the block
+  # comment above for why this is the single source of truth once TLS is on.
+  port: 8443
+  # minVersion: "1.2" (default) or "1.3". Feeds config.server.tls.min_version
+  # unless you set that key yourself.
+  minVersion: "1.2"
+  # collectorCA: an existing Secret holding the private CA (as `key`, default
+  # ca.crt) that issued Shepherd's certificate, mounted read-only and wired to
+  # config.server.tls.collector_ca_file so the beacon's rendered remote_write
+  # tells collectors to trust it. Empty secretName mounts nothing -- see
+  # AGENTS.md "Ask first": this sub-feature changes served-config content and
+  # needs a maintainer's answer before it ships (task §5.5).
+  collectorCA:
+    secretName: ""
+    key: ca.crt
+  certManager:
+    # enabled: let cert-manager issue and renew the certificate instead of
+    # bringing your own Secret. Requires cert-manager and its CRDs installed
+    # already; the chart does not install operators (same convention as
+    # cnpg.enabled / externalSecrets.enabled above).
+    enabled: false
+    # issuerRef: the cert-manager Issuer or ClusterIssuer to request from.
+    # Required when certManager.enabled -- a Certificate with no issuerRef.name
+    # requests nothing.
+    issuerRef:
+      name: ""
+      kind: ClusterIssuer
+    # dnsNames: SANs on the issued certificate, e.g.
+    # ["shepherd.example.internal"]. Required alongside issuerRef.
+    dnsNames: []
+
 config:
   server:
     # listen: host:port the main HTTP server binds. The Deployment's
     # containerPort and service.port above are both hardcoded to 8080, so
     # changing this alone does not move where the container is reachable --
-    # keep all three in agreement.
+    # keep all three in agreement. Ignored entirely while tls.enabled is true
+    # (see the tls block above) -- tls.port decides the listen address then.
     listen: ":8080"
     # Metrics listen on their own port; /metrics is never served on `listen`.
     # The container port, the metrics Service, and the ServiceMonitor are all

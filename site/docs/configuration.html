@@ -132,6 +132,34 @@
         an unattended install cannot quietly sit on a default credential. After first boot, accounts
         are managed at <strong>Admin &rarr; Users</strong>; see <a href="users-and-teams.html">Users and teams</a>.
       </p>
+      <h2 id="tls">Native TLS (HTTPS)</h2>
+      <p>
+        Unset, Shepherd serves cleartext (h2c) on <code>server.listen</code>, unchanged from every
+        release before TLS support existed. Set both <code>cert_file</code> and <code>key_file</code>
+        and it serves HTTPS instead &mdash; there is no separate on/off flag. See
+        <a href="kubernetes.html#tls">Kubernetes</a> for the chart's <code>tls:</code> block, which
+        wires most of these for you from a Secret.
+      </p>
+      <table>
+        <thead><tr><th>Key</th><th>Env var</th><th>Default</th><th>Description</th></tr></thead>
+        <tbody>
+          <tr><td><code>server.tls.cert_file</code></td><td><code>SHEPHERD_SERVER_TLS_CERT_FILE</code></td><td>&mdash;</td><td>PEM certificate path. Both this and <code>key_file</code> must be set together, or neither</td></tr>
+          <tr><td><code>server.tls.key_file</code></td><td><code>SHEPHERD_SERVER_TLS_KEY_FILE</code></td><td>&mdash;</td><td>PEM private key path</td></tr>
+          <tr><td><code>server.tls.min_version</code></td><td><code>SHEPHERD_SERVER_TLS_MIN_VERSION</code></td><td><code>1.2</code></td><td><code>1.2</code> or <code>1.3</code></td></tr>
+          <tr><td><code>server.tls.client_auth</code></td><td><code>SHEPHERD_SERVER_TLS_CLIENT_AUTH</code></td><td><code>none</code></td><td><code>none</code>, <code>request</code> or <code>require_and_verify</code> (mTLS plumbing only &mdash; a presented client certificate is not mapped to any Shepherd identity)</td></tr>
+          <tr><td><code>server.tls.client_ca_file</code></td><td><code>SHEPHERD_SERVER_TLS_CLIENT_CA_FILE</code></td><td>&mdash;</td><td>PEM CA bundle verifying client certificates. Required when <code>client_auth</code> is not <code>none</code></td></tr>
+          <tr><td><code>server.tls.reload_interval</code></td><td><code>SHEPHERD_SERVER_TLS_RELOAD_INTERVAL</code></td><td><code>30s</code></td><td>How often the certificate files are polled for a rotation. <code>0</code> disables polling; a <code>SIGHUP</code> (<code>systemctl reload</code>) still forces one</td></tr>
+          <tr><td><code>server.tls.collector_ca_file</code></td><td><code>SHEPHERD_SERVER_TLS_COLLECTOR_CA_FILE</code></td><td>&mdash;</td><td>Opt-in: injects a <code>tls_config</code> into the beacon's served pipeline, so collectors trust a private CA. Unset leaves that rendered pipeline byte-identical to before TLS existed</td></tr>
+        </tbody>
+      </table>
+      <p class="note">
+        <strong>A failed certificate reload never takes the listener down.</strong> Shepherd keeps
+        serving the last good certificate, logs the failure, and counts it in
+        <code>shepherd_tls_cert_reloads_total{result="failure"}</code> &mdash;
+        <code>shepherd_tls_cert_not_after_seconds</code> is the currently-served certificate's expiry,
+        for alerting before it actually runs out.
+      </p>
+
       <h2 id="single-sign-on-settings">Single sign-on</h2>
       <p>
         One setting decides where SSO configuration comes from: <code>oidc.issuer</code>. Set it in
@@ -152,6 +180,7 @@
         <li><a href="#the-secret">The secret Shepherd reads</a></li>
         <li><a href="#the-encryption-key">The encryption key is not rotatable</a></li>
         <li><a href="#the-first-administrator">The first administrator</a></li>
+        <li><a href="#tls">Native TLS (HTTPS)</a></li>
         <li><a href="#single-sign-on-settings">Single sign-on</a></li>
       </ul>
     </aside>

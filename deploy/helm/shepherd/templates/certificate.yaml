@@ -1,0 +1,40 @@
+{{- if (((.Values.tls).certManager).enabled) }}
+{{- /*
+  A pre-install/pre-upgrade hook, same weight as the CNPG Cluster and the
+  ExternalSecret (shepherd.bootstrapHookDeps, -20, well ahead of the migrate
+  Job's -5) -- without it, on a first install Helm creates this AFTER every
+  hook has already run, so the migrate Job's pre-install hook (which mounts
+  this Certificate's Secret once tls.enabled -- see migrate-job.yaml) starts
+  before cert-manager has anything to mount. Found by actually installing the
+  chart against a cluster with cert-manager, not by `helm template`, which
+  cannot see the migrate Job fail to start.
+
+  Unlike the Cluster/ExternalSecret, this is NOT guarded against
+  before-hook-creation re-issuing it on every upgrade -- re-issuing a
+  certificate is not data loss the way deleting a database or an
+  ExternalSecret's generated key is, only a brief cert rotation. Revisit if
+  that churn turns out to matter under a GitOps controller (same warning as
+  cnpg.render / externalSecrets.render above).
+*/}}
+apiVersion: cert-manager.io/v1
+kind: Certificate
+metadata:
+  name: {{ include "shepherd.fullname" . }}
+  labels:
+    {{- include "shepherd.labels" . | nindent 4 }}
+  annotations:
+    {{- include "shepherd.bootstrapHookDeps" . | nindent 4 }}
+spec:
+  secretName: {{ include "shepherd.tlsSecretName" . }}
+  {{- if not .Values.tls.certManager.issuerRef.name }}
+  {{- fail "tls.certManager.enabled is true but tls.certManager.issuerRef.name is empty -- a Certificate with no issuer requests nothing. Set it to an existing Issuer or ClusterIssuer." }}
+  {{- end }}
+  {{- if not .Values.tls.certManager.dnsNames }}
+  {{- fail "tls.certManager.enabled is true but tls.certManager.dnsNames is empty -- a Certificate with no SANs is not useful. Set it to Shepherd's externally-reachable hostname(s), matching config.server.base_url." }}
+  {{- end }}
+  dnsNames:
+    {{- toYaml .Values.tls.certManager.dnsNames | nindent 4 }}
+  issuerRef:
+    name: {{ .Values.tls.certManager.issuerRef.name }}
+    kind: {{ .Values.tls.certManager.issuerRef.kind | default "ClusterIssuer" }}
+{{- end }}

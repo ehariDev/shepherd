@@ -232,6 +232,54 @@ kubectl -n shepherd port-forward svc/shepherd 8080:8080</code></pre>
         the browser's own origin when it is set up in the admin UI.
       </p>
 
+      <h2 id="tls">TLS without a proxy</h2>
+      <p>
+        Shepherd can terminate HTTPS itself &mdash; no NGINX or Envoy sidecar needed in front of it.
+        Off by default: cleartext (h2c on port 8080) keeps working unchanged, so turning this on is an
+        opt-in, not a chart-minor migration.
+      </p>
+      <div class="code-block" data-lang="yaml">
+        <div class="code-head"><span>values.yaml</span><button class="copy-btn" type="button">Copy</button></div>
+        <pre><code>tls:
+  enabled: true
+  secretName: shepherd-tls   # an existing kubernetes.io/tls Secret</code></pre>
+      </div>
+      <p>
+        This mounts <code>secretName</code> read-only, switches the container/Service port from
+        <code>http</code> to <code>https</code> on <code>tls.port</code> (default <code>8443</code>),
+        and turns the liveness/readiness probes to <code>scheme: HTTPS</code>. <strong>Once
+        <code>tls.enabled</code> is <code>true</code>, <code>tls.port</code> is the only thing
+        deciding what Shepherd listens on</strong> &mdash; a <code>config.server.listen</code> you set
+        yourself is ignored, the same "one value, nothing to drift apart" rule
+        <code>config.server.metrics_listen</code> already follows for the metrics port.
+      </p>
+      <p>Let cert-manager issue and renew the certificate instead of bringing your own Secret:</p>
+      <div class="code-block" data-lang="yaml">
+        <div class="code-head"><span>values.yaml</span><button class="copy-btn" type="button">Copy</button></div>
+        <pre><code>tls:
+  enabled: true
+  certManager:
+    enabled: true
+    issuerRef: { name: letsencrypt, kind: ClusterIssuer }
+    dnsNames: ["shepherd.example.internal"]</code></pre>
+      </div>
+      <p class="note">
+        <strong>Requires the cert-manager operator and its CRDs already installed</strong> &mdash; the
+        chart does not install operators, the same convention <code>cnpg.enabled</code> and
+        <code>externalSecrets.enabled</code> follow. With neither <code>secretName</code> nor
+        <code>certManager.enabled</code> set, the chart refuses to render rather than mount a Secret
+        that does not exist.
+      </p>
+      <p>
+        A private CA needs trusting on both ends. <code>tls.collectorCA.secretName</code> mounts it and
+        wires <code>server.tls.collector_ca_file</code>, which is what makes the beacon's own served
+        pipeline trust it &mdash; see the <a href="collectors.html#tls">collectors page</a> for what a
+        collector's own <code>remotecfg</code> block needs added by hand, since Shepherd cannot inject
+        that one. mTLS (<code>server.tls.client_auth</code>), the certificate's minimum TLS version, and
+        the reload interval are set through <code>config.server.tls.*</code> directly &mdash; see
+        <a href="configuration.html#tls">Configuration</a> for the full key list.
+      </p>
+
       <h2 id="upgrading">Upgrading</h2>
       <div class="code-block" data-lang="shell">
         <div class="code-head"><span>shell</span><button class="copy-btn" type="button">Copy</button></div>
@@ -360,6 +408,7 @@ kubectl -n shepherd logs job/shepherd-migrate     # if the release failed</code>
         <li><a href="#what-it-renders">What the chart renders</a></li>
         <li><a href="#migrations">Migrations run before the new code</a></li>
         <li><a href="#exposing-shepherd">Exposing Shepherd</a></li>
+        <li><a href="#tls">TLS without a proxy</a></li>
         <li><a href="#upgrading">Upgrading</a></li>
         <li class="sub"><a href="#upgrading-to-0-9">Upgrading to chart 0.9.0 needs one manual step</a></li>
         <li><a href="#high-availability">High availability</a></li>

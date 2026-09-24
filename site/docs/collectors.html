@@ -104,6 +104,43 @@
 }</code></pre>
       </div>
       <p>On first poll, an unclaimed cluster gets served an empty config so it keeps running whatever it already has locally — nothing is disrupted until an app admin claims the cluster for an organisation (<a href="roles.html">Roles</a>) and one of that organisation's admins enables pipelines that match it.</p>
+
+      <h2 id="tls">Over HTTPS</h2>
+      <p>
+        When Shepherd terminates TLS itself (<a href="kubernetes.html#tls">Kubernetes</a> or a
+        bare-metal/VM install running as a systemd service), point <code>remotecfg</code> at the HTTPS
+        URL and add a <code>tls_config</code> block if the certificate was issued by a private CA —
+        the same thing your browser's trust store handles for you, spelled out for the collector
+        instead:
+      </p>
+      <div class="code-block" data-lang="alloy">
+        <div class="code-head"><span>config.alloy</span><button class="copy-btn" type="button">Copy</button></div>
+        <pre><code>remotecfg {
+  url = "https://shepherd:8443"
+  basic_auth {
+    username = "&lt;token-uuid&gt;"
+    password = "&lt;token-secret&gt;"
+  }
+  tls_config {
+    ca_file = "/etc/pki/tls/certs/private-ca.pem"   // omit for a publicly-trusted certificate
+  }
+  attributes = {
+    cluster = "&lt;cluster-name&gt;",
+    role    = "metrics",
+  }
+  poll_frequency = "60s"
+}</code></pre>
+      </div>
+      <p class="note">
+        <strong>Shepherd cannot add this block for you.</strong> <code>remotecfg</code> is the
+        collector's own bootstrap config — it is what the collector reads <em>before</em> it has ever
+        talked to Shepherd, so nothing Shepherd serves can reach it. This is separate from the beacon's
+        own <code>tls_config</code> (<code>server.tls.collector_ca_file</code>), which Shepherd
+        <em>does</em> inject automatically into the served baseline pipeline that reports the
+        collector's self-monitoring metrics back — see the
+        <a href="https://github.com/procoduck/shepherd/blob/main/CHANGELOG.md">changelog</a> once that
+        lands.
+      </p>
         <nav class="page-nav" aria-label="Pagination">
           <a class="page-nav-prev" href="agent-tokens.html"><span>Previous</span><strong>Agent tokens</strong></a>
           <a class="page-nav-next" href="authoring.html"><span>Next</span><strong>Authoring pipelines</strong></a>
@@ -111,6 +148,12 @@
       </div>
     </div>
 
+    <aside class="docs-toc">
+      <p class="toc-label">On this page</p>
+      <ul>
+        <li><a href="#tls">Over HTTPS</a></li>
+      </ul>
+    </aside>
   </div>
 </div>
 

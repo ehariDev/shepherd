@@ -3,6 +3,7 @@ package server
 
 import (
 	"context"
+	"crypto/tls"
 	"encoding/json"
 	"fmt"
 	"log/slog"
@@ -51,6 +52,9 @@ type Server struct {
 	// returns a no-op when tracing is disabled — so Run can call it
 	// unconditionally.
 	traceShutdown telemetry.ShutdownFunc
+	// reloader is nil when server.tls is not enabled — cleartext keeps the
+	// h2c path unchanged and there is nothing to poll or reload.
+	reloader *certReloader
 }
 
 // requestLogger emits one structured line per request, at a level chosen by the
@@ -175,16 +179,40 @@ func New(cfg *config.Config, logger *slog.Logger) (*Server, error) {
 
 	// Tracing wraps the router from outside so a server span exists before
 	// chi routes, which is what lets the metrics middleware rename it once the
-	// route pattern is known. h2c stays outermost — it negotiates the
-	// protocol, and there is nothing to trace until that has happened.
+	// route pattern is known. h2c stays outermost in cleartext mode — it
+	// negotiates the protocol, and there is nothing to trace until that has
+	// happened. In TLS mode there is nothing for h2c to do: ALPN negotiates
+	// HTTP/2 instead, so tracedRouter is used directly (decision 5).
 	tracedRouter := telemetry.TraceHTTP(r)
 
-	// Wrap the entire mux with h2c so agents using HTTP/2 connect without TLS.
-	h2cHandler := h2c.NewHandler(tracedRouter, &http2.Server{}) //nolint:staticcheck // h2c is still required for Connect/gRPC cleartext
+	var (
+		handler   http.Handler
+		tlsConfig *tls.Config
+		reloader  *certReloader
+	)
+	if cfg.Server.TLS.Enabled() {
+		reloader, err = newCertReloader(cfg.Server.TLS.CertFile, cfg.Server.TLS.KeyFile, cfg.Server.TLS.ClientCAFile)
+		if err != nil {
+			return nil, fmt.Errorf("initializing TLS: %w", err)
+		}
+		tlsConfig = buildTLSConfig(cfg.Server.TLS, reloader)
+		handler = tracedRouter
+		// Not fatal — a reverse proxy in front of Shepherd could still be
+		// terminating HTTP to the outside world while Shepherd itself talks
+		// TLS to that proxy, so an http:// base_url isn't necessarily wrong.
+		// It is unusual enough with TLS on to be worth a loud warning.
+		if strings.HasPrefix(cfg.Server.BaseURL, "http://") {
+			logger.Warn("server.tls is enabled but server.base_url still starts with http://; collector and UI links may use the wrong scheme unless a proxy rewrites it", "base_url", cfg.Server.BaseURL)
+		}
+	} else {
+		// Wrap the entire mux with h2c so agents using HTTP/2 connect without TLS.
+		handler = h2c.NewHandler(tracedRouter, &http2.Server{}) //nolint:staticcheck // h2c is still required for Connect/gRPC cleartext
+	}
 
 	httpSrv := &http.Server{
 		Addr:              cfg.Server.Listen,
-		Handler:           h2cHandler,
+		Handler:           handler,
+		TLSConfig:         tlsConfig,
 		ReadHeaderTimeout: 10 * time.Second,
 		ReadTimeout:       30 * time.Second,
 		WriteTimeout:      60 * time.Second,
@@ -205,7 +233,43 @@ func New(cfg *config.Config, logger *slog.Logger) (*Server, error) {
 		enc:           enc,
 		validator:     v,
 		traceShutdown: traceShutdown,
+		reloader:      reloader,
 	}, nil
+}
+
+// buildTLSConfig translates config.TLSConfig into a *tls.Config. Certificates
+// are always served through GetCertificate (never a static Certificates
+// slice) — that indirection through reloader is what makes hot reload
+// possible (decision 3). ClientCAs is likewise never set statically: when a
+// client CA file is configured, GetConfigForClient reads the reloader's
+// current pool on every handshake, so a rotated CA bundle takes effect
+// without a restart.
+func buildTLSConfig(cfg config.TLSConfig, reloader *certReloader) *tls.Config {
+	minVersion := uint16(tls.VersionTLS12)
+	if cfg.MinVersion == "1.3" {
+		minVersion = tls.VersionTLS13
+	}
+	clientAuth := tls.NoClientCert
+	switch cfg.ClientAuth {
+	case "request":
+		clientAuth = tls.RequestClientCert
+	case "require_and_verify":
+		clientAuth = tls.RequireAndVerifyClientCert
+	}
+	tlsConfig := &tls.Config{
+		MinVersion:     minVersion,
+		NextProtos:     []string{"h2", "http/1.1"},
+		GetCertificate: reloader.Get,
+		ClientAuth:     clientAuth,
+	}
+	if cfg.ClientCAFile != "" {
+		tlsConfig.GetConfigForClient = func(*tls.ClientHelloInfo) (*tls.Config, error) {
+			clone := tlsConfig.Clone()
+			clone.ClientCAs = reloader.ClientCAs()
+			return clone, nil
+		}
+	}
+	return tlsConfig
 }
 
 // newRouter assembles the production route tree in serving order: health
@@ -373,9 +437,26 @@ func newMetricsMux() *http.ServeMux {
 	return metricsMux
 }
 
+// ReloadTLS forces an immediate certificate (and client-CA, when configured)
+// reload, bypassing the poll interval — internal/cli/serve.go's SIGHUP
+// handler calls this. A nil reloader (TLS not enabled) makes this a no-op:
+// SIGHUP no longer kills the process the way it did before this existed, but
+// with no TLS listener there is nothing to reload.
+func (s *Server) ReloadTLS() error {
+	if s.reloader == nil {
+		return nil
+	}
+	return s.reloader.Reload()
+}
+
 // Run starts the server and blocks until ctx is cancelled, then gracefully shuts down.
 func (s *Server) Run(ctx context.Context) error {
-	s.logger.Info("starting server", "addr", s.cfg.Server.Listen, "metrics_addr", s.cfg.Server.MetricsListen)
+	if s.cfg.Server.TLS.Enabled() {
+		s.logger.Info("starting server", "scheme", "https", "addr", s.cfg.Server.Listen, "metrics_addr", s.cfg.Server.MetricsListen, "min_tls", s.cfg.Server.TLS.MinVersion, "client_auth", s.cfg.Server.TLS.ClientAuth)
+		go s.reloader.Run(ctx, s.cfg.Server.TLS.ReloadInterval, s.logger)
+	} else {
+		s.logger.Info("starting server", "scheme", "http", "addr", s.cfg.Server.Listen, "metrics_addr", s.cfg.Server.MetricsListen)
+	}
 
 	// Start the lifecycle sweeper.
 	sweeper := agentapi.NewSweeper(s.store, &s.cfg.Agent, s.logger)
@@ -407,7 +488,15 @@ func (s *Server) Run(ctx context.Context) error {
 
 	errCh := make(chan error, 2)
 	go func() {
-		if err := s.http.ListenAndServe(); err != nil && err != http.ErrServerClosed {
+		var err error
+		if s.cfg.Server.TLS.Enabled() {
+			// Cert/key come from httpSrv.TLSConfig.GetCertificate, not these
+			// arguments — empty strings are correct here (decision 3).
+			err = s.http.ListenAndServeTLS("", "")
+		} else {
+			err = s.http.ListenAndServe()
+		}
+		if err != nil && err != http.ErrServerClosed {
 			errCh <- fmt.Errorf("main server: %w", err)
 		}
 	}()

@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"os"
 	"strings"
 	"time"
 
@@ -46,6 +47,59 @@ type ServerConfig struct {
 	// be able to turn it off without downgrading, rather than discovering it
 	// running after an upgrade.
 	BeaconDisabled bool `mapstructure:"beacon_disabled"`
+	// TLS holds native HTTPS listener settings. See TLSConfig.Enabled — TLS is
+	// on iff both CertFile and KeyFile are set; cleartext (today's h2c on
+	// Listen) stays the default.
+	TLS TLSConfig `mapstructure:"tls"`
+}
+
+// TLSConfig holds native HTTPS listener settings for ServerConfig.Listen.
+// Serving is switched on entirely by whether CertFile and KeyFile are both
+// set (Enabled) — there is no separate boolean.
+type TLSConfig struct {
+	CertFile string `mapstructure:"cert_file"`
+	KeyFile  string `mapstructure:"key_file"`
+	// MinVersion is "1.2" (default) or "1.3". Anything else is a startup
+	// error. CipherSuites are left at Go's defaults.
+	MinVersion string `mapstructure:"min_version"`
+	// ClientCAFile is a PEM bundle verifying client certificates when
+	// ClientAuth is not "none". mTLS plumbing only: presented certificates
+	// are not mapped to any Shepherd identity.
+	ClientCAFile string `mapstructure:"client_ca_file"`
+	// ClientAuth is "none" (default), "request", or "require_and_verify".
+	ClientAuth string `mapstructure:"client_auth"`
+	// ReloadInterval is how often CertFile/KeyFile/ClientCAFile are polled
+	// for changes (mtime/size). Default 30s; 0 disables polling — SIGHUP
+	// still triggers a reload.
+	ReloadInterval time.Duration `mapstructure:"reload_interval"`
+	// CollectorCAFile, when set, is injected into the beacon's rendered
+	// remote_write endpoint as a tls_config block so collectors verify
+	// Shepherd's certificate against a private CA. Opt-in: unset leaves the
+	// rendered beacon pipeline byte-identical to today.
+	CollectorCAFile string `mapstructure:"collector_ca_file"`
+}
+
+// Enabled reports whether the server should serve TLS: both CertFile and
+// KeyFile are set. Load rejects a half-configured pair, so once a Config has
+// passed Load, this is the single source of truth for which listener mode
+// internal/server uses.
+func (t TLSConfig) Enabled() bool { return t.CertFile != "" && t.KeyFile != "" }
+
+// LogValue lists TLS settings in structured logs. Every field here is a path,
+// a version string, or a duration — TLS carries no secret of its own (key
+// file contents are never read into this struct) — so nothing is redacted;
+// this exists for consistency with the other nested config types' LogValue.
+func (t TLSConfig) LogValue() slog.Value {
+	return slog.GroupValue(
+		slog.Bool("enabled", t.Enabled()),
+		slog.String("cert_file", t.CertFile),
+		slog.String("key_file", t.KeyFile),
+		slog.String("min_version", t.MinVersion),
+		slog.String("client_ca_file", t.ClientCAFile),
+		slog.String("client_auth", t.ClientAuth),
+		slog.Duration("reload_interval", t.ReloadInterval),
+		slog.String("collector_ca_file", t.CollectorCAFile),
+	)
 }
 
 // DatabaseConfig holds PostgreSQL connection settings.
@@ -344,6 +398,9 @@ func Load(file string) (*Config, error) {
 	v.SetDefault("server.listen", ":8080")
 	v.SetDefault("server.base_url", "https://shepherd.example.internal")
 	v.SetDefault("server.metrics_listen", ":9090")
+	v.SetDefault("server.tls.min_version", "1.2")
+	v.SetDefault("server.tls.client_auth", "none")
+	v.SetDefault("server.tls.reload_interval", "30s")
 	v.SetDefault("database.max_conns", 20)
 	v.SetDefault("graph.base_url", "https://graph.microsoft.com")
 	v.SetDefault("agent.sweep_interval", "5m")
@@ -413,6 +470,13 @@ func Load(file string) (*Config, error) {
 		{"server.listen", "SHEPHERD_SERVER_LISTEN"},
 		{"server.base_url", "SHEPHERD_SERVER_BASE_URL"},
 		{"server.metrics_listen", "SHEPHERD_SERVER_METRICS_LISTEN"},
+		{"server.tls.cert_file", "SHEPHERD_SERVER_TLS_CERT_FILE"},
+		{"server.tls.key_file", "SHEPHERD_SERVER_TLS_KEY_FILE"},
+		{"server.tls.min_version", "SHEPHERD_SERVER_TLS_MIN_VERSION"},
+		{"server.tls.client_ca_file", "SHEPHERD_SERVER_TLS_CLIENT_CA_FILE"},
+		{"server.tls.client_auth", "SHEPHERD_SERVER_TLS_CLIENT_AUTH"},
+		{"server.tls.reload_interval", "SHEPHERD_SERVER_TLS_RELOAD_INTERVAL"},
+		{"server.tls.collector_ca_file", "SHEPHERD_SERVER_TLS_COLLECTOR_CA_FILE"},
 		{"database.url", "SHEPHERD_DATABASE_URL"},
 		{"database.max_conns", "SHEPHERD_DATABASE_MAX_CONNS"},
 		{"oidc.issuer", "SHEPHERD_OIDC_ISSUER"},
@@ -506,6 +570,9 @@ func Load(file string) (*Config, error) {
 	if err != nil || len(key) != 32 {
 		return nil, fmt.Errorf("configuration errors:\n  - security.encryption_key must be a base64-encoded 32-byte value")
 	}
+	if errs := validateTLS(c.Server.TLS); len(errs) > 0 {
+		return nil, fmt.Errorf("configuration errors:\n  - %s", strings.Join(errs, "\n  - "))
+	}
 	// UseGraphGroups has no SetDefault because its default depends on another
 	// key: Graph is Entra's directory API, so "on" is right for Entra and
 	// meaningless anywhere else. IsSet distinguishes "the operator chose
@@ -514,4 +581,56 @@ func Load(file string) (*Config, error) {
 		c.OIDC.UseGraphGroups = c.OIDC.Provider == "entra"
 	}
 	return &c, nil
+}
+
+// validateTLS returns every problem with t, or nil when it is valid. Called
+// unconditionally from Load — when CertFile and KeyFile are both empty, only
+// the pair check applies and every other rule is skipped, since TLS is off.
+func validateTLS(t TLSConfig) []string {
+	var errs []string
+	if (t.CertFile == "") != (t.KeyFile == "") {
+		errs = append(errs, "server.tls.cert_file and server.tls.key_file must both be set, or both left empty")
+	}
+	if !t.Enabled() {
+		return errs
+	}
+	switch t.MinVersion {
+	case "1.2", "1.3":
+	default:
+		errs = append(errs, fmt.Sprintf("server.tls.min_version must be \"1.2\" or \"1.3\", got %q", t.MinVersion))
+	}
+	switch t.ClientAuth {
+	case "none", "request", "require_and_verify":
+	default:
+		errs = append(errs, fmt.Sprintf("server.tls.client_auth must be one of none, request, require_and_verify, got %q", t.ClientAuth))
+	}
+	if t.ClientAuth != "none" && t.ClientCAFile == "" {
+		errs = append(errs, "server.tls.client_ca_file is required when server.tls.client_auth is not \"none\"")
+	}
+	for _, f := range []struct{ key, path string }{
+		{"server.tls.cert_file", t.CertFile},
+		{"server.tls.key_file", t.KeyFile},
+		{"server.tls.client_ca_file", t.ClientCAFile},
+		{"server.tls.collector_ca_file", t.CollectorCAFile},
+	} {
+		if f.path == "" {
+			continue // client_ca_file / collector_ca_file are optional
+		}
+		if err := checkReadable(f.path); err != nil {
+			errs = append(errs, fmt.Sprintf("%s: %v", f.key, err))
+		}
+	}
+	return errs
+}
+
+// checkReadable confirms path can be opened, without keeping it open or
+// reading its contents — Load only needs to catch a missing file or a
+// permission error before the server starts, not parse the certificate
+// itself (internal/server's reloader does that).
+func checkReadable(path string) error {
+	f, err := os.Open(path) //nolint:gosec // operator-supplied config path, not user input
+	if err != nil {
+		return err
+	}
+	return f.Close()
 }

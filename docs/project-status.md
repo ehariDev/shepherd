@@ -132,6 +132,20 @@ tier (W4's other half, to be built then brought back to R3), reconciliation (W6)
 artifacts (W7), the chart-values UI + G10 (W9), teams UI (W10), and the two R6 conditions for the
 MCP interface (W11). Each is a §4 item below.
 
+### Native TLS + RHEL systemd service · see plan at project root, `2026-09-23-native-tls-plan.md`
+
+PR1 (Go core: `server.tls.*` config, cert hot-reload, ALPN-negotiated HTTP/2, `shepherd healthcheck
+--tls`, and the Helm chart's `tls:` block / cert-manager support) is built and unit/chart-tested —
+see `CHANGELOG.md` Unreleased. Not yet closed: an `e2e/k8s` spec proving the chart actually installs
+and serves HTTPS against a real cluster with cert-manager (needs a new pinned dependency,
+`CERT_MANAGER_CHART_VERSION`, following the same pattern `chart_deps_test.go` uses for CNPG/External
+Secrets); the RHEL 8/9 systemd unit + install docs (PR2); and opt-in collector-CA injection into the
+beacon's served pipeline (PR3, blocked on a maintainer's Ask-first answer — served-config content
+format is a served-config hashing change per AGENTS.md). RHEL 8/9 is the hard-required target;
+SELinux-enforcing verification is a known gap on this branch's own dev machine (WSL2's kernel carries
+no SELinux LSM, confirmed against three EL distros) and needs a real VM or cloud host, independent of
+which RHEL version is targeted.
+
 Closed features (F5 sandbox simulation, F-SIGNAL-SERVE) are in `docs/archive/completed-2026-09-11.md`.
 F-REVISIONS closed — see `CHANGELOG.md` v0.6.0 "Pipelines — Shipped"; its plan is archived at
 `docs/archive/plans/2026-09-11-f-revisions.md`.

@@ -15,6 +15,30 @@ Categories used here:
 
 ### Added
 
+- **Native TLS — Shepherd can terminate HTTPS itself, no reverse proxy required.** Set
+  `server.tls.cert_file` and `server.tls.key_file` (both, or neither — a startup error names both keys
+  otherwise) and Shepherd serves HTTPS with HTTP/2 negotiated over ALPN instead of h2c. Certificates
+  hot-reload with no restart: a background poll (`server.tls.reload_interval`, default 30s) picks up a
+  rotated file, and `SIGHUP` (e.g. `systemctl reload`) forces an immediate reload — **this is also a
+  fix**: `SIGHUP` previously had no handler at all and killed the process outright. A failed reload
+  keeps serving the last good certificate and never takes the listener down; `shepherd_tls_cert_reloads_total{result}`
+  and `shepherd_tls_cert_not_after_seconds` make that visible. mTLS is plumbing-only so far
+  (`server.tls.client_auth: request | require_and_verify` + `client_ca_file`) — no client-certificate
+  identity mapping yet. `shepherd healthcheck` gained `--tls`, `--ca-file` and `--insecure-skip-verify`,
+  and auto-detects TLS from `SHEPHERD_SERVER_TLS_*` when no flag is passed. Cleartext (h2c on `:8080`)
+  stays the default; nothing changes for an existing install that does not opt in. See the
+  [Configuration](https://procoduck.github.io/shepherd/docs/configuration.html#tls) docs for the full
+  key list.
+
+  **Helm chart**: a new `tls:` values block mounts an existing `kubernetes.io/tls` Secret (or has
+  cert-manager issue one via `tls.certManager`), switches the container/Service port and
+  liveness/readiness probes to HTTPS, and optionally mounts a private collector CA
+  (`tls.collectorCA`) — see [Kubernetes](https://procoduck.github.io/shepherd/docs/kubernetes.html#tls).
+  Off by default (`tls.enabled: false`); the chart refuses to render `tls.enabled: true` with neither a
+  Secret nor cert-manager configured, rather than mounting nothing. A bare-metal/VM install as a RHEL
+  systemd service, and opt-in CA injection into the beacon's own served pipeline
+  (`server.tls.collector_ca_file`), are follow-on work — not shipped in this entry.
+
 - **Collector label keys are reserved against built-in matcher facts.** Groundwork for letting
   admin-set collector labels participate in pipeline matching (#139): `SetCollectorLabel` now rejects
   a key that a matcher reserves for a built-in collector fact — `cluster`, `role`, `id`, `os`,

@@ -70,5 +70,33 @@ func runServe(*cobra.Command, []string) error {
 	if e != nil {
 		return e
 	}
+
+	// SIGHUP triggers a certificate reload on its own channel, separate from
+	// the SIGTERM/interrupt context above — it must never cancel the run
+	// context. Before this existed, SIGHUP's default action killed the
+	// process outright; a systemd `ExecReload=kill -HUP $MAINPID` (as
+	// deploy/systemd/shepherd.service issues) would have taken the service
+	// down instead of reloading it. With TLS off, ReloadTLS is a no-op, so
+	// this is also just a fix for that default-kills-the-process behaviour.
+	hup := make(chan os.Signal, 1)
+	signal.Notify(hup, syscall.SIGHUP)
+	defer signal.Stop(hup)
+	go func() {
+		for {
+			select {
+			case <-ctx.Done():
+				return
+			case <-hup:
+				if err := s.ReloadTLS(); err != nil {
+					l.Warn("SIGHUP: TLS certificate reload failed; continuing to serve the last good certificate", "err", err)
+				} else if c.Server.TLS.Enabled() {
+					l.Info("SIGHUP: TLS certificate reloaded")
+				} else {
+					l.Info("SIGHUP received (TLS not enabled; nothing to reload)")
+				}
+			}
+		}
+	}()
+
 	return s.Run(ctx)
 }

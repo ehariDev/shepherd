@@ -1,0 +1,12 @@
+# Force LF in the repository and on checkout, regardless of a contributor's
+# local core.autocrlf. Without this, a Windows checkout with
+# core.autocrlf=true silently rewrites every text file's line endings to
+# CRLF on checkout -- harmless for most files, but fatal for anything with a
+# `#!/usr/bin/env bash` shebang: `env` looks for a command literally named
+# `bash\r`, which does not exist, and the container build dies with exit 127
+# ("bash\r: No such file or directory"). Found while verifying native TLS
+# support against a real cluster: `docker buildx build` of deploy/Dockerfile.local
+# failed at `scripts/build-web.sh` for exactly this reason, on a checkout
+# where every affected file's REPOSITORY content was already plain LF --
+# only the working-tree copy autocrlf produced was CRLF.
+* text=auto eol=lf
