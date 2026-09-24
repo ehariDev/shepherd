@@ -1,0 +1,58 @@
+[Unit]
+Description=Shepherd - Grafana Alloy fleet manager
+Documentation=https://procoduck.github.io/shepherd/docs/
+Wants=network-online.target
+After=network-online.target postgresql.service
+
+[Service]
+Type=simple
+User=shepherd
+Group=shepherd
+EnvironmentFile=/etc/shepherd/shepherd.env
+ExecStartPre=/usr/local/bin/shepherd migrate up --config /etc/shepherd/shepherd.yaml
+ExecStart=/usr/local/bin/shepherd serve --config /etc/shepherd/shepherd.yaml
+ExecReload=/bin/kill -HUP $MAINPID
+Restart=on-failure
+RestartSec=5s
+TimeoutStopSec=30s
+LimitNOFILE=65536
+
+# Hardening (Shepherd is stateless; PostgreSQL holds all state). Verified by
+# actually running this exact unit file on AlmaLinux 8 and AlmaLinux 9 (1:1
+# RHEL 8/9 rebuilds, WSL images) with real PostgreSQL 16 and real Alloy
+# v1.19.2 (Grafana's own RPM): `migrate up` (ExecStartPre) succeeds, `serve`
+# starts, HTTPS/HTTP2 responds, `systemctl reload` reloads the certificate
+# via SIGHUP with zero restarts. Every directive below was confirmed NOT to
+# break: Stage 2 pipeline validation (`alloy validate`, which writes a temp
+# file -- internal/validate/validate.go's os.CreateTemp("", ...) needs
+# PrivateTmp's isolated /tmp), git-sync repo fetches (internal/gitrepo's
+# transport is deliberately $HOME-less and does no on-disk clone -- go-git
+# in-memory), and the TLS listener itself (reads-only under /etc/shepherd
+# and /etc/pki/tls -- both left readable by ProtectSystem=strict).
+#
+# NOT verified by the above: SELinux-enforcing behavior (cert_t labeling,
+# AVC denials) and firewalld's nftables backend. Both were attempted on the
+# same WSL hosts and both failed for reasons that have nothing to do with
+# this unit or RHEL version: the WSL2 kernel carries no SELinux LSM at all
+# (confirmed against three different EL distros: `/sys/kernel/security/lsm`
+# does not exist), and firewalld's nftables backend errors
+# ("'python-nftables' failed: ... No such file or directory") for the same
+# class of reason. A real RHEL 8/9 VM or cloud host is needed to verify
+# those two specifically -- see the Linux service docs page.
+NoNewPrivileges=yes
+ProtectSystem=strict
+ProtectHome=yes
+PrivateTmp=yes
+PrivateDevices=yes
+ProtectKernelTunables=yes
+ProtectKernelModules=yes
+ProtectControlGroups=yes
+RestrictSUIDSGID=yes
+LockPersonality=yes
+RestrictAddressFamilies=AF_INET AF_INET6 AF_UNIX
+# Only if listening on a port < 1024 (e.g. 443):
+#AmbientCapabilities=CAP_NET_BIND_SERVICE
+#CapabilityBoundingSet=CAP_NET_BIND_SERVICE
+
+[Install]
+WantedBy=multi-user.target
