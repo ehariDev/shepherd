@@ -133,6 +133,41 @@ var _ = Describe("shepherd.mgmt.v1.FleetService/GetReconciliation", Label("integ
 		Expect(findings()).To(BeEmpty())
 	})
 
+	It("includes a pipeline matched only via an admin label — regression for reconcileServed's under-count bug", func() {
+		// label-only has no cluster/role matcher at all: it matches solely via
+		// an admin "Manage labels" key. Before Phase 1 of
+		// docs/plans/2026-09-24-matcher-targeting-unified-plan.md,
+		// reconcileServed hand-inlined a CollectorLabels{role, cluster}
+		// literal that could never see an admin label, so this pipeline never
+		// appeared as served — observing its component produced a false
+		// "collector running a pipeline its desired state doesn't include"
+		// finding for every org with allow_label_matching on. Fails on
+		// pre-Phase-1 main; passes after reconcileServed routes through
+		// BuildCollectorLabels + merge.Evaluate.
+		_, err := st.Queries.UpdateOrg(ctx, sqlc.UpdateOrgParams{
+			ID: orgID, DisplayName: "Recon Org", AdminGroupID: "recon-admin",
+			ReaderGroupID:      pgtype.Text{String: "recon-reader", Valid: true},
+			AllowLabelMatching: true,
+		})
+		Expect(err).NotTo(HaveOccurred())
+
+		_, err = st.Queries.SetCollectorLabel(ctx, sqlc.SetCollectorLabelParams{
+			ID: collID, LabelKey: "team", LabelValue: "platform",
+		})
+		Expect(err).NotTo(HaveOccurred())
+
+		_, err = st.Queries.CreatePipeline(ctx, sqlc.CreatePipelineParams{
+			OrgID: orgID, Name: "label-only",
+			Contents: "loki.write \"dest\" {\n  endpoint {\n    url = \"http://example.com/loki/api/v1/push\"\n  }\n}\n",
+			Matchers: json.RawMessage(`["team=\"platform\""]`),
+			Enabled:  true, Source: "ui", CreatedBy: "test", UpdatedBy: "test",
+		})
+		Expect(err).NotTo(HaveOccurred())
+
+		observe("pipe_label_only", true)
+		Expect(findings()).To(BeEmpty(), "an admin-label-matched pipeline must be in the desired served set")
+	})
+
 	It("does not attribute another collector's beacon rows", func() {
 		// A row with no collector id (a pre-#110 baseline) must not appear as
 		// observed for this collector.
