@@ -31,6 +31,13 @@ Categories used here:
 
 ### Changed
 
+- **One decision point for "does this pipeline reach this collector".** `merge.Evaluate` (with
+  `merge.CompileMatchers`) does the match, signal derivation and role enforcement in one place, and
+  `Assemble` and the reconciliation view's desired-state both call it instead of each carrying their own
+  copy. Matchers are compiled once per pipeline instead of once per collector. A `scripts/repocheck`
+  guard fails CI if a hand-built `merge.CollectorLabels{}` literal appears outside `internal/merge`.
+  An unparsable matcher still increments `shepherd_matcher_parse_errors_total`. **Shipped.**
+
 - **Built with Go 1.27.** `go.mod` moves to `go 1.27.1` and every image builds on
   `golang:1.27-alpine` (`GO_IMAGE` in `deploy/versions.env`). Building from source needs Go 1.27.
 - **The SPA builds on Node 26 with pnpm 12.** `NODE_IMAGE` is `node:26-slim`, `PNPM_VERSION` and
@@ -82,6 +89,10 @@ Categories used here:
   collectors are served, so it is an operator's step. **Shipped.**
 
 ### Fixed
+
+- **`PreviewMatches` returns the right collectors for a git-sourced pipeline.** It built its internal
+  pipeline without `RepoLinkCollectorID`, so previewing any git-sourced pipeline returned zero collectors,
+  silently. It now resolves the pipeline's linked collector. **Shipped.**
 
 - **A destination a wizard pipeline uses can no longer be deleted (#262).** `DeleteDestination`'s
   in-use check looked for a `destination_id` key that no wizard stores (wizards store the
