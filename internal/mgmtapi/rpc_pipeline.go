@@ -817,6 +817,18 @@ func (s *PipelineService) PreviewMatches(ctx context.Context, req *connect.Reque
 		Matchers: matchers,
 		Source:   p.Source,
 	}
+	// A git pipeline matches by its linked collector, not by matchers
+	// (merge.MatchesPipeline checks RepoLinkCollectorID for Source == "git").
+	// This was never populated here, so PreviewMatches on any git-sourced
+	// pipeline returned zero collectors, always, silently (§0 item 2 of
+	// docs/plans/2026-09-24-matcher-targeting-unified-plan.md). The DB row
+	// only carries RepoLinkID (the repo_link's own id); the target collector
+	// id is on that repo_link row.
+	if p.Source == "git" && p.RepoLinkID.Valid {
+		if link, linkErr := s.store.Queries.GetRepoLinkByID(ctx, p.RepoLinkID); linkErr == nil {
+			mp.RepoLinkCollectorID = repoLinkCollectorID(link.CollectorID)
+		}
+	}
 
 	matched, matchErr := s.previewMatchedCollectors(ctx, mp, orgID)
 	if matchErr != nil {

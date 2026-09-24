@@ -476,6 +476,62 @@ var _ = Describe("PipelineService Connect RPC", Label("integration"), func() {
 		Expect(preview()).To(HaveLen(1), "flag on: the collector's admin label must now participate in matching")
 	})
 
+	// §0 item 2 of docs/plans/2026-09-24-matcher-targeting-unified-plan.md:
+	// PreviewMatches built merge.Pipeline{ID, Name, Matchers, Source} for the
+	// loaded pipeline row without ever setting RepoLinkCollectorID. Since
+	// merge.MatchesPipeline matches a git pipeline by
+	// p.RepoLinkCollectorID == cl.CollectorID, an empty RepoLinkCollectorID
+	// meant PreviewMatches on any git-sourced pipeline returned zero
+	// collectors, always, silently — a distinct bug from the one already
+	// fixed on the actual serving path (internal/agentapi/service_test.go
+	// "serves a git-sourced pipeline linked to the collector by its repo
+	// link"). Fails on pre-fix code; passes after.
+	It("PreviewMatches returns a git-sourced pipeline's real linked collector, not zero", func() {
+		cookie := sessionCookie(true)
+
+		cluster, err := st.Queries.UpsertCluster(ctx, "preview-git-cluster")
+		Expect(err).NotTo(HaveOccurred())
+		Expect(st.Queries.ClaimCluster(ctx, sqlc.ClaimClusterParams{ID: cluster.ID, OrgID: orgUUID(orgID)})).To(Succeed())
+		collector, err := st.Queries.UpsertCollector(ctx, sqlc.UpsertCollectorParams{ClusterID: cluster.ID, Role: "metrics"})
+		Expect(err).NotTo(HaveOccurred())
+
+		cred, err := st.Queries.CreateGitCredential(ctx, sqlc.CreateGitCredentialParams{
+			OrgID: orgUUID(orgID), Name: "preview-git-cred", Kind: "pat",
+			Username:        pgtype.Text{String: "git", Valid: true},
+			ClientSecretEnc: []byte("enc"),
+			ProviderConfig:  json.RawMessage(`{}`),
+		})
+		Expect(err).NotTo(HaveOccurred())
+		link, err := st.Queries.CreateRepoLink(ctx, sqlc.CreateRepoLinkParams{
+			OrgID: orgUUID(orgID), CollectorID: collector.ID, CredentialID: cred.ID,
+			RepoUrl: "https://example.invalid/team/configs.git", Branch: "main", Path: "/",
+		})
+		Expect(err).NotTo(HaveOccurred())
+
+		p, err := st.Queries.CreatePipeline(ctx, sqlc.CreatePipelineParams{
+			OrgID: orgUUID(orgID), Name: "preview-git-pipe", Contents: `// git-sourced`,
+			Matchers: json.RawMessage(`[]`), // git pipelines carry no matchers by design
+			Enabled:  true, Source: "git",
+			WizardState: json.RawMessage(`{}`), CreatedBy: "gitsync", UpdatedBy: "gitsync",
+			RepoLinkID: link.ID,
+			GitPath:    pgtype.Text{String: "/preview-git-pipe.alloy", Valid: true},
+		})
+		Expect(err).NotTo(HaveOccurred())
+
+		resp := postConnect("/shepherd.mgmt.v1.PipelineService/PreviewMatches", map[string]any{
+			"org_id": orgID, "id": p.ID.String(),
+		}, cookie)
+		Expect(resp.StatusCode).To(Equal(http.StatusOK))
+		var payload struct {
+			Collectors []struct {
+				ID string `json:"id"`
+			} `json:"collectors"`
+		}
+		decodeBody(resp, &payload)
+		Expect(payload.Collectors).To(HaveLen(1), "must return the pipeline's real linked collector, not zero")
+		Expect(payload.Collectors[0].ID).To(Equal(collector.ID.String()))
+	})
+
 	// Red run that caught a real gap: recomputeOrgCaches (the eager
 	// background recompute EnablePipeline/DisablePipeline/UpdatePipeline/
 	// DeletePipeline kick off via `go s.recomputeOrgCaches(...)`) built its
