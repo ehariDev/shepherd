@@ -72,10 +72,16 @@ func (s *FleetService) GetReconciliation(ctx context.Context, req *connect.Reque
 }
 
 // reconcileServed rebuilds the pipeline set a collector SHOULD be served now —
-// the desired served state — by replicating internal/merge's match + role/signal
-// enforcement (enforce.go), the same loop that also derives each pipeline's
-// signals. Neither serve.Result nor merge.AssembleResult exposes the included
-// set, hence the replication.
+// the desired served state — using the same merge.Evaluate single decision
+// point (match, then derive signals, then enforce role) that Assemble and the
+// matcher preview handler use, built from the same BuildCollectorLabels
+// org-lookup → admin-labels → local-attrs pattern previewMatchedCollectors
+// uses (Phase 1 of docs/plans/2026-09-24-matcher-targeting-unified-plan.md —
+// this used to hand-inline a CollectorLabels literal with only role/cluster,
+// silently under-counting pipelines matched via an admin label or local
+// attribute for any org with either flag on). Neither serve.Result nor
+// merge.AssembleResult exposes the included set, hence the replication of
+// Assemble's inputs here rather than a call to Assemble itself.
 //
 // Because this set is enforcement-clean by construction, reconcile's
 // declared<->served check (role_signal_mismatch) never fires against it — that
@@ -110,23 +116,17 @@ func (s *FleetService) reconcileServed(ctx context.Context, orgID pgtype.UUID, c
 			Matchers: m, Source: ep.Source,
 			RepoLinkCollectorID: repoLinkCollectorID(ep.RepoLinkCollectorID),
 		}
-		matched, matchErr := merge.MatchesPipeline(p, cl)
-		if matchErr != nil || !matched {
+		result, evalErr := merge.Evaluate(p, cl, s.schema)
+		if evalErr != nil || !result.Served {
 			continue
 		}
-		// Mirror enforce.go: a pipeline whose signals can't be derived is
-		// fail-safe excluded from the served config, so it is not a served
-		// pipeline here either.
+		// Evaluate already derived and enforced signals to reach Served; this
+		// second Derive call only recovers the Signals value ServedPipeline
+		// carries for reconcile.Compare — it cannot fail here since Evaluate
+		// just succeeded against the same content and registry.
 		sig, derErr := signals.Derive(p.Contents, s.schema)
 		if derErr != nil {
 			continue
-		}
-		checkSet := sig.Combined
-		if !sig.Proven() {
-			checkSet = signals.NewSet(signals.All...)
-		}
-		if signals.Enforce(role, checkSet) != nil {
-			continue // excluded by role/signal enforcement — not served
 		}
 		served = append(served, reconcile.ServedPipeline{
 			Name:           p.Name,
