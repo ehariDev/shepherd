@@ -32,6 +32,28 @@ Categories used here:
   pipeline it will drop on its next config reload); root-level/BYO components are out of scope.
   _Shipped._ (#110)
 
+### Fixed — matcher targeting
+
+- **Fleet reconciliation now correctly accounts for label/attribute-matched pipelines.**
+  `reconcileServed`'s desired-state view previously hand-built a `CollectorLabels{role, cluster}`
+  value directly instead of calling `merge.BuildCollectorLabels`, so it silently omitted any pipeline
+  that matched only via an admin "Manage labels" key or an agent-reported local attribute — for any
+  org with `allow_label_matching` or `allow_local_attribute_matching` on, this surfaced as a false
+  "collector running a pipeline its desired state doesn't include" drift finding on the reconciliation
+  page. _Shipped._
+- **`PreviewMatches` now returns correct results for git-sourced pipelines.** It built the internal
+  matcher-evaluation pipeline without ever setting `RepoLinkCollectorID`, so previewing any git-sourced
+  pipeline always returned zero matched collectors — silently, with no error. It now resolves the
+  pipeline's linked collector via its repo link. _Shipped._
+- **`internal/merge.Evaluate`** is now the single decision point (match, then derive signals, then
+  enforce role) `Assemble` and `reconcileServed` both call, replacing two independent
+  reimplementations of the same match+enforce sequence that had already drifted apart once (the bug
+  above) and could drift again. A repo-wide guard (`scripts/repocheck`) now fails CI if a hand-rolled
+  `merge.CollectorLabels{}` literal reappears outside `internal/merge`. _Built, not wired_ — nothing
+  outside `internal/merge`/`reconcileServed` calls `Evaluate` yet; the planned `PreviewMatches` draft
+  preview and `EnablePipeline` guardrail work (`docs/plans/2026-09-24-matcher-targeting-unified-plan.md`
+  Phase 3+) will be the first consumers.
+
 ## v0.10.0
 
 Chart 0.14.0. A focused follow-up to v0.9.0's broad release, centred on the visual builder: a
