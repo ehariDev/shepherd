@@ -191,6 +191,11 @@ answer and the ledger item it produced is below.
       `docs/archive/plans/2026-09-18-reconciliation-surface.md`.
 - [ ] **Onboarding artifacts page** (W7): "connect an app" snippets for a tenant route.
 - [ ] **Chart-values generator UI** (W9) + gate G10 in the kind suite.
+- [ ] **Matcher targeting unified plan** (`docs/plans/2026-09-24-matcher-targeting-unified-plan.md`) —
+      in progress on `feat/matcher-targeting-unified-plan` (branched from PR #12's
+      `feat/label-matching-pr11`, ahead of that PR's merge to `main` per owner decision recorded in the
+      plan's status block). Phase 1 (engine fix: `merge.Evaluate`/`CompileMatchers`, `reconcileServed`
+      dedup, git-sourced `PreviewMatches` fix) is the current phase.
 
 ### Smaller follow-ups
 
