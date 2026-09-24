@@ -2,8 +2,8 @@
 // @generated from file shepherd/mgmt/v1/pipeline.proto (package shepherd.mgmt.v1, syntax proto3)
 /* eslint-disable */
 
-import type { GenFile, GenMessage, GenService } from "@bufbuild/protobuf/codegenv2";
-import { fileDesc, messageDesc, serviceDesc } from "@bufbuild/protobuf/codegenv2";
+import type { GenEnum, GenFile, GenMessage, GenService } from "@bufbuild/protobuf/codegenv2";
+import { enumDesc, fileDesc, messageDesc, serviceDesc } from "@bufbuild/protobuf/codegenv2";
 import type { Timestamp } from "@bufbuild/protobuf/wkt";
 import { file_google_protobuf_struct, file_google_protobuf_timestamp } from "@bufbuild/protobuf/wkt";
 import type { Diagnostic } from "./common_pb";
@@ -14,7 +14,7 @@ import type { JsonObject, Message } from "@bufbuild/protobuf";
  * Describes the file shepherd/mgmt/v1/pipeline.proto.
  */
 export const file_shepherd_mgmt_v1_pipeline: GenFile = /*@__PURE__*/
-  fileDesc("Ch9zaGVwaGVyZC9tZ210L3YxL3BpcGVsaW5lLnByb3RvEhBzaGVwaGVyZC5tZ210LnYxIuEBChBQaXBlbGluZVJldmlzaW9uEhAKCHJldmlzaW9uGAEgASgFEhIKCmNoYW5nZWRfYnkYAiABKAkSLgoKY2hhbmdlZF9hdBgDIAEoCzIaLmdvb2dsZS5wcm90b2J1Zi5UaW1lc3RhbXASEwoLY2hhbmdlX25vdGUYBCABKAkSEAoIY29udGVudHMYBSABKAkSEAoIbWF0Y2hlcnMYBiADKAkSDwoHZW5hYmxlZBgHIAEoCBItCgx3aXphcmRfc3RhdGUYCCABKAsyFy5nb29nbGUucHJvdG9idWYuU3RydWN0IpADCghQaXBlbGluZRIKCgJpZBgBIAEoCRIOCgZvcmdfaWQYAiABKAkSDAoEbmFtZRgDIAEoCRIQCghjb250ZW50cxgEIAEoCRIQCghtYXRjaGVycxgFIAMoCRIPCgdlbmFibGVkGAYgASgIEg4KBnNvdXJjZRgHIAEoCRIQCghyZXZpc2lvbhgIIAEoBRISCgpjcmVhdGVkX2J5GAkgASgJEhIKCnVwZGF0ZWRfYnkYCiABKAkSLgoKY3JlYXRlZF9hdBgLIAEoCzIaLmdvb2dsZS5wcm90b2J1Zi5UaW1lc3RhbXASLgoKdXBkYXRlZF9hdBgMIAEoCzIaLmdvb2dsZS5wcm90b2J1Zi5UaW1lc3RhbXASNQoJcmV2aXNpb25zGA0gAygLMiIuc2hlcGhlcmQubWdtdC52MS5QaXBlbGluZVJldmlzaW9uEi0KDHdpemFyZF9zdGF0ZRgOIAEoCzIXLmdvb2dsZS5wcm90b2J1Zi5TdHJ1Y3QSFQoNb3duZXJfdGVhbV9pZBgPIAEoCSI9ChRMaXN0UGlwZWxpbmVzUmVxdWVzdBIOCgZvcmdfaWQYASABKAkSFQoNbmVlZHNfdXBncmFkZRgCIAEoCCJRChVMaXN0UGlwZWxpbmVzUmVzcG9uc2USKQoFaXRlbXMYASADKAsyGi5zaGVwaGVyZC5tZ210LnYxLlBpcGVsaW5lEg0KBXRvdGFsGAIgASgFIjAKEkdldFBpcGVsaW5lUmVxdWVzdBIOCgZvcmdfaWQYASABKAkSCgoCaWQYAiABKAkirwEKFUNyZWF0ZVBpcGVsaW5lUmVxdWVzdBIOCgZvcmdfaWQYASABKAkSDAoEbmFtZRgCIAEoCRIQCghjb250ZW50cxgDIAEoCRIQCghtYXRjaGVycxgEIAMoCRIOCgZzb3VyY2UYBSABKAkSLQoMd2l6YXJkX3N0YXRlGAYgASgLMhcuZ29vZ2xlLnByb3RvYnVmLlN0cnVjdBIVCg1vd25lcl90ZWFtX2lkGAcgASgJIqQBChVVcGRhdGVQaXBlbGluZVJlcXVlc3QSDgoGb3JnX2lkGAEgASgJEgoKAmlkGAIgASgJEgwKBG5hbWUYAyABKAkSEAoIY29udGVudHMYBCABKAkSEAoIbWF0Y2hlcnMYBSADKAkSDgoGc291cmNlGAYgASgJEi0KDHdpemFyZF9zdGF0ZRgHIAEoCzIXLmdvb2dsZS5wcm90b2J1Zi5TdHJ1Y3QiMwoVRGVsZXRlUGlwZWxpbmVSZXF1ZXN0Eg4KBm9yZ19pZBgBIAEoCRIKCgJpZBgCIAEoCSIYChZEZWxldGVQaXBlbGluZVJlc3BvbnNlIjMKFUVuYWJsZVBpcGVsaW5lUmVxdWVzdBIOCgZvcmdfaWQYASABKAkSCgoCaWQYAiABKAkiNAoWRGlzYWJsZVBpcGVsaW5lUmVxdWVzdBIOCgZvcmdfaWQYASABKAkSCgoCaWQYAiABKAkiSQoXVmFsaWRhdGVQaXBlbGluZVJlcXVlc3QSDgoGb3JnX2lkGAEgASgJEgwKBG5hbWUYAiABKAkSEAoIY29udGVudHMYAyABKAkiOQoVRm9ybWF0UGlwZWxpbmVSZXF1ZXN0Eg4KBm9yZ19pZBgBIAEoCRIQCghjb250ZW50cxgCIAEoCSIrChZGb3JtYXRQaXBlbGluZVJlc3BvbnNlEhEKCWZvcm1hdHRlZBgBIAEoCSKhAQoYVmFsaWRhdGVQaXBlbGluZVJlc3BvbnNlEg0KBXZhbGlkGAEgASgIEjEKC2RpYWdub3N0aWNzGAIgAygLMhwuc2hlcGhlcmQubWdtdC52MS5EaWFnbm9zdGljEg8KB3NpZ25hbHMYAyADKAkSFgoOc2lnbmFsc19wcm92ZW4YBCABKAgSGgoSdW5rbm93bl9jb21wb25lbnRzGAUgAygJIjMKFVByZXZpZXdNYXRjaGVzUmVxdWVzdBIOCgZvcmdfaWQYASABKAkSCgoCaWQYAiABKAkiPQoQTWF0Y2hlZENvbGxlY3RvchIPCgdjbHVzdGVyGAEgASgJEgwKBHJvbGUYAiABKAkSCgoCaWQYAyABKAkiUAoWUHJldmlld01hdGNoZXNSZXNwb25zZRI2Cgpjb2xsZWN0b3JzGAEgAygLMiIuc2hlcGhlcmQubWdtdC52MS5NYXRjaGVkQ29sbGVjdG9yIjIKFExpc3RSZXZpc2lvbnNSZXF1ZXN0Eg4KBm9yZ19pZBgBIAEoCRIKCgJpZBgCIAEoCSJZChVMaXN0UmV2aXNpb25zUmVzcG9uc2USMQoFaXRlbXMYASADKAsyIi5zaGVwaGVyZC5tZ210LnYxLlBpcGVsaW5lUmV2aXNpb24SDQoFdG90YWwYAiABKAUiQgoSR2V0UmV2aXNpb25SZXF1ZXN0Eg4KBm9yZ19pZBgBIAEoCRIKCgJpZBgCIAEoCRIQCghyZXZpc2lvbhgDIAEoBSJbChZSZXN0b3JlUmV2aXNpb25SZXF1ZXN0Eg4KBm9yZ19pZBgBIAEoCRIKCgJpZBgCIAEoCRIQCghyZXZpc2lvbhgDIAEoBRITCgtjaGFuZ2Vfbm90ZRgEIAEoCSJMChdTZXRQaXBlbGluZU93bmVyUmVxdWVzdBIOCgZvcmdfaWQYASABKAkSCgoCaWQYAiABKAkSFQoNb3duZXJfdGVhbV9pZBgDIAEoCTLHCgoPUGlwZWxpbmVTZXJ2aWNlEmIKDUxpc3RQaXBlbGluZXMSJi5zaGVwaGVyZC5tZ210LnYxLkxpc3RQaXBlbGluZXNSZXF1ZXN0Gicuc2hlcGhlcmQubWdtdC52MS5MaXN0UGlwZWxpbmVzUmVzcG9uc2UiABJRCgtHZXRQaXBlbGluZRIkLnNoZXBoZXJkLm1nbXQudjEuR2V0UGlwZWxpbmVSZXF1ZXN0Ghouc2hlcGhlcmQubWdtdC52MS5QaXBlbGluZSIAElcKDkNyZWF0ZVBpcGVsaW5lEicuc2hlcGhlcmQubWdtdC52MS5DcmVhdGVQaXBlbGluZVJlcXVlc3QaGi5zaGVwaGVyZC5tZ210LnYxLlBpcGVsaW5lIgASVwoOVXBkYXRlUGlwZWxpbmUSJy5zaGVwaGVyZC5tZ210LnYxLlVwZGF0ZVBpcGVsaW5lUmVxdWVzdBoaLnNoZXBoZXJkLm1nbXQudjEuUGlwZWxpbmUiABJlCg5EZWxldGVQaXBlbGluZRInLnNoZXBoZXJkLm1nbXQudjEuRGVsZXRlUGlwZWxpbmVSZXF1ZXN0Giguc2hlcGhlcmQubWdtdC52MS5EZWxldGVQaXBlbGluZVJlc3BvbnNlIgASVwoORW5hYmxlUGlwZWxpbmUSJy5zaGVwaGVyZC5tZ210LnYxLkVuYWJsZVBpcGVsaW5lUmVxdWVzdBoaLnNoZXBoZXJkLm1nbXQudjEuUGlwZWxpbmUiABJZCg9EaXNhYmxlUGlwZWxpbmUSKC5zaGVwaGVyZC5tZ210LnYxLkRpc2FibGVQaXBlbGluZVJlcXVlc3QaGi5zaGVwaGVyZC5tZ210LnYxLlBpcGVsaW5lIgASawoQVmFsaWRhdGVQaXBlbGluZRIpLnNoZXBoZXJkLm1nbXQudjEuVmFsaWRhdGVQaXBlbGluZVJlcXVlc3QaKi5zaGVwaGVyZC5tZ210LnYxLlZhbGlkYXRlUGlwZWxpbmVSZXNwb25zZSIAEmUKDkZvcm1hdFBpcGVsaW5lEicuc2hlcGhlcmQubWdtdC52MS5Gb3JtYXRQaXBlbGluZVJlcXVlc3QaKC5zaGVwaGVyZC5tZ210LnYxLkZvcm1hdFBpcGVsaW5lUmVzcG9uc2UiABJlCg5QcmV2aWV3TWF0Y2hlcxInLnNoZXBoZXJkLm1nbXQudjEuUHJldmlld01hdGNoZXNSZXF1ZXN0Giguc2hlcGhlcmQubWdtdC52MS5QcmV2aWV3TWF0Y2hlc1Jlc3BvbnNlIgASYgoNTGlzdFJldmlzaW9ucxImLnNoZXBoZXJkLm1nbXQudjEuTGlzdFJldmlzaW9uc1JlcXVlc3QaJy5zaGVwaGVyZC5tZ210LnYxLkxpc3RSZXZpc2lvbnNSZXNwb25zZSIAElkKC0dldFJldmlzaW9uEiQuc2hlcGhlcmQubWdtdC52MS5HZXRSZXZpc2lvblJlcXVlc3QaIi5zaGVwaGVyZC5tZ210LnYxLlBpcGVsaW5lUmV2aXNpb24iABJZCg9SZXN0b3JlUmV2aXNpb24SKC5zaGVwaGVyZC5tZ210LnYxLlJlc3RvcmVSZXZpc2lvblJlcXVlc3QaGi5zaGVwaGVyZC5tZ210LnYxLlBpcGVsaW5lIgASWwoQU2V0UGlwZWxpbmVPd25lchIpLnNoZXBoZXJkLm1nbXQudjEuU2V0UGlwZWxpbmVPd25lclJlcXVlc3QaGi5zaGVwaGVyZC5tZ210LnYxLlBpcGVsaW5lIgBCJlokc2hlcGhlcmQvZ2VuL3NoZXBoZXJkL21nbXQvdjE7bWdtdHYxYgZwcm90bzM", [file_google_protobuf_struct, file_google_protobuf_timestamp, file_shepherd_mgmt_v1_common]);
+  fileDesc("Ch9zaGVwaGVyZC9tZ210L3YxL3BpcGVsaW5lLnByb3RvEhBzaGVwaGVyZC5tZ210LnYxIuEBChBQaXBlbGluZVJldmlzaW9uEhAKCHJldmlzaW9uGAEgASgFEhIKCmNoYW5nZWRfYnkYAiABKAkSLgoKY2hhbmdlZF9hdBgDIAEoCzIaLmdvb2dsZS5wcm90b2J1Zi5UaW1lc3RhbXASEwoLY2hhbmdlX25vdGUYBCABKAkSEAoIY29udGVudHMYBSABKAkSEAoIbWF0Y2hlcnMYBiADKAkSDwoHZW5hYmxlZBgHIAEoCBItCgx3aXphcmRfc3RhdGUYCCABKAsyFy5nb29nbGUucHJvdG9idWYuU3RydWN0IsEDCghQaXBlbGluZRIKCgJpZBgBIAEoCRIOCgZvcmdfaWQYAiABKAkSDAoEbmFtZRgDIAEoCRIQCghjb250ZW50cxgEIAEoCRIQCghtYXRjaGVycxgFIAMoCRIPCgdlbmFibGVkGAYgASgIEg4KBnNvdXJjZRgHIAEoCRIQCghyZXZpc2lvbhgIIAEoBRISCgpjcmVhdGVkX2J5GAkgASgJEhIKCnVwZGF0ZWRfYnkYCiABKAkSLgoKY3JlYXRlZF9hdBgLIAEoCzIaLmdvb2dsZS5wcm90b2J1Zi5UaW1lc3RhbXASLgoKdXBkYXRlZF9hdBgMIAEoCzIaLmdvb2dsZS5wcm90b2J1Zi5UaW1lc3RhbXASNQoJcmV2aXNpb25zGA0gAygLMiIuc2hlcGhlcmQubWdtdC52MS5QaXBlbGluZVJldmlzaW9uEi0KDHdpemFyZF9zdGF0ZRgOIAEoCzIXLmdvb2dsZS5wcm90b2J1Zi5TdHJ1Y3QSFQoNb3duZXJfdGVhbV9pZBgPIAEoCRIvCgpleGNsdXNpb25zGBAgAygLMhsuc2hlcGhlcmQubWdtdC52MS5FeGNsdXNpb24iKwoJRXhjbHVzaW9uEg4KBnJlYXNvbhgBIAEoCRIOCgZkZXRhaWwYAiABKAkiPQoUTGlzdFBpcGVsaW5lc1JlcXVlc3QSDgoGb3JnX2lkGAEgASgJEhUKDW5lZWRzX3VwZ3JhZGUYAiABKAgiUQoVTGlzdFBpcGVsaW5lc1Jlc3BvbnNlEikKBWl0ZW1zGAEgAygLMhouc2hlcGhlcmQubWdtdC52MS5QaXBlbGluZRINCgV0b3RhbBgCIAEoBSIwChJHZXRQaXBlbGluZVJlcXVlc3QSDgoGb3JnX2lkGAEgASgJEgoKAmlkGAIgASgJIq8BChVDcmVhdGVQaXBlbGluZVJlcXVlc3QSDgoGb3JnX2lkGAEgASgJEgwKBG5hbWUYAiABKAkSEAoIY29udGVudHMYAyABKAkSEAoIbWF0Y2hlcnMYBCADKAkSDgoGc291cmNlGAUgASgJEi0KDHdpemFyZF9zdGF0ZRgGIAEoCzIXLmdvb2dsZS5wcm90b2J1Zi5TdHJ1Y3QSFQoNb3duZXJfdGVhbV9pZBgHIAEoCSKkAQoVVXBkYXRlUGlwZWxpbmVSZXF1ZXN0Eg4KBm9yZ19pZBgBIAEoCRIKCgJpZBgCIAEoCRIMCgRuYW1lGAMgASgJEhAKCGNvbnRlbnRzGAQgASgJEhAKCG1hdGNoZXJzGAUgAygJEg4KBnNvdXJjZRgGIAEoCRItCgx3aXphcmRfc3RhdGUYByABKAsyFy5nb29nbGUucHJvdG9idWYuU3RydWN0IjMKFURlbGV0ZVBpcGVsaW5lUmVxdWVzdBIOCgZvcmdfaWQYASABKAkSCgoCaWQYAiABKAkiGAoWRGVsZXRlUGlwZWxpbmVSZXNwb25zZSIzChVFbmFibGVQaXBlbGluZVJlcXVlc3QSDgoGb3JnX2lkGAEgASgJEgoKAmlkGAIgASgJIjQKFkRpc2FibGVQaXBlbGluZVJlcXVlc3QSDgoGb3JnX2lkGAEgASgJEgoKAmlkGAIgASgJIkkKF1ZhbGlkYXRlUGlwZWxpbmVSZXF1ZXN0Eg4KBm9yZ19pZBgBIAEoCRIMCgRuYW1lGAIgASgJEhAKCGNvbnRlbnRzGAMgASgJIjkKFUZvcm1hdFBpcGVsaW5lUmVxdWVzdBIOCgZvcmdfaWQYASABKAkSEAoIY29udGVudHMYAiABKAkiKwoWRm9ybWF0UGlwZWxpbmVSZXNwb25zZRIRCglmb3JtYXR0ZWQYASABKAkioQEKGFZhbGlkYXRlUGlwZWxpbmVSZXNwb25zZRINCgV2YWxpZBgBIAEoCBIxCgtkaWFnbm9zdGljcxgCIAMoCzIcLnNoZXBoZXJkLm1nbXQudjEuRGlhZ25vc3RpYxIPCgdzaWduYWxzGAMgAygJEhYKDnNpZ25hbHNfcHJvdmVuGAQgASgIEhoKEnVua25vd25fY29tcG9uZW50cxgFIAMoCSIgCgxNYXRjaGVyRHJhZnQSEAoIbWF0Y2hlcnMYASADKAkicQoVUHJldmlld01hdGNoZXNSZXF1ZXN0Eg4KBm9yZ19pZBgBIAEoCRIKCgJpZBgCIAEoCRIyCgVkcmFmdBgDIAEoCzIeLnNoZXBoZXJkLm1nbXQudjEuTWF0Y2hlckRyYWZ0SACIAQFCCAoGX2RyYWZ0Ip8BChBNYXRjaGVkQ29sbGVjdG9yEg8KB2NsdXN0ZXIYASABKAkSDAoEcm9sZRgCIAEoCRIKCgJpZBgDIAEoCRItCgZzdGF0dXMYBCABKA4yHS5zaGVwaGVyZC5tZ210LnYxLk1hdGNoU3RhdHVzEjEKCm1hdGNoZWRfb24YBSADKA4yHS5zaGVwaGVyZC5tZ210LnYxLkxhYmVsU291cmNlIrsBChZQcmV2aWV3TWF0Y2hlc1Jlc3BvbnNlEjYKCmNvbGxlY3RvcnMYASADKAsyIi5zaGVwaGVyZC5tZ210LnYxLk1hdGNoZWRDb2xsZWN0b3ISGAoQdG90YWxfY29sbGVjdG9ycxgCIAEoBRIbChNuZXdseV9tYXRjaGVkX2NvdW50GAMgASgFEh8KF25vX2xvbmdlcl9tYXRjaGVkX2NvdW50GAQgASgFEhEKCXRydW5jYXRlZBgFIAEoCCIyChRMaXN0UmV2aXNpb25zUmVxdWVzdBIOCgZvcmdfaWQYASABKAkSCgoCaWQYAiABKAkiWQoVTGlzdFJldmlzaW9uc1Jlc3BvbnNlEjEKBWl0ZW1zGAEgAygLMiIuc2hlcGhlcmQubWdtdC52MS5QaXBlbGluZVJldmlzaW9uEg0KBXRvdGFsGAIgASgFIkIKEkdldFJldmlzaW9uUmVxdWVzdBIOCgZvcmdfaWQYASABKAkSCgoCaWQYAiABKAkSEAoIcmV2aXNpb24YAyABKAUiWwoWUmVzdG9yZVJldmlzaW9uUmVxdWVzdBIOCgZvcmdfaWQYASABKAkSCgoCaWQYAiABKAkSEAoIcmV2aXNpb24YAyABKAUSEwoLY2hhbmdlX25vdGUYBCABKAkiTAoXU2V0UGlwZWxpbmVPd25lclJlcXVlc3QSDgoGb3JnX2lkGAEgASgJEgoKAmlkGAIgASgJEhUKDW93bmVyX3RlYW1faWQYAyABKAkqjwEKC01hdGNoU3RhdHVzEhwKGE1BVENIX1NUQVRVU19VTlNQRUNJRklFRBAAEh4KGk1BVENIX1NUQVRVU19ORVdMWV9NQVRDSEVEEAESHgoaTUFUQ0hfU1RBVFVTX1NUSUxMX01BVENIRUQQAhIiCh5NQVRDSF9TVEFUVVNfTk9fTE9OR0VSX01BVENIRUQQAyqFAQoLTGFiZWxTb3VyY2USHAoYTEFCRUxfU09VUkNFX1VOU1BFQ0lGSUVEEAASGAoUTEFCRUxfU09VUkNFX0JVSUxUSU4QARIcChhMQUJFTF9TT1VSQ0VfQURNSU5fTEFCRUwQAhIgChxMQUJFTF9TT1VSQ0VfTE9DQUxfQVRUUklCVVRFEAMyxwoKD1BpcGVsaW5lU2VydmljZRJiCg1MaXN0UGlwZWxpbmVzEiYuc2hlcGhlcmQubWdtdC52MS5MaXN0UGlwZWxpbmVzUmVxdWVzdBonLnNoZXBoZXJkLm1nbXQudjEuTGlzdFBpcGVsaW5lc1Jlc3BvbnNlIgASUQoLR2V0UGlwZWxpbmUSJC5zaGVwaGVyZC5tZ210LnYxLkdldFBpcGVsaW5lUmVxdWVzdBoaLnNoZXBoZXJkLm1nbXQudjEuUGlwZWxpbmUiABJXCg5DcmVhdGVQaXBlbGluZRInLnNoZXBoZXJkLm1nbXQudjEuQ3JlYXRlUGlwZWxpbmVSZXF1ZXN0Ghouc2hlcGhlcmQubWdtdC52MS5QaXBlbGluZSIAElcKDlVwZGF0ZVBpcGVsaW5lEicuc2hlcGhlcmQubWdtdC52MS5VcGRhdGVQaXBlbGluZVJlcXVlc3QaGi5zaGVwaGVyZC5tZ210LnYxLlBpcGVsaW5lIgASZQoORGVsZXRlUGlwZWxpbmUSJy5zaGVwaGVyZC5tZ210LnYxLkRlbGV0ZVBpcGVsaW5lUmVxdWVzdBooLnNoZXBoZXJkLm1nbXQudjEuRGVsZXRlUGlwZWxpbmVSZXNwb25zZSIAElcKDkVuYWJsZVBpcGVsaW5lEicuc2hlcGhlcmQubWdtdC52MS5FbmFibGVQaXBlbGluZVJlcXVlc3QaGi5zaGVwaGVyZC5tZ210LnYxLlBpcGVsaW5lIgASWQoPRGlzYWJsZVBpcGVsaW5lEiguc2hlcGhlcmQubWdtdC52MS5EaXNhYmxlUGlwZWxpbmVSZXF1ZXN0Ghouc2hlcGhlcmQubWdtdC52MS5QaXBlbGluZSIAEmsKEFZhbGlkYXRlUGlwZWxpbmUSKS5zaGVwaGVyZC5tZ210LnYxLlZhbGlkYXRlUGlwZWxpbmVSZXF1ZXN0Giouc2hlcGhlcmQubWdtdC52MS5WYWxpZGF0ZVBpcGVsaW5lUmVzcG9uc2UiABJlCg5Gb3JtYXRQaXBlbGluZRInLnNoZXBoZXJkLm1nbXQudjEuRm9ybWF0UGlwZWxpbmVSZXF1ZXN0Giguc2hlcGhlcmQubWdtdC52MS5Gb3JtYXRQaXBlbGluZVJlc3BvbnNlIgASZQoOUHJldmlld01hdGNoZXMSJy5zaGVwaGVyZC5tZ210LnYxLlByZXZpZXdNYXRjaGVzUmVxdWVzdBooLnNoZXBoZXJkLm1nbXQudjEuUHJldmlld01hdGNoZXNSZXNwb25zZSIAEmIKDUxpc3RSZXZpc2lvbnMSJi5zaGVwaGVyZC5tZ210LnYxLkxpc3RSZXZpc2lvbnNSZXF1ZXN0Gicuc2hlcGhlcmQubWdtdC52MS5MaXN0UmV2aXNpb25zUmVzcG9uc2UiABJZCgtHZXRSZXZpc2lvbhIkLnNoZXBoZXJkLm1nbXQudjEuR2V0UmV2aXNpb25SZXF1ZXN0GiIuc2hlcGhlcmQubWdtdC52MS5QaXBlbGluZVJldmlzaW9uIgASWQoPUmVzdG9yZVJldmlzaW9uEiguc2hlcGhlcmQubWdtdC52MS5SZXN0b3JlUmV2aXNpb25SZXF1ZXN0Ghouc2hlcGhlcmQubWdtdC52MS5QaXBlbGluZSIAElsKEFNldFBpcGVsaW5lT3duZXISKS5zaGVwaGVyZC5tZ210LnYxLlNldFBpcGVsaW5lT3duZXJSZXF1ZXN0Ghouc2hlcGhlcmQubWdtdC52MS5QaXBlbGluZSIAQiZaJHNoZXBoZXJkL2dlbi9zaGVwaGVyZC9tZ210L3YxO21nbXR2MWIGcHJvdG8z", [file_google_protobuf_struct, file_google_protobuf_timestamp, file_shepherd_mgmt_v1_common]);
 
 /**
  * PipelineRevision mirrors internal/mgmtapi/pipelines.go: revisionResponse.
@@ -166,6 +166,16 @@ export type Pipeline = Message<"shepherd.mgmt.v1.Pipeline"> & {
    * @generated from field: string owner_team_id = 15;
    */
   ownerTeamId: string;
+
+  /**
+   * exclusions lists every reason this pipeline is matched against at least
+   * one collector but left out of that collector's assembled config — see
+   * internal/merge.Assemble's AssembleResult.Exclusions and
+   * docs/plans/2026-09-24-matcher-targeting-unified-plan.md Phase 5.
+   *
+   * @generated from field: repeated shepherd.mgmt.v1.Exclusion exclusions = 16;
+   */
+  exclusions: Exclusion[];
 };
 
 /**
@@ -174,6 +184,38 @@ export type Pipeline = Message<"shepherd.mgmt.v1.Pipeline"> & {
  */
 export const PipelineSchema: GenMessage<Pipeline> = /*@__PURE__*/
   messageDesc(file_shepherd_mgmt_v1_pipeline, 1);
+
+/**
+ * Exclusion records one reason a pipeline that otherwise matches a collector
+ * was left out of that collector's assembled config — see
+ * internal/merge.Exclusion and internal/merge.Evaluate's Reason codes.
+ *
+ * @generated from message shepherd.mgmt.v1.Exclusion
+ */
+export type Exclusion = Message<"shepherd.mgmt.v1.Exclusion"> & {
+  /**
+   * reason is one of "unparsable_matcher", "role_signal_mismatch", or
+   * "zero_matchers" (internal/merge.Reason* constants).
+   *
+   * @generated from field: string reason = 1;
+   */
+  reason: string;
+
+  /**
+   * detail is a human-readable explanation, e.g. which matcher failed to
+   * parse or which signal the collector's role disallows.
+   *
+   * @generated from field: string detail = 2;
+   */
+  detail: string;
+};
+
+/**
+ * Describes the message shepherd.mgmt.v1.Exclusion.
+ * Use `create(ExclusionSchema)` to create a new message.
+ */
+export const ExclusionSchema: GenMessage<Exclusion> = /*@__PURE__*/
+  messageDesc(file_shepherd_mgmt_v1_pipeline, 2);
 
 /**
  * @generated from message shepherd.mgmt.v1.ListPipelinesRequest
@@ -199,7 +241,7 @@ export type ListPipelinesRequest = Message<"shepherd.mgmt.v1.ListPipelinesReques
  * Use `create(ListPipelinesRequestSchema)` to create a new message.
  */
 export const ListPipelinesRequestSchema: GenMessage<ListPipelinesRequest> = /*@__PURE__*/
-  messageDesc(file_shepherd_mgmt_v1_pipeline, 2);
+  messageDesc(file_shepherd_mgmt_v1_pipeline, 3);
 
 /**
  * @generated from message shepherd.mgmt.v1.ListPipelinesResponse
@@ -221,7 +263,7 @@ export type ListPipelinesResponse = Message<"shepherd.mgmt.v1.ListPipelinesRespo
  * Use `create(ListPipelinesResponseSchema)` to create a new message.
  */
 export const ListPipelinesResponseSchema: GenMessage<ListPipelinesResponse> = /*@__PURE__*/
-  messageDesc(file_shepherd_mgmt_v1_pipeline, 3);
+  messageDesc(file_shepherd_mgmt_v1_pipeline, 4);
 
 /**
  * @generated from message shepherd.mgmt.v1.GetPipelineRequest
@@ -243,7 +285,7 @@ export type GetPipelineRequest = Message<"shepherd.mgmt.v1.GetPipelineRequest"> 
  * Use `create(GetPipelineRequestSchema)` to create a new message.
  */
 export const GetPipelineRequestSchema: GenMessage<GetPipelineRequest> = /*@__PURE__*/
-  messageDesc(file_shepherd_mgmt_v1_pipeline, 4);
+  messageDesc(file_shepherd_mgmt_v1_pipeline, 5);
 
 /**
  * CreatePipelineRequest mirrors pipelineRequest in pipelines.go. wizard_state
@@ -300,7 +342,7 @@ export type CreatePipelineRequest = Message<"shepherd.mgmt.v1.CreatePipelineRequ
  * Use `create(CreatePipelineRequestSchema)` to create a new message.
  */
 export const CreatePipelineRequestSchema: GenMessage<CreatePipelineRequest> = /*@__PURE__*/
-  messageDesc(file_shepherd_mgmt_v1_pipeline, 5);
+  messageDesc(file_shepherd_mgmt_v1_pipeline, 6);
 
 /**
  * @generated from message shepherd.mgmt.v1.UpdatePipelineRequest
@@ -355,7 +397,7 @@ export type UpdatePipelineRequest = Message<"shepherd.mgmt.v1.UpdatePipelineRequ
  * Use `create(UpdatePipelineRequestSchema)` to create a new message.
  */
 export const UpdatePipelineRequestSchema: GenMessage<UpdatePipelineRequest> = /*@__PURE__*/
-  messageDesc(file_shepherd_mgmt_v1_pipeline, 6);
+  messageDesc(file_shepherd_mgmt_v1_pipeline, 7);
 
 /**
  * @generated from message shepherd.mgmt.v1.DeletePipelineRequest
@@ -377,7 +419,7 @@ export type DeletePipelineRequest = Message<"shepherd.mgmt.v1.DeletePipelineRequ
  * Use `create(DeletePipelineRequestSchema)` to create a new message.
  */
 export const DeletePipelineRequestSchema: GenMessage<DeletePipelineRequest> = /*@__PURE__*/
-  messageDesc(file_shepherd_mgmt_v1_pipeline, 7);
+  messageDesc(file_shepherd_mgmt_v1_pipeline, 8);
 
 /**
  * @generated from message shepherd.mgmt.v1.DeletePipelineResponse
@@ -390,7 +432,7 @@ export type DeletePipelineResponse = Message<"shepherd.mgmt.v1.DeletePipelineRes
  * Use `create(DeletePipelineResponseSchema)` to create a new message.
  */
 export const DeletePipelineResponseSchema: GenMessage<DeletePipelineResponse> = /*@__PURE__*/
-  messageDesc(file_shepherd_mgmt_v1_pipeline, 8);
+  messageDesc(file_shepherd_mgmt_v1_pipeline, 9);
 
 /**
  * @generated from message shepherd.mgmt.v1.EnablePipelineRequest
@@ -412,7 +454,7 @@ export type EnablePipelineRequest = Message<"shepherd.mgmt.v1.EnablePipelineRequ
  * Use `create(EnablePipelineRequestSchema)` to create a new message.
  */
 export const EnablePipelineRequestSchema: GenMessage<EnablePipelineRequest> = /*@__PURE__*/
-  messageDesc(file_shepherd_mgmt_v1_pipeline, 9);
+  messageDesc(file_shepherd_mgmt_v1_pipeline, 10);
 
 /**
  * @generated from message shepherd.mgmt.v1.DisablePipelineRequest
@@ -434,7 +476,7 @@ export type DisablePipelineRequest = Message<"shepherd.mgmt.v1.DisablePipelineRe
  * Use `create(DisablePipelineRequestSchema)` to create a new message.
  */
 export const DisablePipelineRequestSchema: GenMessage<DisablePipelineRequest> = /*@__PURE__*/
-  messageDesc(file_shepherd_mgmt_v1_pipeline, 10);
+  messageDesc(file_shepherd_mgmt_v1_pipeline, 11);
 
 /**
  * ValidatePipelineRequest mirrors pipelineRequest as used by the standalone
@@ -464,7 +506,7 @@ export type ValidatePipelineRequest = Message<"shepherd.mgmt.v1.ValidatePipeline
  * Use `create(ValidatePipelineRequestSchema)` to create a new message.
  */
 export const ValidatePipelineRequestSchema: GenMessage<ValidatePipelineRequest> = /*@__PURE__*/
-  messageDesc(file_shepherd_mgmt_v1_pipeline, 11);
+  messageDesc(file_shepherd_mgmt_v1_pipeline, 12);
 
 /**
  * FormatPipelineRequest carries the raw pipeline body to canonicalise. org_id
@@ -490,7 +532,7 @@ export type FormatPipelineRequest = Message<"shepherd.mgmt.v1.FormatPipelineRequ
  * Use `create(FormatPipelineRequestSchema)` to create a new message.
  */
 export const FormatPipelineRequestSchema: GenMessage<FormatPipelineRequest> = /*@__PURE__*/
-  messageDesc(file_shepherd_mgmt_v1_pipeline, 12);
+  messageDesc(file_shepherd_mgmt_v1_pipeline, 13);
 
 /**
  * FormatPipelineResponse returns the canonicalised source. Unlike
@@ -512,7 +554,7 @@ export type FormatPipelineResponse = Message<"shepherd.mgmt.v1.FormatPipelineRes
  * Use `create(FormatPipelineResponseSchema)` to create a new message.
  */
 export const FormatPipelineResponseSchema: GenMessage<FormatPipelineResponse> = /*@__PURE__*/
-  messageDesc(file_shepherd_mgmt_v1_pipeline, 13);
+  messageDesc(file_shepherd_mgmt_v1_pipeline, 14);
 
 /**
  * ValidatePipelineResponse mirrors internal/validate.Result. The endpoint
@@ -571,7 +613,30 @@ export type ValidatePipelineResponse = Message<"shepherd.mgmt.v1.ValidatePipelin
  * Use `create(ValidatePipelineResponseSchema)` to create a new message.
  */
 export const ValidatePipelineResponseSchema: GenMessage<ValidatePipelineResponse> = /*@__PURE__*/
-  messageDesc(file_shepherd_mgmt_v1_pipeline, 14);
+  messageDesc(file_shepherd_mgmt_v1_pipeline, 15);
+
+/**
+ * MatcherDraft's presence on PreviewMatchesRequest (not the emptiness of its
+ * matchers) selects draft mode: evaluate this matcher set, even if empty,
+ * instead of the saved pipeline's — see docs/plans/2026-09-24-matcher-
+ * targeting-unified-plan.md decision 7. A bare `repeated string` field can't
+ * distinguish "not sent" from "sent but empty" in proto3.
+ *
+ * @generated from message shepherd.mgmt.v1.MatcherDraft
+ */
+export type MatcherDraft = Message<"shepherd.mgmt.v1.MatcherDraft"> & {
+  /**
+   * @generated from field: repeated string matchers = 1;
+   */
+  matchers: string[];
+};
+
+/**
+ * Describes the message shepherd.mgmt.v1.MatcherDraft.
+ * Use `create(MatcherDraftSchema)` to create a new message.
+ */
+export const MatcherDraftSchema: GenMessage<MatcherDraft> = /*@__PURE__*/
+  messageDesc(file_shepherd_mgmt_v1_pipeline, 16);
 
 /**
  * @generated from message shepherd.mgmt.v1.PreviewMatchesRequest
@@ -586,6 +651,11 @@ export type PreviewMatchesRequest = Message<"shepherd.mgmt.v1.PreviewMatchesRequ
    * @generated from field: string id = 2;
    */
   id: string;
+
+  /**
+   * @generated from field: optional shepherd.mgmt.v1.MatcherDraft draft = 3;
+   */
+  draft?: MatcherDraft | undefined;
 };
 
 /**
@@ -593,7 +663,7 @@ export type PreviewMatchesRequest = Message<"shepherd.mgmt.v1.PreviewMatchesRequ
  * Use `create(PreviewMatchesRequestSchema)` to create a new message.
  */
 export const PreviewMatchesRequestSchema: GenMessage<PreviewMatchesRequest> = /*@__PURE__*/
-  messageDesc(file_shepherd_mgmt_v1_pipeline, 15);
+  messageDesc(file_shepherd_mgmt_v1_pipeline, 17);
 
 /**
  * MatchedCollector mirrors the per-item shape returned by previewMatchedCollectors.
@@ -615,6 +685,16 @@ export type MatchedCollector = Message<"shepherd.mgmt.v1.MatchedCollector"> & {
    * @generated from field: string id = 3;
    */
   id: string;
+
+  /**
+   * @generated from field: shepherd.mgmt.v1.MatchStatus status = 4;
+   */
+  status: MatchStatus;
+
+  /**
+   * @generated from field: repeated shepherd.mgmt.v1.LabelSource matched_on = 5;
+   */
+  matchedOn: LabelSource[];
 };
 
 /**
@@ -622,7 +702,7 @@ export type MatchedCollector = Message<"shepherd.mgmt.v1.MatchedCollector"> & {
  * Use `create(MatchedCollectorSchema)` to create a new message.
  */
 export const MatchedCollectorSchema: GenMessage<MatchedCollector> = /*@__PURE__*/
-  messageDesc(file_shepherd_mgmt_v1_pipeline, 16);
+  messageDesc(file_shepherd_mgmt_v1_pipeline, 18);
 
 /**
  * PreviewMatchesResponse mirrors pipelines.go PreviewMatches: {"collectors": [...]}.
@@ -634,6 +714,30 @@ export type PreviewMatchesResponse = Message<"shepherd.mgmt.v1.PreviewMatchesRes
    * @generated from field: repeated shepherd.mgmt.v1.MatchedCollector collectors = 1;
    */
   collectors: MatchedCollector[];
+
+  /**
+   * total_collectors, newly_matched_count and no_longer_matched_count are
+   * reported independent of any response cap/truncation — a truncated
+   * response must never hide how many collectors are about to lose config.
+   *
+   * @generated from field: int32 total_collectors = 2;
+   */
+  totalCollectors: number;
+
+  /**
+   * @generated from field: int32 newly_matched_count = 3;
+   */
+  newlyMatchedCount: number;
+
+  /**
+   * @generated from field: int32 no_longer_matched_count = 4;
+   */
+  noLongerMatchedCount: number;
+
+  /**
+   * @generated from field: bool truncated = 5;
+   */
+  truncated: boolean;
 };
 
 /**
@@ -641,7 +745,7 @@ export type PreviewMatchesResponse = Message<"shepherd.mgmt.v1.PreviewMatchesRes
  * Use `create(PreviewMatchesResponseSchema)` to create a new message.
  */
 export const PreviewMatchesResponseSchema: GenMessage<PreviewMatchesResponse> = /*@__PURE__*/
-  messageDesc(file_shepherd_mgmt_v1_pipeline, 17);
+  messageDesc(file_shepherd_mgmt_v1_pipeline, 19);
 
 /**
  * @generated from message shepherd.mgmt.v1.ListRevisionsRequest
@@ -663,7 +767,7 @@ export type ListRevisionsRequest = Message<"shepherd.mgmt.v1.ListRevisionsReques
  * Use `create(ListRevisionsRequestSchema)` to create a new message.
  */
 export const ListRevisionsRequestSchema: GenMessage<ListRevisionsRequest> = /*@__PURE__*/
-  messageDesc(file_shepherd_mgmt_v1_pipeline, 18);
+  messageDesc(file_shepherd_mgmt_v1_pipeline, 20);
 
 /**
  * @generated from message shepherd.mgmt.v1.ListRevisionsResponse
@@ -685,7 +789,7 @@ export type ListRevisionsResponse = Message<"shepherd.mgmt.v1.ListRevisionsRespo
  * Use `create(ListRevisionsResponseSchema)` to create a new message.
  */
 export const ListRevisionsResponseSchema: GenMessage<ListRevisionsResponse> = /*@__PURE__*/
-  messageDesc(file_shepherd_mgmt_v1_pipeline, 19);
+  messageDesc(file_shepherd_mgmt_v1_pipeline, 21);
 
 /**
  * @generated from message shepherd.mgmt.v1.GetRevisionRequest
@@ -712,7 +816,7 @@ export type GetRevisionRequest = Message<"shepherd.mgmt.v1.GetRevisionRequest"> 
  * Use `create(GetRevisionRequestSchema)` to create a new message.
  */
 export const GetRevisionRequestSchema: GenMessage<GetRevisionRequest> = /*@__PURE__*/
-  messageDesc(file_shepherd_mgmt_v1_pipeline, 20);
+  messageDesc(file_shepherd_mgmt_v1_pipeline, 22);
 
 /**
  * @generated from message shepherd.mgmt.v1.RestoreRevisionRequest
@@ -747,7 +851,7 @@ export type RestoreRevisionRequest = Message<"shepherd.mgmt.v1.RestoreRevisionRe
  * Use `create(RestoreRevisionRequestSchema)` to create a new message.
  */
 export const RestoreRevisionRequestSchema: GenMessage<RestoreRevisionRequest> = /*@__PURE__*/
-  messageDesc(file_shepherd_mgmt_v1_pipeline, 21);
+  messageDesc(file_shepherd_mgmt_v1_pipeline, 23);
 
 /**
  * @generated from message shepherd.mgmt.v1.SetPipelineOwnerRequest
@@ -776,7 +880,75 @@ export type SetPipelineOwnerRequest = Message<"shepherd.mgmt.v1.SetPipelineOwner
  * Use `create(SetPipelineOwnerRequestSchema)` to create a new message.
  */
 export const SetPipelineOwnerRequestSchema: GenMessage<SetPipelineOwnerRequest> = /*@__PURE__*/
-  messageDesc(file_shepherd_mgmt_v1_pipeline, 22);
+  messageDesc(file_shepherd_mgmt_v1_pipeline, 24);
+
+/**
+ * MatchStatus classifies a MatchedCollector against the three-way diff
+ * between a pipeline's saved-and-enabled matchers and an in-progress draft.
+ *
+ * @generated from enum shepherd.mgmt.v1.MatchStatus
+ */
+export enum MatchStatus {
+  /**
+   * @generated from enum value: MATCH_STATUS_UNSPECIFIED = 0;
+   */
+  UNSPECIFIED = 0,
+
+  /**
+   * @generated from enum value: MATCH_STATUS_NEWLY_MATCHED = 1;
+   */
+  NEWLY_MATCHED = 1,
+
+  /**
+   * @generated from enum value: MATCH_STATUS_STILL_MATCHED = 2;
+   */
+  STILL_MATCHED = 2,
+
+  /**
+   * @generated from enum value: MATCH_STATUS_NO_LONGER_MATCHED = 3;
+   */
+  NO_LONGER_MATCHED = 3,
+}
+
+/**
+ * Describes the enum shepherd.mgmt.v1.MatchStatus.
+ */
+export const MatchStatusSchema: GenEnum<MatchStatus> = /*@__PURE__*/
+  enumDesc(file_shepherd_mgmt_v1_pipeline, 0);
+
+/**
+ * LabelSource names which label source contributed to a match, for the
+ * defensive "which source matched" breakdown in the preview panel.
+ *
+ * @generated from enum shepherd.mgmt.v1.LabelSource
+ */
+export enum LabelSource {
+  /**
+   * @generated from enum value: LABEL_SOURCE_UNSPECIFIED = 0;
+   */
+  UNSPECIFIED = 0,
+
+  /**
+   * @generated from enum value: LABEL_SOURCE_BUILTIN = 1;
+   */
+  BUILTIN = 1,
+
+  /**
+   * @generated from enum value: LABEL_SOURCE_ADMIN_LABEL = 2;
+   */
+  ADMIN_LABEL = 2,
+
+  /**
+   * @generated from enum value: LABEL_SOURCE_LOCAL_ATTRIBUTE = 3;
+   */
+  LOCAL_ATTRIBUTE = 3,
+}
+
+/**
+ * Describes the enum shepherd.mgmt.v1.LabelSource.
+ */
+export const LabelSourceSchema: GenEnum<LabelSource> = /*@__PURE__*/
+  enumDesc(file_shepherd_mgmt_v1_pipeline, 1);
 
 /**
  * PipelineService covers /api/orgs/{org}/pipelines/*. Reads require

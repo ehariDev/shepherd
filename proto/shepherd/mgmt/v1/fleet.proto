@@ -53,7 +53,8 @@ message Collector {
   string alloy_version = 9;
   google.protobuf.Struct local_attributes = 10;
   repeated CollectorInstance instances = 11;
-  // UI-managed grouping labels, independent of Alloy attributes and pipeline matching.
+  // UI-managed grouping labels. Participate in pipeline matching when the
+  // org has allow_label_matching enabled (see internal/merge.BuildCollectorLabels).
   map<string, string> labels = 12;
 }
 

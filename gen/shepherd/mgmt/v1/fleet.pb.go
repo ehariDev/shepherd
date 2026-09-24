@@ -135,7 +135,8 @@ type Collector struct {
 	AlloyVersion       string                 `protobuf:"bytes,9,opt,name=alloy_version,json=alloyVersion,proto3" json:"alloy_version,omitempty"`
 	LocalAttributes    *structpb.Struct       `protobuf:"bytes,10,opt,name=local_attributes,json=localAttributes,proto3" json:"local_attributes,omitempty"`
 	Instances          []*CollectorInstance   `protobuf:"bytes,11,rep,name=instances,proto3" json:"instances,omitempty"`
-	// UI-managed grouping labels, independent of Alloy attributes and pipeline matching.
+	// UI-managed grouping labels. Participate in pipeline matching when the
+	// org has allow_label_matching enabled (see internal/merge.BuildCollectorLabels).
 	Labels        map[string]string `protobuf:"bytes,12,rep,name=labels,proto3" json:"labels,omitempty" protobuf_key:"bytes,1,opt,name=key" protobuf_val:"bytes,2,opt,name=value"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache

@@ -91,6 +91,23 @@ message Pipeline {
   // is scoped-write-owned by (G11); empty means unowned — org-admin-only,
   // matching every pipeline's behavior before W10.
   string owner_team_id = 15;
+  // exclusions lists every reason this pipeline is matched against at least
+  // one collector but left out of that collector's assembled config — see
+  // internal/merge.Assemble's AssembleResult.Exclusions and
+  // docs/plans/2026-09-24-matcher-targeting-unified-plan.md Phase 5.
+  repeated Exclusion exclusions = 16;
+}
+
+// Exclusion records one reason a pipeline that otherwise matches a collector
+// was left out of that collector's assembled config — see
+// internal/merge.Exclusion and internal/merge.Evaluate's Reason codes.
+message Exclusion {
+  // reason is one of "unparsable_matcher", "role_signal_mismatch", or
+  // "zero_matchers" (internal/merge.Reason* constants).
+  string reason = 1;
+  // detail is a human-readable explanation, e.g. which matcher failed to
+  // parse or which signal the collector's role disallows.
+  string detail = 2;
 }
 
 message ListPipelinesRequest {
@@ -213,9 +230,37 @@ message ValidatePipelineResponse {
   repeated string unknown_components = 5;
 }
 
+// MatcherDraft's presence on PreviewMatchesRequest (not the emptiness of its
+// matchers) selects draft mode: evaluate this matcher set, even if empty,
+// instead of the saved pipeline's — see docs/plans/2026-09-24-matcher-
+// targeting-unified-plan.md decision 7. A bare `repeated string` field can't
+// distinguish "not sent" from "sent but empty" in proto3.
+message MatcherDraft {
+  repeated string matchers = 1;
+}
+
 message PreviewMatchesRequest {
   string org_id = 1;
   string id = 2;
+  optional MatcherDraft draft = 3;
+}
+
+// MatchStatus classifies a MatchedCollector against the three-way diff
+// between a pipeline's saved-and-enabled matchers and an in-progress draft.
+enum MatchStatus {
+  MATCH_STATUS_UNSPECIFIED = 0;
+  MATCH_STATUS_NEWLY_MATCHED = 1;
+  MATCH_STATUS_STILL_MATCHED = 2;
+  MATCH_STATUS_NO_LONGER_MATCHED = 3;
+}
+
+// LabelSource names which label source contributed to a match, for the
+// defensive "which source matched" breakdown in the preview panel.
+enum LabelSource {
+  LABEL_SOURCE_UNSPECIFIED = 0;
+  LABEL_SOURCE_BUILTIN = 1;
+  LABEL_SOURCE_ADMIN_LABEL = 2;
+  LABEL_SOURCE_LOCAL_ATTRIBUTE = 3;
 }
 
 // MatchedCollector mirrors the per-item shape returned by previewMatchedCollectors.
@@ -223,11 +268,20 @@ message MatchedCollector {
   string cluster = 1;
   string role = 2;
   string id = 3;
+  MatchStatus status = 4;
+  repeated LabelSource matched_on = 5;
 }
 
 // PreviewMatchesResponse mirrors pipelines.go PreviewMatches: {"collectors": [...]}.
 message PreviewMatchesResponse {
   repeated MatchedCollector collectors = 1;
+  // total_collectors, newly_matched_count and no_longer_matched_count are
+  // reported independent of any response cap/truncation — a truncated
+  // response must never hide how many collectors are about to lose config.
+  int32 total_collectors = 2;
+  int32 newly_matched_count = 3;
+  int32 no_longer_matched_count = 4;
+  bool truncated = 5;
 }
 
 message ListRevisionsRequest {
