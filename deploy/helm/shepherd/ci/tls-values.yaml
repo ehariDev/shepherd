@@ -1,0 +1,29 @@
+# CI values for exercising the chart with native TLS on: an existing Secret
+# (not cert-manager, which needs its CRDs installed), a private collector CA,
+# and the default min_version — the shape a `make chart-verify` / e2e-k8s TLS
+# spec renders and installs against a real cluster. Layered on top of
+# default-values.yaml, same convention chart_*_test.go already uses.
+image:
+  tag: "0.0.1"
+replicas: 1
+config:
+  server:
+    base_url: "https://shepherd.example.internal"
+  database:
+    max_conns: 5
+  log:
+    level: "info"
+    format: "json"
+existingSecret: ""
+route:
+  enabled: false
+ingress:
+  enabled: false
+tls:
+  enabled: true
+  secretName: shepherd-tls
+  port: 8443
+  minVersion: "1.2"
+  collectorCA:
+    secretName: shepherd-collector-ca
+    key: ca.crt

@@ -114,6 +114,25 @@ var (
 		Name:      "pipeline_match_changes_total",
 		Help:      "Total pipeline-to-collector match changes caused by a label mutation, by direction (added, removed).",
 	}, []string{"direction"})
+
+	// TLSCertNotAfter is the current leaf certificate's expiry, as a Unix
+	// timestamp, so an operator can alert on "expires within N days" without
+	// parsing the certificate themselves. Set on every successful reload
+	// (internal/server's certReloader); absent entirely when TLS is off.
+	TLSCertNotAfter = promauto.NewGauge(prometheus.GaugeOpts{
+		Namespace: "shepherd",
+		Name:      "tls_cert_not_after_seconds",
+		Help:      "Unix timestamp of the currently served TLS certificate's NotAfter.",
+	})
+
+	// TLSCertReloadsTotal counts certificate reload attempts by result. A
+	// failed reload keeps serving the last good certificate (never takes the
+	// listener down) — this counter is how that failure becomes visible.
+	TLSCertReloadsTotal = promauto.NewCounterVec(prometheus.CounterOpts{
+		Namespace: "shepherd",
+		Name:      "tls_cert_reloads_total",
+		Help:      "Total TLS certificate reload attempts, labelled by result (success, failure).",
+	}, []string{"result"})
 )
 
 // init publishes the build-info series as soon as the package loads, so

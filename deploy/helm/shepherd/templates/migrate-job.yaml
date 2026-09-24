@@ -52,6 +52,28 @@ spec:
             name: {{ include "shepherd.migrateFullname" . }}
         - name: tmp
           emptyDir: {}
+        {{- /*
+          shepherd.configYaml is shared verbatim with the runtime ConfigMap (see
+          configmap-migrate.yaml's own comment: "so the two cannot drift"), so
+          when tls.enabled the config this Job reads names the same
+          /etc/shepherd/tls/tls.crt path the Deployment does -- config.Load
+          validates server.tls.cert_file/key_file are openable on EVERY
+          subcommand, migrate included, even though `migrate up` never serves
+          HTTP. Mounting the same Secret here is what makes that path resolve;
+          without it the Job fails before it ever reaches the database. See
+          shepherd.bootstrapHookDeps below for the other half of this fix --
+          the Secret must also exist before this hook runs at all.
+        */}}
+        {{- if (.Values.tls).enabled }}
+        - name: tls
+          secret:
+            secretName: {{ include "shepherd.tlsSecretName" . }}
+        {{- if (((.Values.tls).collectorCA).secretName) }}
+        - name: tls-ca
+          secret:
+            secretName: {{ .Values.tls.collectorCA.secretName }}
+        {{- end }}
+        {{- end }}
       containers:
         - name: migrate
           image: {{ include "shepherd.image" . }}
@@ -62,6 +84,16 @@ spec:
               mountPath: /etc/shepherd
             - name: tmp
               mountPath: /tmp
+            {{- if (.Values.tls).enabled }}
+            - name: tls
+              mountPath: /etc/shepherd/tls
+              readOnly: true
+            {{- if (((.Values.tls).collectorCA).secretName) }}
+            - name: tls-ca
+              mountPath: /etc/shepherd/tls-ca
+              readOnly: true
+            {{- end }}
+            {{- end }}
           envFrom:
             - secretRef:
                 name: {{ include "shepherd.migrateSecretName" . }}

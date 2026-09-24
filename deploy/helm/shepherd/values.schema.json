@@ -131,6 +131,73 @@
         }
       }
     },
+    "tls": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "enabled": {
+          "type": "boolean"
+        },
+        "secretName": {
+          "type": "string"
+        },
+        "port": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 65535
+        },
+        "minVersion": {
+          "type": "string",
+          "enum": [
+            "1.2",
+            "1.3"
+          ]
+        },
+        "collectorCA": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "secretName": {
+              "type": "string"
+            },
+            "key": {
+              "type": "string"
+            }
+          }
+        },
+        "certManager": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "enabled": {
+              "type": "boolean"
+            },
+            "issuerRef": {
+              "type": "object",
+              "additionalProperties": false,
+              "properties": {
+                "name": {
+                  "type": "string"
+                },
+                "kind": {
+                  "type": "string",
+                  "enum": [
+                    "Issuer",
+                    "ClusterIssuer"
+                  ]
+                }
+              }
+            },
+            "dnsNames": {
+              "type": "array",
+              "items": {
+                "type": "string"
+              }
+            }
+          }
+        }
+      }
+    },
     "config": {
       "description": "Passed through verbatim into Shepherd's own shepherd.yaml, so these keys are the APP's (snake_case), not the chart's. Each section below mirrors a struct in internal/config/config.go and is closed, because the failure it prevents is silent: `config.tracing.endpont` is accepted by YAML, ignored by viper, and leaves you with tracing that never exports and nothing to grep for. A new app config SECTION still needs no chart change -- only new keys inside an existing section do.",
       "type": "object",
@@ -150,6 +217,42 @@
             },
             "beacon_disabled": {
               "type": "boolean"
+            },
+            "tls": {
+              "type": "object",
+              "additionalProperties": false,
+              "properties": {
+                "cert_file": {
+                  "type": "string"
+                },
+                "key_file": {
+                  "type": "string"
+                },
+                "min_version": {
+                  "type": "string",
+                  "enum": [
+                    "1.2",
+                    "1.3"
+                  ]
+                },
+                "client_ca_file": {
+                  "type": "string"
+                },
+                "client_auth": {
+                  "type": "string",
+                  "enum": [
+                    "none",
+                    "request",
+                    "require_and_verify"
+                  ]
+                },
+                "reload_interval": {
+                  "type": "string"
+                },
+                "collector_ca_file": {
+                  "type": "string"
+                }
+              }
             }
           }
         },
