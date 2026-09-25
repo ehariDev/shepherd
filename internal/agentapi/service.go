@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"maps"
 	"slices"
 	"strings"
 	"time"
@@ -148,6 +149,18 @@ func (s *Service) GetConfig(
 	if name == "" {
 		name = req.Msg.Id
 	}
+
+	// PR-9's match-drift short-circuit needs the instance's PREVIOUS
+	// local_attributes before upsertCollectorInstance overwrites it. This
+	// read runs on every poll, so it must stay cheap: one extra SELECT, never
+	// a pipeline list + diff, for the overwhelmingly common case of unchanged
+	// attributes — see emitLocalAttrsMatchDrift's doc comment for why the
+	// comparison itself is over decoded maps, not raw jsonb bytes.
+	var beforeAttrsJSON json.RawMessage
+	if prev, prevErr := s.store.Queries.GetCollectorInstanceByID(ctx, req.Msg.Id); prevErr == nil {
+		beforeAttrsJSON = prev.LocalAttributes
+	}
+
 	if err := s.upsertCollectorInstance(ctx, req.Msg.Id, name, cluster, role, attrs); err != nil {
 		return nil, connect.NewError(connect.CodeInternal, err)
 	}
@@ -197,6 +210,8 @@ func (s *Service) GetConfig(
 		}), nil
 	}
 
+	s.emitLocalAttrsMatchDrift(ctx, orgID, coll, cluster, role, beforeAttrsJSON, attrs)
+
 	// Claimed: read from serve cache; recompute if dirty.
 	cache, err := s.store.Queries.GetServeCache(ctx, coll.ID)
 	if err != nil || cache.Dirty {
@@ -212,7 +227,7 @@ func (s *Service) GetConfig(
 		}
 		// Cache missing or dirty — recompute now, once per collector at a time.
 		result, recomputeErr, _ := s.sf.Do(coll.ID.String(), func() (any, error) {
-			newContent, newHash, err := s.recomputeServeCache(ctx, coll, orgID)
+			newContent, newHash, err := s.recomputeServeCache(ctx, coll, orgID, attrs)
 			if err != nil {
 				return nil, err
 			}
@@ -342,6 +357,99 @@ func (s *Service) upsertCollectorInstance(
 	}
 
 	return nil
+}
+
+// emitLocalAttrsMatchDrift is PR-9's local_attributes half of §7's match-drift
+// observability (LABEL-MATCHING-PLAN.md), mirroring FleetService.emitMatchDrift's
+// admin-label version but hooked on the agent's own heartbeat instead of a
+// mgmtapi write — see rpc_fleet.go's emitMatchDrift doc comment for why that
+// hook stays label-only rather than growing a local_attrs parameter.
+//
+// NOT unconditional: GetConfig calls this on every poll, up to 1000 collectors
+// every 30-60s. The compare against the previous stored value (done here,
+// before any other work) is what keeps this cheap — checked FIRST, so the
+// overwhelmingly common case (attributes unchanged since the last poll) costs
+// nothing beyond the caller's one extra SELECT plus unmarshaling two small
+// maps, never a pipeline list + Assemble diff.
+//
+// This compares maps, not raw JSON bytes: local_attributes is a Postgres
+// jsonb column, which reformats on every round trip (Postgres's own
+// canonical jsonb text output, not byte-identical to Go's compact
+// json.Marshal) — a byte comparison between what GetCollectorInstanceByID
+// reads back and what json.Marshal just produced would report "changed" on
+// every single poll, even when nothing changed, defeating the short-circuit
+// entirely. maps.Equal is immune to that: it compares decoded content, and
+// costs no more than one JSON unmarshal beyond what this function already
+// needs to build the before/after CollectorLabels below.
+//
+// Best-effort: errors are logged, never returned — a poll must not fail
+// because the drift computation describing its downstream effect failed.
+func (s *Service) emitLocalAttrsMatchDrift(ctx context.Context, orgID pgtype.UUID, coll sqlc.Collector, cluster, role string, beforeAttrsJSON json.RawMessage, afterAttrs map[string]string) {
+	var beforeAttrs map[string]string
+	if len(beforeAttrsJSON) > 0 {
+		_ = json.Unmarshal(beforeAttrsJSON, &beforeAttrs) //nolint:errcheck // malformed prior value degrades to no local attrs
+	}
+	if maps.Equal(beforeAttrs, afterAttrs) {
+		return
+	}
+	org, err := s.store.Queries.GetOrgByID(ctx, orgID)
+	if err != nil || !org.AllowLocalAttributeMatching {
+		// A no-op for an org with the flag off: local_attributes never enter
+		// matching for such an org (every BuildCollectorLabels call site gates
+		// it the same way), so a "flip" computed here would not reflect what's
+		// actually served.
+		return
+	}
+	rows, err := s.store.Queries.ListEnabledPipelinesForMerge(ctx, orgID)
+	if err != nil {
+		s.logger.Error("match-drift: listing enabled pipelines", "org_id", orgID.String(), "err", err)
+		return
+	}
+	pipelines := make([]merge.Pipeline, 0, len(rows))
+	for i := range rows {
+		r := rows[i]
+		var matchers []string
+		if jsonErr := json.Unmarshal(r.Matchers, &matchers); jsonErr != nil {
+			matchers = nil
+		}
+		repoLinkCollectorID := ""
+		if r.RepoLinkCollectorID.Valid {
+			repoLinkCollectorID = r.RepoLinkCollectorID.String()
+		}
+		pipelines = append(pipelines, merge.Pipeline{
+			ID: r.ID.String(), Name: r.Name, Matchers: matchers, Source: r.Source,
+			RepoLinkCollectorID: repoLinkCollectorID,
+		})
+	}
+	// Admin labels held constant across before/after: only local_attrs changed
+	// here, and the diff should reflect that in isolation, same as
+	// emitMatchDrift holds local_attrs constant (nil) for an admin-label edit.
+	var adminLabels map[string]string
+	if org.AllowLabelMatching {
+		if jsonErr := json.Unmarshal(coll.Labels, &adminLabels); jsonErr != nil {
+			adminLabels = nil
+		}
+	}
+	collIDStr := coll.ID.String()
+	before := merge.BuildCollectorLabels(collIDStr, cluster, role, adminLabels, beforeAttrs)
+	after := merge.BuildCollectorLabels(collIDStr, cluster, role, adminLabels, afterAttrs)
+	for _, d := range merge.DiffMatches(pipelines, before, after) {
+		metrics.PipelineMatchChangesTotal.WithLabelValues(d.Direction).Inc()
+		detail, _ := json.Marshal(map[string]string{ //nolint:errcheck // map[string]string always marshals
+			"pipeline_id":   d.PipelineID,
+			"pipeline_name": d.PipelineName,
+			"collector_id":  collIDStr,
+			"direction":     d.Direction,
+			"cause":         "collector.local_attributes.report",
+		})
+		if auditErr := s.store.Queries.InsertAuditLog(ctx, sqlc.InsertAuditLogParams{
+			Actor: "agentapi", ActorType: "system", OrgID: orgID,
+			Action: "pipeline.match.changed", ResourceType: "pipeline", ResourceID: d.PipelineID,
+			Detail: detail,
+		}); auditErr != nil {
+			s.logger.Error("match-drift: writing audit log", "pipeline_id", d.PipelineID, "err", auditErr)
+		}
+	}
 }
 
 // effectiveAttrs returns local_attributes, falling back to deprecated attributes if empty.
@@ -491,10 +599,41 @@ func requireClusterRole(attrs map[string]string) (cluster, role string, err erro
 
 // recomputeServeCache assembles and validates the merged config for a single collector.
 // It returns (content, hash, error). On error the caller should serve the previous cached value.
-func (s *Service) recomputeServeCache(ctx context.Context, coll sqlc.Collector, orgID pgtype.UUID) (string, string, error) {
+//
+// reqAttrs is GetConfig's caller-supplied attrs (effectiveAttrs(req.Msg...)) —
+// PR-8b's gated freshness requirement: local_attributes matching on this hot
+// path must use the CURRENT request's self-reported attributes, never a
+// re-query of collector_instances, which would still reflect the previous
+// heartbeat (this function's own upsertCollectorInstance write for the
+// current one hasn't necessarily landed/committed before this read would
+// run). One known, accepted edge: this recompute runs inside GetConfig's
+// singleflight.Do keyed by collector ID (§200), so two nearly-simultaneous
+// polls for the SAME collector reporting DIFFERENT local_attributes can have
+// the "losing" caller's own reqAttrs discarded in favor of whichever request
+// actually executed the closure — same class of narrow, accepted relaxation
+// as PR-7's "latest instance wins" multi-instance simplification (LABEL-
+// MATCHING-PLAN.md §5), not something this change introduces new risk of.
+func (s *Service) recomputeServeCache(ctx context.Context, coll sqlc.Collector, orgID pgtype.UUID, reqAttrs map[string]string) (string, string, error) {
 	enabledPipelines, err := s.store.Queries.ListEnabledPipelinesForMerge(ctx, orgID)
 	if err != nil {
 		return "", "", fmt.Errorf("listing pipelines: %w", err)
+	}
+
+	// Admin labels and local_attributes only participate in matching once the
+	// org has opted into each independently (procoduck/shepherd#139) — an org
+	// with both flags off must reproduce exactly the pre-#139 {cluster,
+	// role}-only behavior, byte for byte.
+	var adminLabels, localAttrs map[string]string
+	if org, orgErr := s.store.Queries.GetOrgByID(ctx, orgID); orgErr == nil {
+		if org.AllowLabelMatching {
+			if jsonErr := json.Unmarshal(coll.Labels, &adminLabels); jsonErr != nil {
+				s.logger.Warn("recomputeServeCache: decoding collector labels", "collector_id", coll.ID.String(), "err", jsonErr)
+				adminLabels = nil
+			}
+		}
+		if org.AllowLocalAttributeMatching {
+			localAttrs = reqAttrs
+		}
 	}
 
 	var mergePipelines []merge.Pipeline
@@ -541,7 +680,7 @@ func (s *Service) recomputeServeCache(ctx context.Context, coll sqlc.Collector, 
 	// internal/mgmtapi's eager recompute (docs/gateway-tier-plan.md §10).
 	result, err := serve.ComputeServed(ctx,
 		serve.Deps{Schema: s.schema, BeaconBaseline: s.beaconBaseline},
-		serve.Collector{ID: coll.ID.String(), Cluster: clusterName, Role: coll.Role},
+		serve.Collector{ID: coll.ID.String(), Cluster: clusterName, Role: coll.Role, AdminLabels: adminLabels, LocalAttrs: localAttrs},
 		mergePipelines,
 	)
 	if err != nil {

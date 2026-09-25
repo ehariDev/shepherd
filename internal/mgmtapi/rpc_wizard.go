@@ -143,15 +143,13 @@ func (s *WizardService) previewMatchedCollectors(ctx context.Context, p merge.Pi
 	if err != nil {
 		return nil, err
 	}
+	org, _ := s.store.Queries.GetOrgByID(ctx, orgID) //nolint:errcheck // an org lookup failure degrades to no admin labels below
+	localAttrs := localAttrsByOrg(ctx, s.store.Queries, orgID, org.AllowLocalAttributeMatching)
 	var matched []map[string]string
 	for i := range collectors {
 		c := collectors[i]
-		cl := merge.CollectorLabels{
-			CollectorID: c.ID.String(),
-			Labels:      map[string]string{"role": c.Role},
-		}
 		cluster, _ := s.store.Queries.GetClusterByID(ctx, c.ClusterID) //nolint:errcheck // empty cluster name is safe in merge
-		cl.Labels["cluster"] = cluster.Name
+		cl := merge.BuildCollectorLabels(c.ID.String(), cluster.Name, c.Role, adminLabelsIfAllowed(org.AllowLabelMatching, c.Labels), localAttrs[c.ID.String()])
 
 		ok, matchErr := merge.MatchesPipeline(p, cl)
 		if matchErr != nil || !ok {

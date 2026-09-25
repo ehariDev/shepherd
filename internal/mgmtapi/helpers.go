@@ -14,6 +14,54 @@ import (
 	"shepherd/internal/store/sqlc"
 )
 
+// adminLabelsIfAllowed decodes a collector's "Manage labels" JSON when the
+// owning org has opted into label-based pipeline matching
+// (procoduck/shepherd#139), else returns nil — the exact input
+// merge.BuildCollectorLabels needs so an org with the flag off stays
+// byte-for-byte on the pre-#139 {cluster, role}-only behavior. A malformed
+// labels blob degrades to no admin labels rather than failing the caller's
+// whole preview/validate/serve path.
+func adminLabelsIfAllowed(allowLabelMatching bool, raw json.RawMessage) map[string]string {
+	if !allowLabelMatching {
+		return nil
+	}
+	var labels map[string]string
+	if err := json.Unmarshal(raw, &labels); err != nil {
+		return nil
+	}
+	return labels
+}
+
+// localAttrsByOrg is PR-8b's gated read: a per-collector local_attributes
+// lookup for an org-wide Assemble loop (stage3Check, previewMatchedCollectors,
+// recomputeOrgCaches), built from PR-7's ListLatestLocalAttributesByOrg bulk
+// query — one query for the whole org, not one per collector (the plan's
+// called-out N+1 risk at ~1000-collector scale). Returns nil when the org
+// hasn't opted into local_attributes matching, so a flag-off org runs zero
+// extra queries and reproduces pre-PR-8 behavior exactly: the same shape
+// adminLabelsIfAllowed uses for the admin-label side of this gate. A
+// collector missing from the returned map (never reported, or its blob
+// failed to decode) simply gets no local attributes, same as adminLabels'
+// degrade-on-malformed-JSON behavior.
+func localAttrsByOrg(ctx context.Context, q *sqlc.Queries, orgID pgtype.UUID, allowLocalAttributeMatching bool) map[string]map[string]string {
+	if !allowLocalAttributeMatching {
+		return nil
+	}
+	rows, err := q.ListLatestLocalAttributesByOrg(ctx, orgID)
+	if err != nil {
+		return nil
+	}
+	out := make(map[string]map[string]string, len(rows))
+	for _, row := range rows {
+		var attrs map[string]string
+		if json.Unmarshal(row.LocalAttributes, &attrs) != nil {
+			continue
+		}
+		out[row.CollectorID.String()] = attrs
+	}
+	return out
+}
+
 // respondJSON writes v as a JSON response with the given status code.
 // Encode errors are logged at debug level and otherwise ignored — the response
 // header has already been sent, so there is nothing else to do.

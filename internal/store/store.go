@@ -63,6 +63,16 @@ func New(ctx context.Context, cfg *config.DatabaseConfig, loggers ...*slog.Logge
 	}, nil
 }
 
+// NewWithPool wraps an already-open pool as a Store, letting the caller
+// control pool construction directly instead of going through New's fixed
+// tracelog-to-slog tracer setup. Test-only seam: a test proving a code path's
+// query cost (e.g. that a byte-compare short-circuit skips a diff entirely)
+// needs to attach its own counting pgx.QueryTracer, which New has no option
+// for. Production code always uses New.
+func NewWithPool(pool *pgxpool.Pool) *Store {
+	return &Store{pool: pool, Queries: sqlc.New(pool)}
+}
+
 // Close closes the connection pool.
 func (s *Store) Close() {
 	s.pool.Close()
