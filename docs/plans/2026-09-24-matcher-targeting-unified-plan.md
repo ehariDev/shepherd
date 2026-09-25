@@ -1,6 +1,7 @@
 # Matcher targeting — unified design & implementation plan
 
-**Status:** Planned — unreleased — **HOLD, see status block below**
+**Status:** In progress — Phases 0-2 complete, Phase 3 next — **hold lifted by owner override, see status
+block below** — branch `feat/matcher-targeting-unified-plan`, not merged to `main`, no PR open
 **Supersedes:** `2026-09-24-matcher-impact-preview.md` and `shepherd-matcher-targeting-redesign-backlog.md` (both retired — see §0 note in each; do not implement from either, this document is the merge of both, corrected)
 **Location once merged:** `docs/plans/2026-09-24-matcher-targeting-unified-plan.md` (archive to `docs/archive/plans/` after release, per `AGENTS.md`'s docs map)
 **Spec section affected:** `docs/spec.md` §6.1 (Merge engine — Matchers)
@@ -32,6 +33,93 @@
 >   `select count(*) from pipelines where source in ('ui','wizard','visual') and
 >   jsonb_array_length(matchers) = 0 and enabled = true;` → **0**. No grandfathering concern, no owner
 >   notification needed before Phase 3's `EnablePipeline` gate ships.
+
+> **2026-09-25 handoff — Phases 0, 1, 2 complete; picking up at Phase 3.** Re-checked PR #12/#11: both
+> still `OPEN`, unmerged — no change from 2026-09-24. Everything below is for whoever (human or agent)
+> continues this plan next.
+>
+> **Branch state.** `feat/matcher-targeting-unified-plan`, 8 commits ahead of `feat/label-matching-pr11`
+> @ `4913e7d`, currently at `cc41c9f`. Working tree clean except this machine's own untracked, unrelated
+> WSL/native-TLS deploy scripts (`deploy-rhel.sh` and siblings — not part of this plan, do not commit
+> them here). Nothing merged to `main`, no PR opened, per explicit standing instruction — do not do
+> either without asking first.
+>
+> ```
+> cc41c9f feat(proto): extend PreviewMatches, add Exclusion, correct fleet.proto comment          — Phase 2
+> bb9cca6 docs(changelog): close out Phase 1 of the matcher targeting unified plan                — Phase 1 (1.7)
+> 0581914 test(repocheck): guard against a merge.CollectorLabels{} literal recurring outside internal/merge — Phase 1 (1.6)
+> 9306b8c docs(plans): resolve task 1.5 as no-op after investigating its premise                  — Phase 1 (1.5)
+> 0c1cee2 fix(pipelines): PreviewMatches now resolves a git pipeline's real linked collector       — Phase 1 (1.4)
+> ef58aac fix(reconcile): route reconcileServed through BuildCollectorLabels + Evaluate            — Phase 1 (1.3)
+> c9d53e0 feat(merge): add CompileMatchers and Evaluate, the single match/enforce decision point   — Phase 1 (1.1-1.2)
+> 707d77e docs(plans): add matcher targeting unified plan, resolve Phase 0 gates                   — Phase 0
+> ```
+>
+> **What's done.**
+> - **Phase 0** (gates): see above.
+> - **Phase 1** (engine fix, all 7 tasks): `merge.CompileMatchers` + `merge.Evaluate` added as the single
+>   match/enforce decision point; `reconcileServed` and `PreviewMatches` (git-sourced bug) both fixed and
+>   regression-tested; a `scripts/repocheck` guard now fails CI on a `merge.CollectorLabels{}` literal
+>   recurring outside `internal/merge`; `make lint`/`make test` equivalents run clean (see testing notes
+>   below); `CHANGELOG.md` updated. **Task 1.5 is resolved as a no-op**, not implemented — its own commit
+>   message and this document's §3 decision 10 / §7 open question 2 / task 1.5 entry explain why (no
+>   team-to-collector ownership model exists in this codebase; org-reader fleet-wide visibility is
+>   confirmed intentional). Do not re-open this without a new reason.
+> - **Phase 2** (proto, ask-first, signed off by the repo owner 2026-09-24): `pipeline.proto` gained
+>   `MatcherDraft`, `MatchStatus`, `LabelSource`, the extended `MatchedCollector`/`PreviewMatchesResponse`,
+>   and `Exclusion` (added as `Pipeline.exclusions = 16` — `GetPipeline` returns `Pipeline` directly, no
+>   `GetPipelineResponse` wrapper exists, resolving this document's own open placement question).
+>   `fleet.proto`'s stale `Collector.labels` comment corrected. Regenerated via `buf generate`. Purely
+>   additive/wire-compatible — verified live that an existing caller's `PreviewMatches` response is
+>   byte-identical to before (no `draft` field sent → none of the new fields appear, protojson omits
+>   unpopulated scalars).
+>
+> **What's next: Phase 3** (backend draft preview + enable-time guardrail), tasks 3.1-3.6. Two things
+> worth doing first, before writing the handler itself:
+> - **Task 3.3's rate limiter has no confirmed existing primitive to reuse** (§11 item 2 flags this
+>   explicitly) — grep for `golang.org/x/time/rate` or equivalent before assuming one exists; if none
+>   does, this is a new pattern, not just a new call site, and a new dependency needs the same ask-first
+>   treatment Phase 2's proto change got.
+> - **§7 open question 4 (REST route rename, task 3.2) is still unresolved** — `GET` → `POST
+>   .../preview-matches:evaluate` is a breaking change for any external caller of the documented REST API.
+>   Ask before implementing 3.2, don't assume backward compatibility is or isn't required.
+>
+> **Testing environment notes for whoever continues this** (discovered the hard way this session, not in
+> the original plan):
+> - **No Docker anywhere available to this session**: not on native Windows, not in either WSL distro
+>   checked (`Ubuntu-22.04`, `RHEL-10-prebuilt`). Every Ginkgo suite needing testcontainers
+>   (`internal/mgmtapi`, `internal/cli`, `internal/gitsync`, `internal/agentapi`, several others) cannot
+>   run locally in this environment — confirmed via `go test ./...` producing an identical pass/fail set
+>   before and after every change made so far (compared via `git stash`), i.e. these failures are a
+>   pre-existing environment gap, not a regression, on every task done to date. New tests were still
+>   written properly (they'll run in real CI); verify them by reading the code path carefully plus the
+>   live-system check below, not by running the suite.
+> - **Live verification substitute**: this session has a real, running Shepherd install for exactly this
+>   purpose — WSL distro `RHEL-10-prebuilt`, `shepherd.service` (port 8080, Postgres on 5433, org
+>   `wsl-lab`) plus a real Alloy agent (`wsl-rhel-alloy.service`). Deploy loop from the Windows repo path:
+>   `bash deploy-rhel.sh` (builds) then `sudo bash deploy-rhel-install.sh` (installs + restarts +
+>   migrates). `check-state.sh` has some stale queries (schema drifted); query `collectors`, `pipelines`,
+>   `serve_cache`, `collector_instances` directly instead — see this session's transcript for working
+>   query shapes, or the CHANGELOG/commit messages above for the specific hash-comparison and
+>   `GetReconciliation`/`PreviewMatches` curl-based red→green proofs already done. Bootstrap admin
+>   credentials live in `/etc/shepherd/runtime.env` on that box — read them into a shell variable for a
+>   login curl call, never print them.
+> - **`git stash -u` corrupts untracked shell scripts on this checkout**: `core.autocrlf=true` here
+>   converts LF→CRLF on any stash pop of an untracked file, which breaks a script's `#!/usr/bin/env bash`
+>   shebang parsing (`set -euo pipefail` fails with "invalid option name"). This bit the WSL deploy
+>   scripts once this session. If you use `git stash -u` for a base-branch comparison, run
+>   `sed -i 's/\r$//' *.sh` (or equivalent) on any affected untracked `.sh` files before your next deploy.
+> - **Toolchain locations**: `golangci-lint`, `buf`, `protoc-gen-go`, `protoc-gen-connect-go` all work
+>   directly on native Windows (`$HOME/go/bin`). `pnpm`/`node`/frontend commands need the WSL
+>   `RHEL-10-prebuilt` box (run against the `/mnt/c/...` mounted path, no need to copy the tree) — its
+>   `web/node_modules` already has `protoc-gen-es` installed; native Windows does not run it directly
+>   (buf on Windows can't exec the extensionless POSIX shebang script there).
+>
+> **Working agreements established this session** (ask the user to confirm these still hold if picking
+> this up in a new conversation): commit after each task once approved (not batched, not silently);
+> give a WSL test recipe after each task and get explicit approval before moving to the next one; ask
+> before any git action that could look like an assumption (merges, PRs, force-pushes) rather than
+> inferring intent from an early blanket instruction.
 
 ---
 
