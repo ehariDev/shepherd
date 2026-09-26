@@ -6,6 +6,16 @@ RETURNING *;
 -- name: GetOrgByID :one
 SELECT * FROM orgs WHERE id = $1;
 
+-- name: GetOrgByIDForUpdate :one
+-- Row-locking twin of GetOrgByID. UpdateOrg (PR-144 review §2/§10d) reads
+-- the org's pre-write matching-flag values to decide whether to invalidate
+-- the serve cache and what the audit row's before/after should say -- run
+-- inside the same transaction as the write itself and via FOR UPDATE so a
+-- second concurrent UpdateOrg on this org blocks here until the first
+-- transaction commits, instead of reading a stale "before" and skipping a
+-- cache invalidation for a flag flip that actually happened.
+SELECT * FROM orgs WHERE id = $1 FOR UPDATE;
+
 -- name: CountOrgContent :one
 -- Backs DeleteOrg's not-empty check: an org with any cluster or pipeline
 -- still attached must refuse deletion rather than orphan them. Derived

@@ -35,27 +35,56 @@ const (
 //
 // When more than maxAttributeKeys pairs survive validation, keys are
 // considered in sorted order so which ones get kept is deterministic rather
-// than dependent on Go's randomized map iteration.
+// than dependent on Go's randomized map iteration. IsReserved keys (cluster,
+// role, id, os, alloy_version, and the collector.*/shepherd.* prefixes) sort
+// first, ahead of everything else alphabetically -- deliberately tied to
+// IsReserved itself rather than a second, hand-maintained list of "keys that
+// matter": requireClusterRole (agentapi's RegisterCollector/GetConfig)
+// rejects a poll outright if cluster or role is missing, so truncating
+// either away here would silently and permanently 400 an otherwise-healthy
+// collector that simply reports 64+ other attributes whose keys happen to
+// sort earlier. Reusing IsReserved means that guarantee automatically
+// extends to any key reserved.go's authors later decide is load-bearing,
+// with nothing here to remember to update in step.
 func ValidateAttributes(attrs map[string]string) map[string]string {
 	if len(attrs) == 0 {
 		return attrs
 	}
-	keys := make([]string, 0, len(attrs))
-	for k := range attrs {
-		keys = append(keys, k)
+	// lower and priority are computed once per key up front, not inside the
+	// sort comparator: a comparator runs O(n log n) times, and this is on
+	// every RegisterCollector/GetConfig poll across the whole fleet, so an
+	// allocating ToLower per comparison would scale badly with attribute
+	// count in a way a single O(n) pass does not.
+	type candidate struct {
+		orig     string
+		lower    string
+		priority int
 	}
-	sort.Strings(keys)
+	candidates := make([]candidate, 0, len(attrs))
+	for k := range attrs {
+		lower := strings.ToLower(k)
+		priority := 1
+		if IsReserved(lower) {
+			priority = 0
+		}
+		candidates = append(candidates, candidate{orig: k, lower: lower, priority: priority})
+	}
+	sort.Slice(candidates, func(i, j int) bool {
+		if candidates[i].priority != candidates[j].priority {
+			return candidates[i].priority < candidates[j].priority
+		}
+		return candidates[i].orig < candidates[j].orig
+	})
 
-	out := make(map[string]string, len(keys))
-	for _, k := range keys {
+	out := make(map[string]string, len(candidates))
+	for _, c := range candidates {
 		if len(out) >= maxAttributeKeys {
 			break
 		}
-		key := strings.ToLower(k)
-		if !validAttributeKey(key) || !validAttributeValue(attrs[k]) {
+		if !validAttributeKey(c.lower) || !validAttributeValue(attrs[c.orig]) {
 			continue
 		}
-		out[key] = attrs[k]
+		out[c.lower] = attrs[c.orig]
 	}
 	return out
 }

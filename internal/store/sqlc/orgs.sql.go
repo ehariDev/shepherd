@@ -108,6 +108,37 @@ func (q *Queries) GetOrgByID(ctx context.Context, id pgtype.UUID) (Org, error) {
 	return i, err
 }
 
+const getOrgByIDForUpdate = `-- name: GetOrgByIDForUpdate :one
+SELECT id, name, display_name, admin_group_id, reader_group_id, created_at, updated_at, tenant_id, editor_group_id, allow_experimental_components, allow_label_matching, allow_local_attribute_matching FROM orgs WHERE id = $1 FOR UPDATE
+`
+
+// Row-locking twin of GetOrgByID. UpdateOrg (PR-144 review §2/§10d) reads
+// the org's pre-write matching-flag values to decide whether to invalidate
+// the serve cache and what the audit row's before/after should say -- run
+// inside the same transaction as the write itself and via FOR UPDATE so a
+// second concurrent UpdateOrg on this org blocks here until the first
+// transaction commits, instead of reading a stale "before" and skipping a
+// cache invalidation for a flag flip that actually happened.
+func (q *Queries) GetOrgByIDForUpdate(ctx context.Context, id pgtype.UUID) (Org, error) {
+	row := q.db.QueryRow(ctx, getOrgByIDForUpdate, id)
+	var i Org
+	err := row.Scan(
+		&i.ID,
+		&i.Name,
+		&i.DisplayName,
+		&i.AdminGroupID,
+		&i.ReaderGroupID,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+		&i.TenantID,
+		&i.EditorGroupID,
+		&i.AllowExperimentalComponents,
+		&i.AllowLabelMatching,
+		&i.AllowLocalAttributeMatching,
+	)
+	return i, err
+}
+
 const getOrgByName = `-- name: GetOrgByName :one
 SELECT id, name, display_name, admin_group_id, reader_group_id, created_at, updated_at, tenant_id, editor_group_id, allow_experimental_components, allow_label_matching, allow_local_attribute_matching FROM orgs WHERE name = $1
 `

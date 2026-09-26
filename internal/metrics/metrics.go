@@ -197,3 +197,14 @@ func ObserveValidation(stage string, valid bool) {
 	}
 	ValidationTotal.WithLabelValues(stage, result).Inc()
 }
+
+// BoolToFloat64 converts a bool to the 1/0 a Prometheus gauge expects.
+// Shared so the org matching-flag gauges (set from both mgmtapi's UpdateOrg
+// and agentapi's sweeper reconciliation pass) don't carry two independent
+// copies of the same one-line conversion.
+func BoolToFloat64(b bool) float64 {
+	if b {
+		return 1
+	}
+	return 0
+}

@@ -430,11 +430,15 @@ func (s *FleetService) emitMatchDrift(ctx context.Context, orgID, collectorID, c
 	// here (this hook fires from a label write), and the diff should reflect
 	// that in isolation, mirroring how emitLocalAttrsMatchDrift holds admin
 	// labels constant for an attribute-only change. Gated on
-	// AllowLocalAttributeMatching via the same localAttrsByOrg helper the
-	// org-wide preview/validate paths already use (helpers.go) — nil (an
-	// extra query skipped entirely) when the org hasn't opted into
-	// local_attributes matching, same shape as adminLabelsIfAllowed's
-	// flag-off path.
+	// AllowLocalAttributeMatching, nil (query skipped entirely) when the org
+	// hasn't opted into local_attributes matching, same shape as
+	// adminLabelsIfAllowed's flag-off path.
+	//
+	// GetLatestLocalAttributesByCollector, not localAttrsByOrg: this hook
+	// only ever needs one collector's attributes, and localAttrsByOrg exists
+	// specifically to avoid N+1 across an org-wide Assemble loop — calling it
+	// here for a single collector meant every label edit ran that org-wide
+	// DISTINCT ON scan just to keep one entry out of it.
 	//
 	// PR-144 review §4: previously hardcoded nil on both sides, which meant
 	// that for an org with allow_local_attribute_matching also on, this
@@ -442,7 +446,22 @@ func (s *FleetService) emitMatchDrift(ctx context.Context, orgID, collectorID, c
 	// label was masking gets uncovered, not actually lost) and miss a real
 	// "added" (a matcher needing a key that only ever came from local
 	// attributes, never diffed here).
-	localAttrs := localAttrsByOrg(ctx, s.store.Queries, orgID, org.AllowLocalAttributeMatching)[collIDStr]
+	var localAttrs map[string]string
+	if org.AllowLocalAttributeMatching {
+		raw, attrErr := s.store.Queries.GetLatestLocalAttributesByCollector(ctx, sqlc.GetLatestLocalAttributesByCollectorParams{
+			CollectorID: collectorID,
+			OrgID:       orgID,
+		})
+		if attrErr != nil && !errors.Is(attrErr, pgx.ErrNoRows) {
+			s.logger.Warn("match-drift: fetching local_attributes", "collector_id", collIDStr, "err", attrErr)
+		}
+		if attrErr == nil {
+			if jsonErr := json.Unmarshal(raw, &localAttrs); jsonErr != nil {
+				s.logger.Warn("match-drift: decoding local_attributes", "collector_id", collIDStr, "err", jsonErr)
+				localAttrs = nil
+			}
+		}
+	}
 	before := merge.BuildCollectorLabels(collIDStr, cluster.Name, role, beforeLabels, localAttrs)
 	after := merge.BuildCollectorLabels(collIDStr, cluster.Name, role, afterLabels, localAttrs)
 	for _, d := range merge.DiffMatches(pipelines, before, after) {

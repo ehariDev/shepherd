@@ -120,6 +120,49 @@ func (q *Queries) GetLatestCollectorInstanceSummary(ctx context.Context, collect
 	return i, err
 }
 
+const getLatestLocalAttributesByCollector = `-- name: GetLatestLocalAttributesByCollector :one
+SELECT ci.local_attributes FROM collector_instances ci
+JOIN collectors c ON c.id = ci.collector_id
+JOIN clusters cl ON cl.id = c.cluster_id
+WHERE ci.collector_id = $1
+  AND cl.org_id = $2
+  AND ci.unregistered_at IS NULL
+  AND (ci.remote_config_status IS NULL OR ci.remote_config_status != 'inactive')
+ORDER BY ci.last_seen DESC NULLS LAST
+LIMIT 1
+`
+
+type GetLatestLocalAttributesByCollectorParams struct {
+	CollectorID pgtype.UUID `json:"collector_id"`
+	OrgID       pgtype.UUID `json:"org_id"`
+}
+
+// Single-collector twin of ListLatestLocalAttributesByOrg, same staleness
+// filter (an instance that stopped polling without a clean unregister must
+// not keep contributing a months-stale attribute blob), for callers that
+// need exactly one collector's current local_attributes for matching -- not
+// GetLatestCollectorInstanceSummary, which intentionally has no such filter
+// because its other caller (ListCollectors) wants to *display* an
+// inactive-instance collector's real status rather than have it vanish.
+//
+// org_id-scoped via the same collectors/clusters JOIN
+// ListLatestLocalAttributesByOrg uses, not a bare collector_id lookup:
+// loadOwnedCollector's own doc comment (internal/mgmtapi/rpc_fleet.go) states
+// this codebase's policy plainly -- "a UUID is not an authorization
+// boundary" -- and every other by-id collector query in this file that
+// crosses an org boundary is scoped the same way. Both current callers
+// already validate the collector belongs to orgID before reaching this query
+// (loadOwnedCollector for the mgmtapi path, the repo_link's own org_id for
+// gitsync), so this isn't fixing a live cross-tenant read today -- it keeps
+// the query itself from being the one place a future caller could skip that
+// check and silently pull another org's collector's attributes.
+func (q *Queries) GetLatestLocalAttributesByCollector(ctx context.Context, arg GetLatestLocalAttributesByCollectorParams) (json.RawMessage, error) {
+	row := q.db.QueryRow(ctx, getLatestLocalAttributesByCollector, arg.CollectorID, arg.OrgID)
+	var local_attributes json.RawMessage
+	err := row.Scan(&local_attributes)
+	return local_attributes, err
+}
+
 const listCollectorInstancesByCollector = `-- name: ListCollectorInstancesByCollector :many
 SELECT name, alloy_version, os, last_seen, remote_config_status, remote_config_error, local_attributes
 FROM collector_instances
