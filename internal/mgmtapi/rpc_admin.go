@@ -231,12 +231,34 @@ func (s *AdminService) UpdateOrg(ctx context.Context, req *connect.Request[mgmtv
 	// Read before the write (PR-144 review §2, §10d): the only way to know
 	// whether either matching flag's value actually CHANGED, which is what
 	// decides whether the serve cache needs invalidating and what the audit
-	// row's before/after detail should say. UpdateOrg's own WHERE id = $1
-	// would fail identically right after this if the org doesn't exist, so
-	// this doesn't introduce a new failure mode.
-	before, err := s.store.Queries.GetOrgByID(ctx, id)
+	// row's before/after detail should say. Both the read and the write run
+	// inside one transaction, and the read takes a row lock (FOR UPDATE):
+	// without that, two concurrent UpdateOrg calls on the same org could each
+	// read the same pre-write "before", and whichever writes second would
+	// diff its own result against a now-stale snapshot -- missing a real
+	// flag flip and skipping the serve-cache invalidation for it. The lock
+	// makes the second call block until the first commits, then read the
+	// first call's actual result as its own "before".
+	tx, err := s.store.Pool().Begin(ctx)
 	if err != nil {
-		return nil, connect.NewError(connect.CodeNotFound, errors.New("org not found"))
+		return nil, connect.NewError(connect.CodeInternal, errors.New("failed to start org update"))
+	}
+	defer func() { _ = tx.Rollback(ctx) }() //nolint:errcheck // no-op once committed; rollback error on the success path is expected and harmless
+	txQueries := s.store.Queries.WithTx(tx)
+
+	before, err := txQueries.GetOrgByIDForUpdate(ctx, id)
+	if err != nil {
+		// Distinguish "no such org" from everything else: unlike the old
+		// non-locking GetOrgByID, this read can now also fail from a
+		// lock-wait timeout or context cancellation while blocked behind
+		// another UpdateOrg's transaction on the same org (the row lock is
+		// the whole point of this fix) — collapsing that into CodeNotFound
+		// would misreport an org that plainly exists as missing. Mirrors
+		// UnclaimCluster's GetClusterByName handling just above.
+		if errors.Is(err, pgx.ErrNoRows) {
+			return nil, connect.NewError(connect.CodeNotFound, errors.New("org not found"))
+		}
+		return nil, connect.NewError(connect.CodeInternal, errors.New("failed to read org"))
 	}
 	// AllowLabelMatching/AllowLocalAttributeMatching are proto3 `optional`
 	// specifically so a caller can omit them: Valid=false tells UpdateOrg's
@@ -245,7 +267,7 @@ func (s *AdminService) UpdateOrg(ctx context.Context, req *connect.Request[mgmtv
 	// these two fields (or otherwise doesn't set them) from silently
 	// disabling fleet-wide label/attribute matching on every unrelated edit.
 	// See PR-144 review §3.
-	o, err := s.store.Queries.UpdateOrg(ctx, sqlc.UpdateOrgParams{
+	o, err := txQueries.UpdateOrg(ctx, sqlc.UpdateOrgParams{
 		ID:                          id,
 		DisplayName:                 msg.GetDisplayName(),
 		AdminGroupID:                msg.GetAdminGroupId(),
@@ -258,6 +280,10 @@ func (s *AdminService) UpdateOrg(ctx context.Context, req *connect.Request[mgmtv
 	if err != nil {
 		return nil, connect.NewError(connect.CodeInternal, errors.New("failed to update org"))
 	}
+	if err := tx.Commit(ctx); err != nil {
+		return nil, connect.NewError(connect.CodeInternal, errors.New("failed to commit org update"))
+	}
+
 	// PR-144 review §2: the flag is documented/assumed to be a kill switch
 	// (turn it off, served config reverts), but nothing invalidated the
 	// serve cache for either direction until now — turning it OFF left
@@ -278,8 +304,8 @@ func (s *AdminService) UpdateOrg(ctx context.Context, req *connect.Request[mgmtv
 			s.logger.Error("update org: marking serve cache dirty", "org_id", id.String(), "err", cacheErr)
 		}
 	}
-	metrics.OrgLabelMatchingEnabled.WithLabelValues(o.Name).Set(boolToFloat(o.AllowLabelMatching))
-	metrics.OrgLocalAttributeMatchingEnabled.WithLabelValues(o.Name).Set(boolToFloat(o.AllowLocalAttributeMatching))
+	metrics.OrgLabelMatchingEnabled.WithLabelValues(o.Name).Set(metrics.BoolToFloat64(o.AllowLabelMatching))
+	metrics.OrgLocalAttributeMatchingEnabled.WithLabelValues(o.Name).Set(metrics.BoolToFloat64(o.AllowLocalAttributeMatching))
 
 	// Unconditional, unlike the cache-dirty call above: docs/spec.md:345's
 	// stated invariant is every mutating management-API handler writes an
@@ -293,14 +319,6 @@ func (s *AdminService) UpdateOrg(ctx context.Context, req *connect.Request[mgmtv
 		"allow_local_attribute_matching_after":  o.AllowLocalAttributeMatching,
 	})
 	return connect.NewResponse(toOrgProto(o)), nil
-}
-
-// boolToFloat converts a bool to the 1/0 a Prometheus gauge expects.
-func boolToFloat(b bool) float64 {
-	if b {
-		return 1
-	}
-	return 0
 }
 
 // DeleteOrg deletes an org.

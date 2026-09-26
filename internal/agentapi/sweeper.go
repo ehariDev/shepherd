@@ -141,16 +141,9 @@ func (sw *Sweeper) refreshOrgMatchingGauges(ctx context.Context) {
 		return
 	}
 	for _, o := range orgs {
-		metrics.OrgLabelMatchingEnabled.WithLabelValues(o.Name).Set(boolToGauge(o.AllowLabelMatching))
-		metrics.OrgLocalAttributeMatchingEnabled.WithLabelValues(o.Name).Set(boolToGauge(o.AllowLocalAttributeMatching))
+		metrics.OrgLabelMatchingEnabled.WithLabelValues(o.Name).Set(metrics.BoolToFloat64(o.AllowLabelMatching))
+		metrics.OrgLocalAttributeMatchingEnabled.WithLabelValues(o.Name).Set(metrics.BoolToFloat64(o.AllowLocalAttributeMatching))
 	}
-}
-
-func boolToGauge(b bool) float64 {
-	if b {
-		return 1
-	}
-	return 0
 }
 
 // refreshActiveCollectors sets the shepherd_active_collectors gauge.

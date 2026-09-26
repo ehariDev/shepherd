@@ -530,13 +530,24 @@ func (r *Reconciler) stage3DryRun(ctx context.Context, link sqlc.RepoLink, candi
 			adminLabels = nil
 		}
 	}
-	// Single collector, not an org-wide loop — GetLatestCollectorInstanceSummary
-	// (already used for the collector-list endpoint) rather than PR-7's bulk
+	// Single collector, not an org-wide loop — GetLatestLocalAttributesByCollector
+	// (the same staleness-filtered query ListLatestLocalAttributesByOrg uses,
+	// scoped to one collector) rather than PR-7's bulk
 	// ListLatestLocalAttributesByOrg, which exists specifically to avoid N+1
-	// across an org-wide Assemble loop that this dry-run isn't.
+	// across an org-wide Assemble loop that this dry-run isn't. Not
+	// GetLatestCollectorInstanceSummary (used elsewhere for the collector-list
+	// endpoint): that query has no staleness filter on purpose, because its
+	// other caller wants to display an inactive-instance collector's real
+	// status rather than have it vanish — but that means it would otherwise
+	// keep feeding a months-stale attribute blob into this matching preview
+	// for a collector that stopped polling without a clean unregister.
 	if orgErr == nil && org.AllowLocalAttributeMatching {
-		if summary, sumErr := r.store.Queries.GetLatestCollectorInstanceSummary(ctx, link.CollectorID); sumErr == nil {
-			if jsonErr := json.Unmarshal(summary.LocalAttributes, &localAttrs); jsonErr != nil {
+		raw, attrErr := r.store.Queries.GetLatestLocalAttributesByCollector(ctx, sqlc.GetLatestLocalAttributesByCollectorParams{
+			CollectorID: link.CollectorID,
+			OrgID:       link.OrgID,
+		})
+		if attrErr == nil {
+			if jsonErr := json.Unmarshal(raw, &localAttrs); jsonErr != nil {
 				r.logger.Warn("gitsync: decoding local_attributes", "collector_id", link.CollectorID.String(), "err", jsonErr)
 				localAttrs = nil
 			}
