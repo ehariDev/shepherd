@@ -74,15 +74,18 @@ type Result struct {
 	// Content is the final served config: merged pipelines plus D6's
 	// baseline pipeline (when configured), Stage-1-validated.
 	Content string
-	// Hash identifies Content for change detection, but is NOT always a
-	// literal merge.HashContent(Content): the common case (no baseline
-	// appended) returns merge.Assemble's own Hash unchanged, which is
-	// computed against Content's header with its live timestamp swapped for
-	// a fixed placeholder (PR-144 review §11b), so it stays stable across
-	// recomputes of the same pipeline set even though the header's real
-	// timestamp — and so Content itself — changes every time. Only when
-	// appending the baseline mutated Content past what merge.Assemble
-	// already hashed is Hash recomputed as a literal merge.HashContent(Content).
+	// Hash identifies Content for change detection, but is NOT a literal
+	// merge.HashContent(Content): it is always computed against Content's
+	// header with its live timestamp swapped for a fixed placeholder
+	// (merge.HashStableContent — PR-144 review §11b), so it stays stable
+	// across recomputes of the same pipeline set even though the header's
+	// real timestamp — and so Content itself — changes every time. The
+	// common case (no baseline appended) returns merge.Assemble's own Hash
+	// unchanged; when appending the baseline mutated Content past what
+	// merge.Assemble already hashed, Hash is recomputed the same
+	// timestamp-normalized way via merge.HashStableContent(Content), not a
+	// literal merge.HashContent(Content) — otherwise the baseline path would
+	// silently reintroduce the exact churn §11b fixed for every other org.
 	Hash string
 	// Exclusions lists every pipeline that matched the collector's labels
 	// but was left out of Content because of role/signal enforcement — see
@@ -146,7 +149,13 @@ func ComputeServed(_ context.Context, deps Deps, coll Collector, pipelines []mer
 
 	hash := assembled.Hash
 	if content != assembled.Content {
-		hash = merge.HashContent(content)
+		// Timestamp-normalized, not a literal merge.HashContent(content): the
+		// baseline append happened after merge.Assemble already computed its
+		// own stable Hash, but content still carries the header's live
+		// generatedAt, and a literal hash of it would churn on every
+		// recompute exactly like Hash did before PR-144 §11b (see Result.Hash's
+		// doc comment).
+		hash = merge.HashStableContent(content)
 	}
 
 	// Stage 1 on the FINAL served output, baseline included — a broken

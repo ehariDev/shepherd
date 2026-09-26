@@ -4,6 +4,7 @@ import (
 	"context"
 	"regexp"
 	"testing"
+	"time"
 
 	"shepherd/internal/beacon"
 	"shepherd/internal/merge"
@@ -131,8 +132,40 @@ func TestComputeServed_BaselineChangesHash(t *testing.T) {
 	if with.Hash == without.Hash {
 		t.Fatalf("baseline-mutated content unexpectedly kept the no-baseline hash")
 	}
-	if want := merge.HashContent(with.Content); with.Hash != want {
-		t.Fatalf("Hash %q does not match HashContent(Content) %q after baseline append", with.Hash, want)
+	// Timestamp-normalized (merge.HashStableContent), not a literal
+	// merge.HashContent(Content) -- see TestComputeServed_BaselineHashStability,
+	// which is what actually depends on this.
+	if want := merge.HashStableContent(with.Content); with.Hash != want {
+		t.Fatalf("Hash %q does not match HashStableContent(Content) %q after baseline append", with.Hash, want)
+	}
+}
+
+// TestComputeServed_BaselineHashStability proves Hash stays stable across
+// recomputes of the SAME pipeline set even when a beacon baseline is
+// configured. The baseline-append branch in compute.go recomputes Hash from
+// Content (which merge.Assemble's own stable Hash didn't cover, since the
+// baseline mutates Content after Assemble already hashed it) -- if that
+// recompute ever goes back to a literal merge.HashContent(Content), the
+// header's live generatedAt timestamp bakes straight back into Hash, and
+// every recompute churns it again, silently losing PR-144 §11b's fix for
+// every org with a baseline configured.
+func TestComputeServed_BaselineHashStability(t *testing.T) {
+	pipelines := []merge.Pipeline{scrapePipeline("p1", "alpha", []string{`cluster="c1"`})}
+	coll := serve.Collector{ID: "coll-1", Cluster: "c1", Role: "metrics"}
+	deps := serve.Deps{BeaconBaseline: beacon.NewBaselineConfig("https://shepherd.example.test" + beacon.WritePath)}
+
+	r1, err := serve.ComputeServed(context.Background(), deps, coll, pipelines)
+	if err != nil {
+		t.Fatalf("first ComputeServed: %v", err)
+	}
+	time.Sleep(1100 * time.Millisecond) // ensure the RFC3339 second-resolution timestamp actually changes
+	r2, err := serve.ComputeServed(context.Background(), deps, coll, pipelines)
+	if err != nil {
+		t.Fatalf("second ComputeServed: %v", err)
+	}
+
+	if r1.Hash != r2.Hash {
+		t.Fatalf("Hash changed between identical recomputes with a beacon baseline configured (r1=%s r2=%s)", r1.Hash, r2.Hash)
 	}
 }
 
