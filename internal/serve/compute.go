@@ -74,9 +74,15 @@ type Result struct {
 	// Content is the final served config: merged pipelines plus D6's
 	// baseline pipeline (when configured), Stage-1-validated.
 	Content string
-	// Hash is sha256hex(Content) — always merge.HashContent(Content), even
-	// when appending the baseline changed Content after merge.Assemble
-	// computed its own hash.
+	// Hash identifies Content for change detection, but is NOT always a
+	// literal merge.HashContent(Content): the common case (no baseline
+	// appended) returns merge.Assemble's own Hash unchanged, which is
+	// computed against Content's header with its live timestamp swapped for
+	// a fixed placeholder (PR-144 review §11b), so it stays stable across
+	// recomputes of the same pipeline set even though the header's real
+	// timestamp — and so Content itself — changes every time. Only when
+	// appending the baseline mutated Content past what merge.Assemble
+	// already hashed is Hash recomputed as a literal merge.HashContent(Content).
 	Hash string
 	// Exclusions lists every pipeline that matched the collector's labels
 	// but was left out of Content because of role/signal enforcement — see

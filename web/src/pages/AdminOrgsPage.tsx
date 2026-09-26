@@ -352,8 +352,8 @@ export function AdminOrgsPage() {
                 <span className='text-zinc-200'>Allow admin-label matching</span>
                 <span className='block text-xs text-muted-2'>
                   Lets pipelines match on this org's admin-set "Manage labels", in addition to
-                  cluster/role. Off by default — existing pipelines keep matching exactly as they
-                  do today until this is on.
+                  cluster/role. Off by default — existing pipelines keep matching exactly as they do
+                  today until this is on.
                 </span>
               </span>
             </label>
