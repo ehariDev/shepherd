@@ -57,7 +57,7 @@ var _ = Describe("GetOrgByIDForUpdate row locking", Label("integration"), func()
 		done := make(chan struct{})
 		go func() {
 			defer close(done)
-			_, _ = q2.GetOrgByIDForUpdate(ctx, orgID)
+			q2.GetOrgByIDForUpdate(ctx, orgID) //nolint:errcheck // only the blocking behavior below is under test; the query's own result is irrelevant
 		}()
 
 		select {
