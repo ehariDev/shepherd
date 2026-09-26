@@ -90,6 +90,8 @@ export function AdminOrgsPage() {
     editorGroupId: '',
     readerGroupId: '',
     allowExperimentalComponents: false,
+    allowLabelMatching: false,
+    allowLocalAttributeMatching: false,
   });
   const [deleteOrg, setDeleteOrg] = useState<Org | null>(null);
 
@@ -147,6 +149,8 @@ export function AdminOrgsPage() {
       editorGroupId: o.editorGroupId,
       readerGroupId: o.readerGroupId,
       allowExperimentalComponents: o.allowExperimentalComponents,
+      allowLabelMatching: o.allowLabelMatching,
+      allowLocalAttributeMatching: o.allowLocalAttributeMatching,
     });
   }
 
@@ -331,6 +335,45 @@ export function AdminOrgsPage() {
                   Lets this org use experimental Alloy components in the visual builder. Off by
                   default — the builder hides them and the server refuses to render a graph that
                   uses one.
+                </span>
+              </span>
+            </label>
+            <label className='flex items-start gap-2 text-sm'>
+              <input
+                type='checkbox'
+                data-testid='org-allow-label-matching'
+                checked={editForm.allowLabelMatching}
+                onChange={(e) =>
+                  setEditForm((f) => ({ ...f, allowLabelMatching: e.target.checked }))
+                }
+                className='mt-0.5'
+              />
+              <span>
+                <span className='text-zinc-200'>Allow admin-label matching</span>
+                <span className='block text-xs text-muted-2'>
+                  Lets pipelines match on this org's admin-set "Manage labels", in addition to
+                  cluster/role. Off by default — existing pipelines keep matching exactly as they do
+                  today until this is on.
+                </span>
+              </span>
+            </label>
+            <label className='flex items-start gap-2 text-sm'>
+              <input
+                type='checkbox'
+                data-testid='org-allow-local-attribute-matching'
+                checked={editForm.allowLocalAttributeMatching}
+                onChange={(e) =>
+                  setEditForm((f) => ({ ...f, allowLocalAttributeMatching: e.target.checked }))
+                }
+                className='mt-0.5'
+              />
+              <span>
+                <span className='text-zinc-200'>Allow local-attribute matching</span>
+                <span className='block text-xs text-muted-2'>
+                  Lets pipelines match on attributes collectors self-report (Alloy's remotecfg
+                  block), independently of admin-label matching above. Agent-reported data is
+                  reachable via a compromised agent token — a different trust boundary than
+                  admin-set labels. Off by default.
                 </span>
               </span>
             </label>

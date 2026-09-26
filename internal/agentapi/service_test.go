@@ -274,7 +274,7 @@ var _ = Describe("CollectorService", Label("integration"), func() {
 			Expect(err).NotTo(HaveOccurred())
 			_, err = st.Queries.UpdateOrg(ctx, sqlc.UpdateOrgParams{
 				ID: org.ID, DisplayName: org.DisplayName, AdminGroupID: org.AdminGroupID,
-				AllowLocalAttributeMatching: true,
+				AllowLocalAttributeMatching: pgtype.Bool{Bool: true, Valid: true},
 			})
 			Expect(err).NotTo(HaveOccurred())
 
@@ -349,7 +349,7 @@ var _ = Describe("CollectorService", Label("integration"), func() {
 			Expect(err).NotTo(HaveOccurred())
 			_, err = st.Queries.UpdateOrg(ctx, sqlc.UpdateOrgParams{
 				ID: org.ID, DisplayName: org.DisplayName, AdminGroupID: org.AdminGroupID,
-				AllowLocalAttributeMatching: true,
+				AllowLocalAttributeMatching: pgtype.Bool{Bool: true, Valid: true},
 			})
 			Expect(err).NotTo(HaveOccurred())
 
@@ -368,7 +368,7 @@ var _ = Describe("CollectorService", Label("integration"), func() {
 			})
 			Expect(err).NotTo(HaveOccurred())
 
-			before := counterValue(metrics.PipelineMatchChangesTotal.WithLabelValues("added"))
+			before := counterValue(metrics.PipelineMatchChangesTotal.WithLabelValues("added", "collector.local_attributes.report"))
 
 			// First poll (via RegisterCollector above) reported no "team" key;
 			// this poll adds it — the flip GetConfig's drift hook must catch.
@@ -380,7 +380,7 @@ var _ = Describe("CollectorService", Label("integration"), func() {
 			}))
 			Expect(err).NotTo(HaveOccurred())
 
-			Expect(counterValue(metrics.PipelineMatchChangesTotal.WithLabelValues("added"))).To(
+			Expect(counterValue(metrics.PipelineMatchChangesTotal.WithLabelValues("added", "collector.local_attributes.report"))).To(
 				Equal(before+1), "one pipeline newly matched, one \"added\" flip")
 
 			rows, err := st.Queries.ListAuditLog(ctx, sqlc.ListAuditLogParams{
@@ -469,7 +469,7 @@ var _ = Describe("CollectorService", Label("integration"), func() {
 
 			_, err = st3.Queries.UpdateOrg(ctx, sqlc.UpdateOrgParams{
 				ID: org.ID, DisplayName: org.DisplayName, AdminGroupID: org.AdminGroupID,
-				AllowLocalAttributeMatching: true,
+				AllowLocalAttributeMatching: pgtype.Bool{Bool: true, Valid: true},
 			})
 			Expect(err).NotTo(HaveOccurred())
 
@@ -480,7 +480,7 @@ var _ = Describe("CollectorService", Label("integration"), func() {
 
 			_, err = st3.Queries.UpdateOrg(ctx, sqlc.UpdateOrgParams{
 				ID: org.ID, DisplayName: org.DisplayName, AdminGroupID: org.AdminGroupID,
-				AllowLocalAttributeMatching: false,
+				AllowLocalAttributeMatching: pgtype.Bool{Bool: false, Valid: true},
 			})
 			Expect(err).NotTo(HaveOccurred())
 

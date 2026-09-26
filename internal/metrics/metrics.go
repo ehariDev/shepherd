@@ -103,17 +103,67 @@ var (
 	}, []string{"procedure"})
 
 	// PipelineMatchChangesTotal counts pipeline-to-collector match flips caused
-	// by a label mutation, labelled by direction ("added" or "removed"). A
-	// collector's effective label set can change which pipelines it draws
-	// config from without anyone editing a pipeline — this is the signal an
-	// operator's existing Alertmanager/Grafana can alert on directly (e.g.
-	// increase(...{direction="removed"}[1h]) > 0), no new alerting UI needed
-	// inside Shepherd. See LABEL-MATCHING-PLAN.md §7.
+	// by a label mutation, labelled by direction ("added" or "removed") and
+	// cause. A collector's effective label set can change which pipelines it
+	// draws config from without anyone editing a pipeline — this is the
+	// signal an operator's existing Alertmanager/Grafana can alert on
+	// directly (e.g. increase(...{direction="removed"}[1h]) > 0), no new
+	// alerting UI needed inside Shepherd. See LABEL-MATCHING-PLAN.md §7.
+	//
+	// cause distinguishes "an admin did this" (collector.label.set/.delete)
+	// from "the fleet did this to itself via a heartbeat"
+	// (collector.local_attributes.report) — 3 fixed values, already computed
+	// for the audit-log detail this metric is emitted alongside, so adding
+	// it here is free cardinality (PR-144 review §10a).
 	PipelineMatchChangesTotal = promauto.NewCounterVec(prometheus.CounterOpts{
 		Namespace: "shepherd",
 		Name:      "pipeline_match_changes_total",
-		Help:      "Total pipeline-to-collector match changes caused by a label mutation, by direction (added, removed).",
-	}, []string{"direction"})
+		Help:      "Total pipeline-to-collector match changes, by direction (added, removed) and cause (collector.label.set, collector.label.delete, collector.local_attributes.report).",
+	}, []string{"direction", "cause"})
+
+	// OrgLookupFailuresTotal counts a GetOrgByID failure on a matching/serve
+	// path, by call site. Every one of these call sites degrades a failed
+	// lookup to "both matching flags off" rather than failing the request —
+	// silent for the operator otherwise, since a transient DB blip would
+	// strip label/attribute matching out of served config with no signal
+	// that it happened (PR-144 review §5).
+	OrgLookupFailuresTotal = promauto.NewCounterVec(prometheus.CounterOpts{
+		Namespace: "shepherd",
+		Name:      "org_lookup_failures_total",
+		Help:      "Total GetOrgByID failures on a matching/serve path, by call site. A degraded lookup silently disables label/attribute matching for that call.",
+	}, []string{"call_site"})
+
+	// MatcherParseErrorsTotal counts a pipeline matcher that failed to parse
+	// wherever MatchesPipeline is evaluated (match-drift diffing and
+	// Assemble's own pipeline selection). Unlabelled: expected to be rare
+	// enough that call-site/pipeline-id cardinality isn't worth adding, and
+	// this is meant as a "something is wrong, go look" signal, not a
+	// per-pipeline breakdown (PR-144 review §10b).
+	MatcherParseErrorsTotal = promauto.NewCounter(prometheus.CounterOpts{
+		Namespace: "shepherd",
+		Name:      "matcher_parse_errors_total",
+		Help:      "Total pipeline matcher parse failures encountered while evaluating matches. A parse error is treated as \"did not match\" everywhere it's hit.",
+	})
+
+	// OrgLabelMatchingEnabled and OrgLocalAttributeMatchingEnabled report an
+	// org's two rollout flags as gauges (1 = on, 0 = off), by org name —
+	// otherwise the flags are invisible to monitoring/dashboards, and a
+	// drift spike can't be correlated with a rollout step (PR-144 review
+	// §10d). Set on every UpdateOrg call and backfilled once at startup for
+	// orgs that predate this code.
+	OrgLabelMatchingEnabled = promauto.NewGaugeVec(prometheus.GaugeOpts{
+		Namespace: "shepherd",
+		Name:      "org_label_matching_enabled",
+		Help:      "1 if the org has allow_label_matching on, 0 otherwise.",
+	}, []string{"org"})
+
+	// OrgLocalAttributeMatchingEnabled is allow_local_attribute_matching's
+	// own gauge — see OrgLabelMatchingEnabled above for the shared rationale.
+	OrgLocalAttributeMatchingEnabled = promauto.NewGaugeVec(prometheus.GaugeOpts{
+		Namespace: "shepherd",
+		Name:      "org_local_attribute_matching_enabled",
+		Help:      "1 if the org has allow_local_attribute_matching on, 0 otherwise.",
+	}, []string{"org"})
 )
 
 // init publishes the build-info series as soon as the package loads, so

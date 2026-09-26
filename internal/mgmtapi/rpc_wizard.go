@@ -143,7 +143,10 @@ func (s *WizardService) previewMatchedCollectors(ctx context.Context, p merge.Pi
 	if err != nil {
 		return nil, err
 	}
-	org, _ := s.store.Queries.GetOrgByID(ctx, orgID) //nolint:errcheck // an org lookup failure degrades to no admin labels below
+	org, orgErr := s.store.Queries.GetOrgByID(ctx, orgID)
+	if orgErr != nil {
+		logOrgLookupFailure(s.logger, "preview_matched_collectors_wizard", orgID, orgErr)
+	}
 	localAttrs := localAttrsByOrg(ctx, s.store.Queries, orgID, org.AllowLocalAttributeMatching)
 	var matched []map[string]string
 	for i := range collectors {

@@ -69,6 +69,7 @@ func (sw *Sweeper) run(ctx context.Context) {
 	// sweeps keep waiting for their interval.
 	sw.refreshTableGauges(ctx)
 	sw.refreshActiveCollectors(ctx)
+	sw.refreshOrgMatchingGauges(ctx)
 
 	t := time.NewTicker(sw.tick)
 	defer t.Stop()
@@ -114,6 +115,35 @@ func (sw *Sweeper) sweep(ctx context.Context) {
 
 	sw.refreshTableGauges(ctx)
 	sw.refreshActiveCollectors(ctx)
+	sw.refreshOrgMatchingGauges(ctx)
+}
+
+// refreshOrgMatchingGauges sets shepherd_org_label_matching_enabled and
+// shepherd_org_local_attribute_matching_enabled for every org (PR-144 review
+// §10d). UpdateOrg (rpc_admin.go) already sets both on every flag write, but
+// that leaves any org that existed before this code shipped without a gauge
+// value at all until someone happens to edit it — reusing the sweeper's
+// existing "refresh once at startup, then every tick" gauge pattern
+// (refreshActiveCollectors above) backfills those and keeps every org's
+// gauge self-correcting if it's ever missed, the same property that pattern
+// already gives shepherd_active_collectors.
+func (sw *Sweeper) refreshOrgMatchingGauges(ctx context.Context) {
+	orgs, err := sw.store.Queries.ListOrgs(ctx)
+	if err != nil {
+		sw.logger.Debug("sweeper: failed to list orgs for matching gauges", "err", err)
+		return
+	}
+	for _, o := range orgs {
+		metrics.OrgLabelMatchingEnabled.WithLabelValues(o.Name).Set(boolToGauge(o.AllowLabelMatching))
+		metrics.OrgLocalAttributeMatchingEnabled.WithLabelValues(o.Name).Set(boolToGauge(o.AllowLocalAttributeMatching))
+	}
+}
+
+func boolToGauge(b bool) float64 {
+	if b {
+		return 1
+	}
+	return 0
 }
 
 // refreshActiveCollectors sets the shepherd_active_collectors gauge.

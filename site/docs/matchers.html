@@ -100,6 +100,17 @@
         A pipeline with no matchers reaches nothing. The editor previews how many collectors currently
         match before you save, so "this matches nothing" is visible rather than discovered later.
       </p>
+      <p>
+        <code>cluster</code> and <code>role</code> always work. An org can additionally opt in,
+        independently, to matching on two more sources: a collector's admin-set
+        <strong>Manage labels</strong> (<code>allow_label_matching</code>) and the
+        <code>local_attributes</code> a collector self-reports via Alloy's <code>remotecfg</code>
+        block (<code>allow_local_attribute_matching</code>). Both are off by default — an org that
+        hasn't opted in keeps matching exactly as before. When both are on for an org, precedence is
+        <code>local_attributes</code> &lt; admin labels &lt; <code>cluster</code>/<code>role</code>:
+        agent-reported data can never shadow an admin-set label, since a local attribute is reachable
+        by anyone holding that collector's agent token. Toggle either flag from an org's settings page.
+      </p>
       <p><img src="../img/pipelines.jpg" alt="The Pipelines list showing name, source, matchers and an enabled toggle for each pipeline" loading="lazy"></p>
       <p>
         The <strong>Source</strong> column is worth reading: <code>ui</code>, <code>wizard</code>,

@@ -510,13 +510,13 @@ var _ = Describe("shepherd.mgmt.v1.FleetService RPC", Label("integration"), func
 		// Flag off (default): setting the matching label must produce no
 		// audit row and no metric movement, even though the pipeline's
 		// matcher would flip if the flag were on.
-		addedBefore := testutil.ToFloat64(metrics.PipelineMatchChangesTotal.WithLabelValues("added"))
+		addedBefore := testutil.ToFloat64(metrics.PipelineMatchChangesTotal.WithLabelValues("added", "collector.label.set"))
 		resp := postConnect("/shepherd.mgmt.v1.FleetService/SetCollectorLabel", map[string]any{
 			"orgId": orgID.String(), "collectorId": collector.ID.String(), "key": "team", "value": "platform",
 		}, cookie)
 		Expect(resp.StatusCode).To(Equal(http.StatusOK))
 		decodeBody(resp)
-		Expect(testutil.ToFloat64(metrics.PipelineMatchChangesTotal.WithLabelValues("added"))).To(Equal(addedBefore),
+		Expect(testutil.ToFloat64(metrics.PipelineMatchChangesTotal.WithLabelValues("added", "collector.label.set"))).To(Equal(addedBefore),
 			"flag off: no match-drift metric movement")
 		Expect(matchChangedRows()).To(BeEmpty(), "flag off: no match-drift audit row")
 
@@ -527,28 +527,28 @@ var _ = Describe("shepherd.mgmt.v1.FleetService RPC", Label("integration"), func
 		_, err = st.Queries.UpdateOrg(ctx, sqlc.UpdateOrgParams{
 			ID: orgID, DisplayName: "Fleet RPC Org", AdminGroupID: "fleet-admin-group",
 			ReaderGroupID:      pgtype.Text{String: "fleet-reader-group", Valid: true},
-			AllowLabelMatching: true,
+			AllowLabelMatching: pgtype.Bool{Bool: true, Valid: true},
 		})
 		Expect(err).NotTo(HaveOccurred())
 
 		// An edit to an unrelated key must not be reported as a flip.
-		addedBefore = testutil.ToFloat64(metrics.PipelineMatchChangesTotal.WithLabelValues("added"))
+		addedBefore = testutil.ToFloat64(metrics.PipelineMatchChangesTotal.WithLabelValues("added", "collector.label.set"))
 		resp = postConnect("/shepherd.mgmt.v1.FleetService/SetCollectorLabel", map[string]any{
 			"orgId": orgID.String(), "collectorId": collector.ID.String(), "key": "unrelated", "value": "x",
 		}, cookie)
 		Expect(resp.StatusCode).To(Equal(http.StatusOK))
 		decodeBody(resp)
-		Expect(testutil.ToFloat64(metrics.PipelineMatchChangesTotal.WithLabelValues("added"))).To(Equal(addedBefore),
+		Expect(testutil.ToFloat64(metrics.PipelineMatchChangesTotal.WithLabelValues("added", "collector.label.set"))).To(Equal(addedBefore),
 			"an unrelated key change must not be reported as a flip")
 
 		// Flip the pipeline out of matching (team: platform -> staging): "removed".
-		removedBefore := testutil.ToFloat64(metrics.PipelineMatchChangesTotal.WithLabelValues("removed"))
+		removedBefore := testutil.ToFloat64(metrics.PipelineMatchChangesTotal.WithLabelValues("removed", "collector.label.set"))
 		resp = postConnect("/shepherd.mgmt.v1.FleetService/SetCollectorLabel", map[string]any{
 			"orgId": orgID.String(), "collectorId": collector.ID.String(), "key": "team", "value": "staging",
 		}, cookie)
 		Expect(resp.StatusCode).To(Equal(http.StatusOK))
 		decodeBody(resp)
-		Expect(testutil.ToFloat64(metrics.PipelineMatchChangesTotal.WithLabelValues("removed"))).To(Equal(removedBefore + 1))
+		Expect(testutil.ToFloat64(metrics.PipelineMatchChangesTotal.WithLabelValues("removed", "collector.label.set"))).To(Equal(removedBefore + 1))
 		removedRows := matchChangedRows()
 		Expect(removedRows).To(HaveLen(1))
 		var detail map[string]string
@@ -559,22 +559,22 @@ var _ = Describe("shepherd.mgmt.v1.FleetService RPC", Label("integration"), func
 		Expect(detail).To(HaveKeyWithValue("cause", "collector.label.set"))
 
 		// Flip it back into matching (team: staging -> platform): "added".
-		addedBefore = testutil.ToFloat64(metrics.PipelineMatchChangesTotal.WithLabelValues("added"))
+		addedBefore = testutil.ToFloat64(metrics.PipelineMatchChangesTotal.WithLabelValues("added", "collector.label.set"))
 		resp = postConnect("/shepherd.mgmt.v1.FleetService/SetCollectorLabel", map[string]any{
 			"orgId": orgID.String(), "collectorId": collector.ID.String(), "key": "team", "value": "platform",
 		}, cookie)
 		Expect(resp.StatusCode).To(Equal(http.StatusOK))
 		decodeBody(resp)
-		Expect(testutil.ToFloat64(metrics.PipelineMatchChangesTotal.WithLabelValues("added"))).To(Equal(addedBefore + 1))
+		Expect(testutil.ToFloat64(metrics.PipelineMatchChangesTotal.WithLabelValues("added", "collector.label.set"))).To(Equal(addedBefore + 1))
 
 		// Deleting the label flips it back out again: "removed", cause reflects the delete.
-		removedBefore = testutil.ToFloat64(metrics.PipelineMatchChangesTotal.WithLabelValues("removed"))
+		removedBefore = testutil.ToFloat64(metrics.PipelineMatchChangesTotal.WithLabelValues("removed", "collector.label.delete"))
 		resp = postConnect("/shepherd.mgmt.v1.FleetService/DeleteCollectorLabel", map[string]any{
 			"orgId": orgID.String(), "collectorId": collector.ID.String(), "key": "team",
 		}, cookie)
 		Expect(resp.StatusCode).To(Equal(http.StatusOK))
 		decodeBody(resp)
-		Expect(testutil.ToFloat64(metrics.PipelineMatchChangesTotal.WithLabelValues("removed"))).To(Equal(removedBefore + 1))
+		Expect(testutil.ToFloat64(metrics.PipelineMatchChangesTotal.WithLabelValues("removed", "collector.label.delete"))).To(Equal(removedBefore + 1))
 		allRows := matchChangedRows()
 		Expect(len(allRows)).To(BeNumerically(">=", 2))
 		mostRecent := allRows[0] // ListAuditLog orders ORDER BY at DESC, newest first.
