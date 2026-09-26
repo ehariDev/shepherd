@@ -164,12 +164,12 @@ answer and the ledger item it produced is below.
 
 - [x] **F-REVISIONS**: `contents` on `PipelineRevision`, `RestoreRevision` RPC, the text diff
       view and Restore in the pipeline editor — shipped in v0.6.0, see `CHANGELOG.md`. Graph
-      diff for visual pipelines is the remaining follow-up (below).
+      diff for visual pipelines also shipped — see below.
 - [ ] **Editor Format + Validate buttons**: `FormatPipeline` RPC over `alloy fmt`, wired to a
       Format button; an explicit Validate button beside the idle-debounced validation.
-- [ ] **Experimental components as an org setting**: migration + proto field + server-side
-      render gate (an experimental node with the toggle off is a render error), replacing the
-      hardcoded client flag.
+- [x] **Experimental components as an org setting**: migration + proto field + server-side
+      render gate — shipped (`orgs.allow_experimental_components`, `visual.ExperimentalNodes`);
+      plan archived at `docs/archive/plans/2026-09-17-experimental-components-org-setting.md`.
 - [ ] **`shepherd_build_info` gauge** (labels `version`, `commit`) in `internal/metrics`.
 - [ ] **REST shim deprecation**: changelog notice, `Deprecation` header on every shim route,
       removal scheduled one release later.
@@ -186,7 +186,9 @@ answer and the ledger item it produced is below.
 - [ ] **Service-accounts UI** (W10 remainder): create/list/revoke with the role tier — no client
       in `web/src/api/transport.ts` and no page. Teams and explicit members shipped in v0.3.0
       (`web/src/pages/TeamsPage.tsx`).
-- [ ] **Reconciliation surface** (W6): per-collector declared vs served vs observed drift.
+- [x] **Reconciliation surface** (W6): per-collector declared vs served vs observed drift — shipped
+      (`FleetService.GetReconciliation`, `CollectorReconciliation.tsx`); plan archived at
+      `docs/archive/plans/2026-09-18-reconciliation-surface.md`.
 - [ ] **Onboarding artifacts page** (W7): "connect an app" snippets for a tenant route.
 - [ ] **Chart-values generator UI** (W9) + gate G10 in the kind suite.
 
@@ -221,12 +223,9 @@ Open, in rough priority order:
       on where the scrape jitter lands — the first `make dev-kind` run showed 0 series and the next
       two 21. Containment and capture are fine; the run window versus the pipeline's own interval
       is the product question (a minimum window, or a first-scrape trigger).
-- [ ] **Graph diff for visual pipelines.** The pipeline editor's revision diff is text-only
-      (`RevisionDiff`, CodeMirror merge view); the visual builder page has no revision UI, so a
-      visual pipeline's graph-level change is not diffable, only its rendered text. Restoring a
-      visual pipeline from the text editor still restores the graph (`wizard_state` travels with
-      the revision) for revisions written after migration 0019 — older rows carry no graph, so
-      restoring one restores text only — only the *diff view* is text-only.
+- [x] **Graph diff for visual pipelines.** Shipped — `VisualService.DiffRevisions`
+      (`internal/visual/diff.go`) plus the `RevisionCompare` modal on the visual builder's
+      Toolbar; plan archived at `docs/archive/plans/2026-09-17-graph-diff.md`.
 - [x] **Bump Alloy for the 15 high CVEs in the bundled binary (done 2026-09-14, v1.19.2).**
       Trivy found 15 HIGH, unfixed-excluded CVEs in the v1.18.1 binary bundled into both images
       (built upstream with Go 1.26.5). v1.19.2 is built on a patched Go and carries 2, both in
