@@ -191,11 +191,13 @@ answer and the ledger item it produced is below.
       `docs/archive/plans/2026-09-18-reconciliation-surface.md`.
 - [ ] **Onboarding artifacts page** (W7): "connect an app" snippets for a tenant route.
 - [ ] **Chart-values generator UI** (W9) + gate G10 in the kind suite.
-- [ ] **Matcher targeting unified plan** (`docs/plans/2026-09-24-matcher-targeting-unified-plan.md`) —
-      in progress on `feat/matcher-targeting-unified-plan` (branched from PR #12's
-      `feat/label-matching-pr11`, ahead of that PR's merge to `main` per owner decision recorded in the
-      plan's status block). Phase 1 (engine fix: `merge.Evaluate`/`CompileMatchers`, `reconcileServed`
-      dedup, git-sourced `PreviewMatches` fix) is the current phase.
+- [ ] **Matcher targeting unified plan** — in progress on `feat/matcher-targeting-unified-plan` (branched
+      from PR #12's `feat/label-matching-pr11`, ahead of that PR's merge to `main` per owner decision).
+      Its plan doc is kept outside this repo (workspace root, alongside the other planning/handoff
+      `.md` files) by owner preference, not under `docs/plans/` — ask the owner for it if picking this
+      up fresh. Phases 0-2 done (Phase 1: `merge.Evaluate`/`CompileMatchers`, `reconcileServed` dedup,
+      git-sourced `PreviewMatches` fix, repocheck guard; Phase 2: extended `PreviewMatches` proto,
+      `Exclusion` message). Phase 3 (backend draft preview) is next.
 
 ### Smaller follow-ups
 
