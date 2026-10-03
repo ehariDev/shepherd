@@ -400,6 +400,12 @@ func (s *Service) emitLocalAttrsMatchDrift(ctx context.Context, orgID pgtype.UUI
 		// actually served.
 		return
 	}
+	// The attributes changed and the org matches on them, so what this collector
+	// is served may change too. Mark the cache dirty so the read in GetConfig
+	// recomputes it on this poll; the admin-label path does the same.
+	if cacheErr := s.store.Queries.MarkServeCacheDirty(ctx, coll.ID); cacheErr != nil {
+		s.logger.Error("match-drift: marking serve cache dirty", "collector_id", coll.ID.String(), "err", cacheErr)
+	}
 	rows, err := s.store.Queries.ListEnabledPipelinesForMerge(ctx, orgID)
 	if err != nil {
 		s.logger.Error("match-drift: listing enabled pipelines", "org_id", orgID.String(), "err", err)
