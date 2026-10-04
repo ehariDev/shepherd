@@ -458,12 +458,14 @@ func (s *FleetService) emitMatchDrift(ctx context.Context, orgID, collectorID, c
 		})
 	}
 	collIDStr := collectorID.String()
-	// localAttrs: nil — this hook is scoped to admin-label mutations only
-	// (LABEL-MATCHING-PLAN.md PR-5); PR-9 adds the local_attributes-side
-	// equivalent as its own hot-path-gated hook, not by threading local
-	// attributes through this one.
-	before := merge.BuildCollectorLabels(collIDStr, cluster.Name, role, beforeLabels, nil)
-	after := merge.BuildCollectorLabels(collIDStr, cluster.Name, role, afterLabels, nil)
+	// Only the admin labels changed here, so the collector's local_attributes
+	// are held constant on both sides, as emitLocalAttrsMatchDrift holds the
+	// labels constant for an attribute change. Leaving them out reported a
+	// match the agent's own attributes already provided as newly added or
+	// removed. nil when the org has not opted into local_attributes matching.
+	localAttrs := localAttrsByOrg(ctx, s.store.Queries, orgID, org.AllowLocalAttributeMatching)[collIDStr]
+	before := merge.BuildCollectorLabels(collIDStr, cluster.Name, role, beforeLabels, localAttrs)
+	after := merge.BuildCollectorLabels(collIDStr, cluster.Name, role, afterLabels, localAttrs)
 	for _, d := range merge.DiffMatches(pipelines, before, after) {
 		metrics.PipelineMatchChangesTotal.WithLabelValues(d.Direction).Inc()
 		auditLogDetail(ctx, s.store, actorFromCtx(ctx), "user", orgID, "pipeline.match.changed", "pipeline", d.PipelineID, map[string]string{

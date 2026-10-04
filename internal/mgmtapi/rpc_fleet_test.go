@@ -477,6 +477,62 @@ var _ = Describe("shepherd.mgmt.v1.FleetService RPC", Label("integration"), func
 		Expect(resp.StatusCode).To(Equal(http.StatusForbidden))
 	})
 
+	// With both matching flags on, a collector that reports team=x itself
+	// matches a team="x" pipeline whether or not an admin label also says so.
+	// An admin-label edit that only adds or removes the duplicate therefore
+	// flips nothing, but the drift hook diffed with the agent's attributes
+	// left out, so it reported a flip that was never served.
+	It("does not report a match flip for an admin-label edit the agent's own local_attributes already cover", func() {
+		cluster, err := st.Queries.UpsertCluster(ctx, "match-drift-local-attrs-cluster")
+		Expect(err).NotTo(HaveOccurred())
+		Expect(st.Queries.ClaimCluster(ctx, sqlc.ClaimClusterParams{ID: cluster.ID, OrgID: orgID})).To(Succeed())
+		collector, err := st.Queries.UpsertCollector(ctx, sqlc.UpsertCollectorParams{ClusterID: cluster.ID, Role: "metrics"})
+		Expect(err).NotTo(HaveOccurred())
+		_, err = st.Queries.UpsertCollectorInstance(ctx, sqlc.UpsertCollectorInstanceParams{
+			ID: "match-drift-local-attrs-instance", CollectorID: collector.ID, Name: "singleton",
+			LocalAttributes: json.RawMessage(`{"team":"x"}`),
+		})
+		Expect(err).NotTo(HaveOccurred())
+		_, err = st.Queries.UpdateOrg(ctx, sqlc.UpdateOrgParams{
+			ID: orgID, DisplayName: "Fleet RPC Org", AdminGroupID: "fleet-admin-group",
+			ReaderGroupID:               pgtype.Text{String: "fleet-reader-group", Valid: true},
+			AllowLabelMatching:          true,
+			AllowLocalAttributeMatching: true,
+		})
+		Expect(err).NotTo(HaveOccurred())
+		_, err = st.Queries.CreatePipeline(ctx, sqlc.CreatePipelineParams{
+			OrgID: orgID, Name: "match-drift-local-attrs-pipe", Contents: "// match-drift-local-attrs-pipe",
+			Matchers: json.RawMessage(`["team=\"x\""]`), Enabled: true, Source: "ui",
+			CreatedBy: "test", UpdatedBy: "test",
+		})
+		Expect(err).NotTo(HaveOccurred())
+		cookie := createSession(true, nil)
+
+		flips := func(direction string) float64 {
+			return testutil.ToFloat64(metrics.PipelineMatchChangesTotal.WithLabelValues(direction))
+		}
+		addedBefore, removedBefore := flips("added"), flips("removed")
+
+		resp := postConnect("/shepherd.mgmt.v1.FleetService/SetCollectorLabel", map[string]any{
+			"orgId": orgID.String(), "collectorId": collector.ID.String(), "key": "team", "value": "x",
+		}, cookie)
+		Expect(resp.StatusCode).To(Equal(http.StatusOK))
+		decodeBody(resp)
+		resp = postConnect("/shepherd.mgmt.v1.FleetService/DeleteCollectorLabel", map[string]any{
+			"orgId": orgID.String(), "collectorId": collector.ID.String(), "key": "team",
+		}, cookie)
+		Expect(resp.StatusCode).To(Equal(http.StatusOK))
+		decodeBody(resp)
+
+		Expect(flips("added")).To(Equal(addedBefore), "the agent already reports team=x, so adding the admin label adds no match")
+		Expect(flips("removed")).To(Equal(removedBefore), "the agent still reports team=x, so deleting the admin label removes no match")
+		rows, err := st.Queries.ListAuditLog(ctx, sqlc.ListAuditLogParams{Limit: 100})
+		Expect(err).NotTo(HaveOccurred())
+		for _, r := range rows {
+			Expect(r.Action).NotTo(Equal("pipeline.match.changed"))
+		}
+	})
+
 	// LABEL-MATCHING-PLAN.md §7 / PR-5: a label mutation that flips which
 	// pipelines match a collector must emit shepherd_pipeline_match_changes_total
 	// and a "pipeline.match.changed" audit row — but only for an org that has
