@@ -33,9 +33,11 @@ Categories used here:
 
 - **`shepherd admin audit-matcher-impact` also diffs agent-reported `local_attributes`.** It used
   to compare matching with and without admin labels only, so the rollout check for
-  `allow_local_attribute_matching` had nothing to look at. It now compares today's matching (neither
-  flag on) with matching once both are on, using each collector's latest reported attributes, and
-  lists every pipeline that would gain or lose collectors. **Shipped.**
+  `allow_local_attribute_matching` had nothing to look at. It now compares what the org is served
+  today (its current flags) with what it would be served once the flags chosen with `--enable`
+  (`labels`, `local-attributes` or `both`, default `both`) are also on, so a flag that is already on is
+  not reported as new and either flag can be audited alone. Stored labels, attributes or matchers it
+  cannot read are listed in a warning instead of being treated as empty. **Shipped.**
 
 - **Built with Go 1.27.** `go.mod` moves to `go 1.27.1` and every image builds on
   `golang:1.27-alpine` (`GO_IMAGE` in `deploy/versions.env`). Building from source needs Go 1.27.
