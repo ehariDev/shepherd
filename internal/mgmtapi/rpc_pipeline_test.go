@@ -612,6 +612,82 @@ var _ = Describe("PipelineService Connect RPC", Label("integration"), func() {
 			"the admin-label-matched pipeline must reach this collector's served config once allow_label_matching is on")
 	})
 
+	// The matching flags decide what every collector in the org is served, but
+	// UpdateOrg never invalidated the serve caches. Turning a flag OFF therefore
+	// left collectors serving the matched config until an unrelated event dirtied
+	// each cache (so the flag was not a kill switch), and turning one ON did
+	// nothing until then either. A collector's next poll recomputes exactly the
+	// caches that are dirty, so that is what UpdateOrg must leave behind.
+	Describe("UpdateOrg and the serve cache", func() {
+		// warmCache returns a collector in the org whose serve cache has been
+		// computed and is clean, with the label-matched pipeline enabled.
+		warmCache := func(clusterName string, labelMatching bool) (collectorID pgtype.UUID, cookie *http.Cookie) {
+			cookie = sessionCookie(true)
+			cluster, err := st.Queries.UpsertCluster(ctx, clusterName)
+			Expect(err).NotTo(HaveOccurred())
+			Expect(st.Queries.ClaimCluster(ctx, sqlc.ClaimClusterParams{ID: cluster.ID, OrgID: orgUUID(orgID)})).To(Succeed())
+			collector, err := st.Queries.UpsertCollector(ctx, sqlc.UpsertCollectorParams{ClusterID: cluster.ID, Role: "metrics"})
+			Expect(err).NotTo(HaveOccurred())
+			Expect(postConnect("/shepherd.mgmt.v1.FleetService/SetCollectorLabel", map[string]any{
+				"orgId": orgID, "collectorId": collector.ID.String(), "key": "team", "value": "platform",
+			}, cookie).StatusCode).To(Equal(http.StatusOK))
+			Expect(postConnect("/shepherd.mgmt.v1.AdminService/UpdateOrg", map[string]any{
+				"orgId": orgID, "displayName": "RPC Pipeline Org", "adminGroupId": "admin-group", "allowLabelMatching": labelMatching,
+			}, cookie).StatusCode).To(Equal(http.StatusOK))
+
+			createResp := postConnect("/shepherd.mgmt.v1.PipelineService/CreatePipeline", map[string]any{
+				"org_id": orgID, "name": clusterName + "-pipe", "contents": `// ` + clusterName + `-marker`,
+				"matchers": []string{`team="platform"`},
+			}, cookie)
+			Expect(createResp.StatusCode).To(Equal(http.StatusOK))
+			var created struct {
+				ID string `json:"id"`
+			}
+			decodeBody(createResp, &created)
+			Expect(postConnect("/shepherd.mgmt.v1.PipelineService/EnablePipeline", map[string]any{
+				"org_id": orgID, "id": created.ID,
+			}, cookie).StatusCode).To(Equal(http.StatusOK))
+
+			// The eager recompute is detached; wait for it to leave a clean row.
+			Eventually(func() bool {
+				c, err := st.Queries.GetServeCache(ctx, collector.ID)
+				return err == nil && !c.Dirty
+			}, "5s", "50ms").Should(BeTrue())
+			return collector.ID, cookie
+		}
+		setFlag := func(cookie *http.Cookie, on bool) {
+			Expect(postConnect("/shepherd.mgmt.v1.AdminService/UpdateOrg", map[string]any{
+				"orgId": orgID, "displayName": "RPC Pipeline Org", "adminGroupId": "admin-group", "allowLabelMatching": on,
+			}, cookie).StatusCode).To(Equal(http.StatusOK))
+		}
+
+		It("turning allow_label_matching off dirties the caches so the next poll drops the matched pipeline", func() {
+			collectorID, cookie := warmCache("flag-off-cluster", true)
+			cache, err := st.Queries.GetServeCache(ctx, collectorID)
+			Expect(err).NotTo(HaveOccurred())
+			Expect(cache.Content).To(ContainSubstring("flag-off-cluster-marker"))
+
+			setFlag(cookie, false)
+
+			cache, err = st.Queries.GetServeCache(ctx, collectorID)
+			Expect(err).NotTo(HaveOccurred())
+			Expect(cache.Dirty).To(BeTrue(), "the cache still holds the label-matched config, so the next poll must recompute it")
+		})
+
+		It("turning allow_label_matching on dirties the caches so the next poll picks up label-matched pipelines", func() {
+			collectorID, cookie := warmCache("flag-on-cluster", false)
+			cache, err := st.Queries.GetServeCache(ctx, collectorID)
+			Expect(err).NotTo(HaveOccurred())
+			Expect(cache.Content).NotTo(ContainSubstring("flag-on-cluster-marker"))
+
+			setFlag(cookie, true)
+
+			cache, err = st.Queries.GetServeCache(ctx, collectorID)
+			Expect(err).NotTo(HaveOccurred())
+			Expect(cache.Dirty).To(BeTrue(), "the cache was computed without admin labels, so the next poll must recompute it")
+		})
+	})
+
 	// PR-8b: the local_attributes half of the same gate, using
 	// allow_local_attribute_matching independently of allow_label_matching —
 	// the two-flag split exists specifically so agent-reported data (reachable
