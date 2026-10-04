@@ -83,6 +83,12 @@ Categories used here:
 
 ### Fixed
 
+- **A collector's changed `local_attributes` now change what it is served.** With
+  `allow_local_attribute_matching` on, an agent that started reporting an attribute a pipeline
+  matches on triggered the match-change metric and audit row, but kept being served its previous
+  config until an unrelated event (enabling a pipeline, a restore, a git sync) dirtied its cache.
+  The poll that reports the change now recomputes the collector's config. **Shipped.**
+
 - **`PreviewMatches` finds the collector of a git-sourced pipeline.** A git pipeline is
   served to the collector its repo link names, but the preview never looked the link up, so
   `PreviewMatches` returned no collectors for every git-sourced pipeline. The MCP `preview_matches`

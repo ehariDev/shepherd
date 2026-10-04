@@ -398,6 +398,55 @@ var _ = Describe("CollectorService", Label("integration"), func() {
 			Expect(detail["direction"]).To(Equal("added"))
 		})
 
+		// A change in an agent's local_attributes that newly matches a pipeline
+		// must change what that collector is served, not only emit the
+		// match-drift metric and audit row. The serve cache is only recomputed
+		// when it is dirty, and nothing marked it dirty here, so a collector
+		// whose cache was already warm kept being served the stale config until
+		// an unrelated event (enable, restore, git sync) happened to dirty it.
+		It("serves a pipeline a collector newly matches after its local_attributes change, without any other event", func() {
+			org, err := st.Queries.CreateOrg(ctx, sqlc.CreateOrgParams{Name: "attrs-dirty-org", DisplayName: "Attrs dirty org", AdminGroupID: "admins"})
+			Expect(err).NotTo(HaveOccurred())
+			_, err = st.Queries.UpdateOrg(ctx, sqlc.UpdateOrgParams{
+				ID: org.ID, DisplayName: org.DisplayName, AdminGroupID: org.AdminGroupID,
+				AllowLocalAttributeMatching: true,
+			})
+			Expect(err).NotTo(HaveOccurred())
+
+			base := map[string]string{"cluster": "attrs-dirty-cluster", "role": "metrics"}
+			withTeam := func(team string) map[string]string {
+				return map[string]string{"cluster": "attrs-dirty-cluster", "role": "metrics", "team": team}
+			}
+			_, err = client.RegisterCollector(ctx, connect.NewRequest(&collectorv1.RegisterCollectorRequest{
+				Id: "attrs-dirty-instance", Name: "attrs-dirty-instance", LocalAttributes: base,
+			}))
+			Expect(err).NotTo(HaveOccurred())
+			cluster, err := st.Queries.GetClusterByName(ctx, "attrs-dirty-cluster")
+			Expect(err).NotTo(HaveOccurred())
+			Expect(st.Queries.ClaimCluster(ctx, sqlc.ClaimClusterParams{ID: cluster.ID, OrgID: org.ID})).To(Succeed())
+			_, err = st.Queries.CreatePipeline(ctx, sqlc.CreatePipelineParams{
+				OrgID: org.ID, Name: "attrs-dirty-pipeline", Contents: "// attrs-dirty-marker",
+				Matchers: json.RawMessage(`["team=\"platform\""]`), Enabled: true, Source: "ui",
+				WizardState: json.RawMessage(`{}`), CreatedBy: "test", UpdatedBy: "test",
+			})
+			Expect(err).NotTo(HaveOccurred())
+
+			// Warm the serve cache with a team that does not match.
+			first, err := client.GetConfig(ctx, connect.NewRequest(&collectorv1.GetConfigRequest{
+				Id: "attrs-dirty-instance", LocalAttributes: withTeam("other"),
+			}))
+			Expect(err).NotTo(HaveOccurred())
+			Expect(first.Msg.Content).NotTo(ContainSubstring("attrs-dirty-marker"))
+
+			// The agent now reports the matching team. Nothing else changes.
+			second, err := client.GetConfig(ctx, connect.NewRequest(&collectorv1.GetConfigRequest{
+				Id: "attrs-dirty-instance", Hash: first.Msg.Hash, LocalAttributes: withTeam("platform"),
+			}))
+			Expect(err).NotTo(HaveOccurred())
+			Expect(second.Msg.NotModified).To(BeFalse(), "a newly matched pipeline must be served on the poll that reports the attribute")
+			Expect(second.Msg.Content).To(ContainSubstring("attrs-dirty-marker"))
+		})
+
 		// Performance-regression half of PR-9: proves the byte-compare
 		// short-circuit, not just its outcome. Comparing raw query counts
 		// against a hardcoded baseline would be brittle (any unrelated query
