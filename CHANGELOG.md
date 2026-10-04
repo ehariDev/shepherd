@@ -83,6 +83,12 @@ Categories used here:
 
 ### Fixed
 
+- **Editing a collector's admin labels no longer reports match changes the agent's own
+  attributes cover.** With both `allow_label_matching` and `allow_local_attribute_matching` on, the
+  match-change metric and audit row for a label edit ignored the collector's reported
+  `local_attributes`, so adding or deleting an admin label that duplicated one the agent reports was
+  logged as a pipeline newly matched or no longer matched. Served config was never affected. **Shipped.**
+
 - **`PreviewMatches` finds the collector of a git-sourced pipeline.** A git pipeline is
   served to the collector its repo link names, but the preview never looked the link up, so
   `PreviewMatches` returned no collectors for every git-sourced pipeline. The MCP `preview_matches`
