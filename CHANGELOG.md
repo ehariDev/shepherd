@@ -31,6 +31,12 @@ Categories used here:
 
 ### Changed
 
+- **`shepherd admin audit-matcher-impact` also diffs agent-reported `local_attributes`.** It used
+  to compare matching with and without admin labels only, so the rollout check for
+  `allow_local_attribute_matching` had nothing to look at. It now compares today's matching (neither
+  flag on) with matching once both are on, using each collector's latest reported attributes, and
+  lists every pipeline that would gain or lose collectors. **Shipped.**
+
 - **Built with Go 1.27.** `go.mod` moves to `go 1.27.1` and every image builds on
   `golang:1.27-alpine` (`GO_IMAGE` in `deploy/versions.env`). Building from source needs Go 1.27.
 - **The SPA builds on Node 26 with pnpm 12.** `NODE_IMAGE` is `node:26-slim`, `PNPM_VERSION` and
