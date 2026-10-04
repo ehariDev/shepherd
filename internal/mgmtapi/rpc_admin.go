@@ -240,6 +240,15 @@ func (s *AdminService) UpdateOrg(ctx context.Context, req *connect.Request[mgmtv
 	if err != nil {
 		return nil, connect.NewError(connect.CodeInternal, errors.New("failed to update org"))
 	}
+	// allow_label_matching and allow_local_attribute_matching change what every
+	// collector in the org is served, so a save must dirty their caches: each
+	// collector's next poll then recomputes, and turning a flag off takes effect
+	// as a kill switch. Unconditional rather than on a before/after diff, which
+	// two concurrent updates could each get wrong from the same stale read; the
+	// recompute is a no-op for collectors whose served config does not change.
+	if cacheErr := s.store.Queries.MarkServeCacheDirtyByOrg(ctx, o.ID); cacheErr != nil {
+		s.logger.Error("update org: marking serve caches dirty", "org_id", o.ID.String(), "err", cacheErr)
+	}
 	auditLog(ctx, s.store, actorFromCtx(ctx), o.ID, "org.update", "org", o.ID.String())
 	return connect.NewResponse(toOrgProto(o)), nil
 }

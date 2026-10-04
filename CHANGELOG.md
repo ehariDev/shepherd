@@ -83,6 +83,12 @@ Categories used here:
 
 ### Fixed
 
+- **Saving an org's settings now refreshes what its collectors are served.** Turning
+  `allow_label_matching` or `allow_local_attribute_matching` off left collectors serving the
+  label- or attribute-matched config until an unrelated event (enabling a pipeline, a restore, a git
+  sync) dirtied each one's cache, so it was not a kill switch; turning one on did nothing until
+  then either. `UpdateOrg` now marks the org's collectors for recompute on their next poll. **Shipped.**
+
 - **`PreviewMatches` finds the collector of a git-sourced pipeline.** A git pipeline is
   served to the collector its repo link names, but the preview never looked the link up, so
   `PreviewMatches` returned no collectors for every git-sourced pipeline. The MCP `preview_matches`
